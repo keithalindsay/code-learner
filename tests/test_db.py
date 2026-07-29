@@ -103,3 +103,55 @@ def test_bind_repo_root_is_sticky_and_rejects_a_second_root(tmp_path):
 def test_stored_repo_root_is_none_before_binding(tmp_path):
     conn = db.init_db(tmp_path / "i.db")
     assert db.stored_repo_root(conn) is None
+
+
+def test_connect_refuses_a_schema_mismatched_index(tmp_path):
+    """REGRESSION -- the READ paths are where a stale index does its damage.
+
+    `init_db` has always enforced refuse-and-rotate, but it only runs when an index
+    is built. Every query afterwards goes through `connect`: the CLI, the MCP server,
+    `run_ablation`. Found by measuring a retrieval ablation against a v3 index with
+    v5 code -- it opened without complaint, the columns that query named happened to
+    exist, and it produced a complete results table that was simply not about the
+    current schema. An error is recoverable; plausible wrong numbers are not.
+    """
+    path = tmp_path / "i.db"
+    db.init_db(path).close()
+    raw = sqlite3.connect(path)
+    raw.execute("UPDATE meta SET value = '3' WHERE key = 'schema_version'")
+    raw.commit()
+    raw.close()
+
+    with pytest.raises(db.SchemaVersionError):
+        db.connect(path)
+
+
+def test_connect_can_be_told_not_to_check(tmp_path):
+    """`init_db` must open a DB *before* it can judge the schema, and tooling that
+    deliberately inspects an old file needs the same escape hatch."""
+    path = tmp_path / "i.db"
+    db.init_db(path).close()
+    raw = sqlite3.connect(path)
+    raw.execute("UPDATE meta SET value = '3' WHERE key = 'schema_version'")
+    raw.commit()
+    raw.close()
+
+    conn = db.connect(path, check_schema=False)
+    assert conn.execute("SELECT 1").fetchone() is not None
+
+
+def test_connect_accepts_a_file_with_nothing_written_yet(tmp_path):
+    """An empty file is fresh, not stale -- it is what `init_db` is about to fill."""
+    conn = db.connect(tmp_path / "brand-new.db")
+    assert conn.execute("SELECT 1").fetchone() is not None
+
+
+def test_connect_refuses_an_unstamped_legacy_index(tmp_path):
+    """Application tables but no stamp: pre-versioning, and just as unreadable."""
+    path = tmp_path / "i.db"
+    raw = sqlite3.connect(path)
+    raw.execute("CREATE TABLE files (id INTEGER PRIMARY KEY)")
+    raw.commit()
+    raw.close()
+    with pytest.raises(db.SchemaVersionError):
+        db.connect(path)

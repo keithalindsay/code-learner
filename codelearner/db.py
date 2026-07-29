@@ -102,11 +102,24 @@ def _configure(conn: sqlite3.Connection) -> None:
     conn.execute(f"PRAGMA busy_timeout = {int(BUSY_TIMEOUT_SECONDS * 1000)}")
 
 
-def connect(path: StrPath) -> sqlite3.Connection:
+def connect(path: StrPath, *, check_schema: bool = True) -> sqlite3.Connection:
     """Open a connection to the index at `path` with WAL + FKs enabled.
 
     Does NOT create the schema -- callers needing a guaranteed-initialized DB
     should call `init_db`.
+
+    **The version check is on by default because the READ paths are where a stale
+    index does its damage.** `init_db` has always enforced refuse-and-rotate, but it
+    only runs when someone builds an index; every query afterwards goes through here
+    -- the CLI, the MCP server, `run_ablation`, any library caller. Without the check
+    a v3 index opens silently against v5 code, and if it happens to carry the columns
+    a query names, that query returns plausible numbers with nothing to indicate they
+    came from a different schema. Found exactly that way: an ablation measured against
+    a stale index and produced a full, wrong-looking-at-nothing results table.
+
+    `check_schema=False` exists for `init_db`, which must open a DB *before* deciding
+    whether its schema is acceptable, and for tooling that deliberately inspects an
+    old file.
     """
     conn = sqlite3.connect(str(path), isolation_level=None, check_same_thread=False)
     _configure(conn)
@@ -114,7 +127,42 @@ def connect(path: StrPath) -> sqlite3.Connection:
     # every handle that might query it -- a vec0 table is invisible to a connection
     # that did not load it.
     load_vec_extension(conn)
+    if check_schema:
+        try:
+            _assert_schema_current(conn, path)
+        except SchemaVersionError:
+            conn.close()
+            raise
     return conn
+
+
+def _assert_schema_current(conn: sqlite3.Connection, path: StrPath) -> None:
+    """Raise `SchemaVersionError` unless this DB is at `SCHEMA_VERSION`.
+
+    A DB with no application tables at all is a fresh file, not a stale one, and is
+    left alone -- that is what `init_db` is about to populate.
+    """
+    names = {
+        row["name"]
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+    }
+    if not (names & set(EXPECTED_TABLES)):
+        return  # empty file; nothing has been written yet
+    stored: str | None = None
+    if "meta" in names:
+        row = conn.execute(
+            "SELECT value FROM meta WHERE key = 'schema_version'"
+        ).fetchone()
+        if row is not None:
+            stored = row["value"]
+    if stored == str(SCHEMA_VERSION):
+        return
+    raise SchemaVersionError(
+        f"index {path} is schema v{stored or '(unstamped)'}, but this code requires "
+        f"v{SCHEMA_VERSION}. Queries against it would return results derived from a "
+        "different schema, which is worse than an error because they look fine. "
+        "Remedy: delete the index file and re-index."
+    )
 
 
 def init_db(path: StrPath) -> sqlite3.Connection:
@@ -130,7 +178,9 @@ def init_db(path: StrPath) -> sqlite3.Connection:
     parent = Path(str(path)).parent
     if str(parent) not in ("", "."):
         parent.mkdir(parents=True, exist_ok=True)
-    conn = connect(path)
+    # `check_schema=False`: this function IS the version gate, and it needs the DB
+    # open to inspect it. Its own refusal below carries the fuller remedy.
+    conn = connect(path, check_schema=False)
     names = {
         row["name"]
         for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
