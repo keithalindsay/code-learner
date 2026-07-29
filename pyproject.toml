@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "code-learner"
+version = "0.0.1"
+description = "GraphRAG over a codebase, for agents and for humans"
+readme = "README.md"
+# 3.11+: matches the venv this is developed against. Pinned deliberately rather
+# than left open -- a system default of 3.10 is exactly the kind of interpreter
+# drift that produces phantom test failures.
+requires-python = ">=3.11"
+dependencies = [
+    "tree-sitter>=0.25",
+    "tree-sitter-python>=0.25",
+    "sqlite-vec>=0.1.9",
+]
+
+[project.optional-dependencies]
+embed = [
+    "sentence-transformers>=3.0",
+    "torch>=2.5",
+]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+    "mypy>=1.11",
+]
+
+[tool.setuptools.packages.find]
+include = ["codelearner*"]
+
+[tool.setuptools.package-data]
+codelearner = ["*.sql"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]  # assert is the point of a test
