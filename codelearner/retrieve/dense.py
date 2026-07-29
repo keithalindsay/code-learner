@@ -32,7 +32,7 @@ def search_dense(
         """
         SELECT v.chunk_id, v.distance,
                s.id AS symbol_id, s.qualname, s.kind, s.line_start, s.line_end,
-               f.path, c.header
+               f.path, f.is_test, c.header
         FROM vec_chunks v
         JOIN chunks c ON c.id = v.chunk_id
         JOIN symbols s ON s.id = c.symbol_id
@@ -54,6 +54,7 @@ def search_dense(
             score=1.0 - (float(r["distance"]) ** 2) / 2.0,
             modality="dense",
             header=r["header"],
+            is_test=bool(r["is_test"]),
         )
         for r in rows
     ]

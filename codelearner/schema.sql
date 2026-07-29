@@ -30,6 +30,12 @@ CREATE TABLE IF NOT EXISTS files (
     size_bytes   INTEGER NOT NULL,
     -- st_mtime_ns at index time; the fast path for staleness detection.
     mtime_ns     INTEGER NOT NULL,
+    -- Derived deterministically from path conventions, so it is a tier-0 fact.
+    -- Exists because a test and the code it tests are different KINDS of answer:
+    -- measured on swarm-sync, both retrieval modalities rank tests above the
+    -- implementations they exercise. Recording which is which makes that
+    -- measurable, and lets a caller say which kind it wants.
+    is_test      INTEGER NOT NULL DEFAULT 0,
     indexed_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 

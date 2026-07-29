@@ -41,6 +41,26 @@ SKIP_DIRS = frozenset(
 
 
 
+def is_test_path(rel_path: str) -> bool:
+    """Whether a repo-relative path is test code, by convention.
+
+    Deterministic and conservative -- it recognises the conventions Python projects
+    actually use (`tests/` or `test/` anywhere in the path, `test_*.py`, `*_test.py`,
+    `conftest.py`) and claims nothing beyond them. Being a convention rather than a
+    guarantee is why this is derived here once and stored, instead of being
+    re-guessed at query time by whoever happens to need it.
+    """
+    parts = rel_path.replace("\\", "/").split("/")
+    if any(part in ("tests", "test", "testing") for part in parts[:-1]):
+        return True
+    name = parts[-1]
+    return (
+        name.startswith("test_")
+        or name.endswith("_test.py")
+        or name == "conftest.py"
+    )
+
+
 @dataclass
 class IndexStats:
     files: int = 0
@@ -146,9 +166,10 @@ def index_repo(
     with db.transaction(conn):
         for fx in extracts:
             cur = conn.execute(
-                "INSERT INTO files (path, lang, content_hash, size_bytes, mtime_ns) "
-                "VALUES (?,?,?,?,?) RETURNING id",
-                (fx.path, fx.lang, fx.content_hash, fx.size_bytes, fx.mtime_ns),
+                "INSERT INTO files (path, lang, content_hash, size_bytes, mtime_ns, "
+                " is_test) VALUES (?,?,?,?,?,?) RETURNING id",
+                (fx.path, fx.lang, fx.content_hash, fx.size_bytes, fx.mtime_ns,
+                 int(is_test_path(fx.path))),
             )
             file_id = cur.fetchone()[0]
             stats.files += 1

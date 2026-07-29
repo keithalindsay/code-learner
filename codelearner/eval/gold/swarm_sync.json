@@ -1,0 +1,110 @@
+{
+  "repo": "swarm-sync",
+  "commit_note": "Hand-labelled against swarm-sync @ 68 tracked files, 1095 symbols.",
+  "labelling_rule": "Relevant = a symbol a competent engineer would want to READ to answer the question. Tests are listed only where the question is about behaviour under test. Implementations are listed even when tests describe them better, because the question asks how the code works.",
+  "queries": [
+    {
+      "query": "how does a lease expire and get reclaimed",
+      "relevant": [
+        "swarmsync.coordinator.reaper.reap_once",
+        "swarmsync.blackboard.leases.acquire",
+        "swarmsync.coordinator.reaper.run"
+      ]
+    },
+    {
+      "query": "opening a sqlite connection with WAL journal mode",
+      "relevant": [
+        "swarmsync.blackboard.db.connect",
+        "swarmsync.blackboard.db._configure",
+        "swarmsync.blackboard.db.init_db"
+      ]
+    },
+    {
+      "query": "removing a git worktree when the git command fails",
+      "relevant": [
+        "swarmsync.worktree.git_ops.remove_worktree"
+      ]
+    },
+    {
+      "query": "creating a new git worktree for an agent",
+      "relevant": [
+        "swarmsync.worktree.git_ops.add_worktree"
+      ]
+    },
+    {
+      "query": "how are events written to the blackboard",
+      "relevant": [
+        "swarmsync.blackboard.events.emit",
+        "swarmsync.blackboard.events.tail"
+      ]
+    },
+    {
+      "query": "running a multi statement write as one transaction",
+      "relevant": [
+        "swarmsync.blackboard.db.transaction"
+      ]
+    },
+    {
+      "query": "what stops one index being reused across two different repos",
+      "relevant": [
+        "swarmsync.blackboard.db.bind_managed_root",
+        "swarmsync.blackboard.db.stored_managed_root"
+      ]
+    },
+    {
+      "query": "building the fastapi application and its routes",
+      "relevant": [
+        "swarmsync.server.app.create_app"
+      ]
+    },
+    {
+      "query": "pheromone strength decaying over time",
+      "relevant": [
+        "swarmsync.blackboard.events.decay_pheromone"
+      ]
+    },
+    {
+      "query": "which python version does this require and how is it enforced",
+      "relevant": [
+        "swarmsync.config.require_python"
+      ]
+    },
+    {
+      "query": "computing how much of the codebase a change could affect",
+      "relevant": [
+        "swarmsync.classifier.graph.blast_radius"
+      ]
+    },
+    {
+      "query": "how does an agent claim work and run it",
+      "relevant": [
+        "swarmsync.agent.runner.run_agent"
+      ]
+    },
+    {
+      "query": "detecting an interrupted merge left on trunk after a crash",
+      "relevant": [
+        "swarmsync.coordinator.integrator.unresolved_orphan_count"
+      ]
+    },
+    {
+      "query": "preventing two servers from managing the same repository",
+      "relevant": [
+        "swarmsync.repolock.lock_path_for",
+        "swarmsync.repolock.holder_pid_if_held"
+      ]
+    },
+    {
+      "query": "the hook that checks whether an edit is allowed before it happens",
+      "relevant": [
+        "swarmsync.hooks.adapter.cmd_precheck"
+      ]
+    },
+    {
+      "query": "scrubbing environment variables before running a subprocess",
+      "relevant": [
+        "swarmsync.config.subprocess_env"
+      ]
+    }
+  ]
+}

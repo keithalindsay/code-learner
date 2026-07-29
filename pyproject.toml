@@ -34,7 +34,7 @@ dev = [
 include = ["codelearner*"]
 
 [tool.setuptools.package-data]
-codelearner = ["*.sql"]
+codelearner = ["*.sql", "eval/gold/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -29,6 +29,7 @@ Measured on swarm-sync: median chunk 770 characters, p95 2,988, max 24,472. Seve
 """
 from __future__ import annotations
 
+import logging
 import sqlite3
 import struct
 from collections.abc import Iterable, Sequence
@@ -36,6 +37,20 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from .. import db
+
+logger = logging.getLogger(__name__)
+
+
+def _is_oom(exc: BaseException) -> bool:
+    """Whether an exception is a CUDA out-of-memory condition.
+
+    Matched on type name and message rather than by importing torch's exception
+    class, so this module stays importable without torch installed.
+    """
+    return (
+        type(exc).__name__ == "OutOfMemoryError"
+        or "out of memory" in str(exc).lower()
+    )
 
 DEFAULT_MODEL = "Qwen/Qwen3-Embedding-0.6B"
 
@@ -115,6 +130,7 @@ class SentenceTransformerEmbedder:
     ) -> None:
         from sentence_transformers import SentenceTransformer
 
+        explicit_device = device is not None
         if device is None:
             try:
                 import torch
@@ -122,7 +138,27 @@ class SentenceTransformerEmbedder:
                 device = "cuda" if torch.cuda.is_available() else "cpu"
             except ImportError:
                 device = "cpu"
-        self._model = SentenceTransformer(model_name, device=device)
+
+        try:
+            self._model = SentenceTransformer(model_name, device=device)
+        except Exception as exc:  # noqa: BLE001 - re-raised unless it is an OOM
+            # A 10GB card is shared. ollama holding a 9GB model, another training
+            # run, a browser with hardware acceleration -- any of these can leave
+            # too little VRAM, and it is not this tool's place to evict them.
+            # Falling back to CPU is slower but correct; failing outright is
+            # neither. Observed in practice: `ollama ps` showing qwen3:14b resident
+            # made model load fail with 129MB free.
+            if explicit_device or device != "cuda" or not _is_oom(exc):
+                raise
+            logger.warning(
+                "could not load %s on CUDA (%s); falling back to CPU. Embedding "
+                "will be slower. Free VRAM and re-run for full speed.",
+                model_name,
+                str(exc).split("\n")[0][:160],
+            )
+            device = "cpu"
+            self._model = SentenceTransformer(model_name, device=device)
+        self._device = device
         # The model advertises 32K, which VRAM cannot honour at any useful batch
         # size. Capping here rather than hoping is the difference between a bounded
         # run and an OOM partway through a large repo.
@@ -138,14 +174,41 @@ class SentenceTransformerEmbedder:
     def name(self) -> str:
         return self._name
 
+    @property
+    def device(self) -> str:
+        return self._device
+
     def encode_documents(self, texts: Sequence[str]) -> list[list[float]]:
-        vecs = self._model.encode(
-            list(texts),
-            batch_size=len(texts) or 1,
-            normalize_embeddings=True,
-            show_progress_bar=False,
-        )
+        try:
+            vecs = self._model.encode(
+                list(texts),
+                batch_size=len(texts) or 1,
+                normalize_embeddings=True,
+                show_progress_bar=False,
+            )
+        except Exception as exc:  # noqa: BLE001 - re-raised unless it is an OOM
+            # Mid-run OOM: another process grabbed VRAM after load succeeded.
+            # Retry this batch one item at a time before giving up, since the
+            # batch is usually what does not fit rather than the model.
+            if not _is_oom(exc):
+                raise
+            logger.warning("CUDA OOM on a batch of %d; retrying one at a time", len(texts))
+            self._empty_cache()
+            vecs = [
+                self._model.encode(
+                    [t], batch_size=1, normalize_embeddings=True, show_progress_bar=False
+                )[0]
+                for t in texts
+            ]
         return [list(map(float, v)) for v in vecs]
+
+    def _empty_cache(self) -> None:
+        try:
+            import torch
+
+            torch.cuda.empty_cache()
+        except (ImportError, RuntimeError):
+            pass
 
     def encode_query(self, text: str) -> list[float]:
         vec = self._model.encode(

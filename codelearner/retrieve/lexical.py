@@ -28,6 +28,12 @@ class Hit:
     score: float
     modality: str
     header: str
+    is_test: bool = False
+    # How this hit was reached when it came from graph expansion, e.g.
+    # "called by tests.test_git_ops.test_remove_worktree". Empty for direct hits.
+    # Retrieval that cannot say why it returned something is hard to debug and
+    # harder to trust.
+    via: str = ""
 
 
 # FTS5 treats these as query syntax. A user typing `db.init_db(` means it literally.
@@ -55,7 +61,7 @@ def search_lexical(conn: sqlite3.Connection, query: str, k: int = 10) -> list[Hi
     rows = conn.execute(
         """
         SELECT s.id AS symbol_id, s.qualname, s.kind, s.line_start, s.line_end,
-               f.path, c.header, bm25(chunks_fts) AS score
+               f.path, f.is_test, c.header, bm25(chunks_fts) AS score
         FROM chunks_fts
         JOIN chunks c ON c.id = chunks_fts.rowid
         JOIN symbols s ON s.id = c.symbol_id
@@ -78,6 +84,7 @@ def search_lexical(conn: sqlite3.Connection, query: str, k: int = 10) -> list[Hi
             score=-float(r["score"]),
             modality="lexical",
             header=r["header"],
+            is_test=bool(r["is_test"]),
         )
         for r in rows
     ]

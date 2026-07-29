@@ -36,7 +36,9 @@ SCHEMA = SCHEMA_PATH.read_text()
 #   v2 -- `chunks` (symbol-boundary retrieval units) plus the `chunks_fts` external-
 #         content FTS5 index and its three sync triggers. Additive, but a v1 DB is
 #         refused and re-indexed per the policy above rather than migrated.
-SCHEMA_VERSION = 2
+#   v3 -- `files.is_test`, so retrieval can distinguish a test from the code it
+#         tests. Both modalities were measured ranking tests above implementations.
+SCHEMA_VERSION = 3
 
 EXPECTED_TABLES = ("files", "symbols", "edges", "chunks")
 
