@@ -142,3 +142,171 @@ CREATE TRIGGER IF NOT EXISTS chunks_fts_update AFTER UPDATE ON chunks BEGIN
     INSERT INTO chunks_fts(chunks_fts, rowid, text) VALUES ('delete', old.id, old.text);
     INSERT INTO chunks_fts(rowid, text) VALUES (new.id, new.text);
 END;
+
+-- Tier 2: INFERRED claims, and the machinery that makes one accountable.
+--
+-- An LLM's statement about code has a failure mode the parsed tiers do not have:
+-- it is unverifiable when it is read, and it goes stale without saying so. A
+-- rationale that was true in March is still served, word for word and just as
+-- confidently, in June. That single property is why the honest competitors refuse
+-- inference outright ("structural facts only") -- not because the claims are
+-- useless, but because nothing about them is checkable.
+--
+-- Four tables, each removing one part of that:
+--
+--   assertions      -- the claim and its status. Rows are never deleted.
+--   evidence_spans  -- the exact bytes it cites. No spans, no assertion.
+--   verdicts        -- what a judge concluded, INCLUDING every refusal.
+--   staleness_log   -- which citation stopped matching disk, and when.
+--
+-- The subject is recorded the way `edges` records its target, and for the same
+-- reason: `subject_qualname` is always populated and durable, `subject_symbol_id`
+-- is the resolved convenience link and may be NULL. That is not symmetry for its
+-- own sake. An `ON DELETE CASCADE` to symbols(id) would mean a routine re-index
+-- silently deletes the entire assertion store, because re-indexing replaces symbol
+-- rows wholesale. The name survives that; the row id does not.
+CREATE TABLE IF NOT EXISTS assertions (
+    id                INTEGER PRIMARY KEY,
+    -- Dotted path of the symbol the claim is ABOUT, e.g. `codelearner.db.init_db`.
+    subject_qualname  TEXT NOT NULL,
+    -- Resolved link, when the subject is in the graph right now. SET NULL rather
+    -- than CASCADE, per the note above: losing the link must not lose the claim.
+    subject_symbol_id INTEGER REFERENCES symbols(id) ON DELETE SET NULL,
+    -- 'purpose' | 'invariant' | 'risk' | ... -- what KIND of claim this is. Worth a
+    -- column because "what is this for" and "what must stay true here" have
+    -- different readers and very different costs when wrong, and a caller should be
+    -- able to take one and refuse the other.
+    kind              TEXT NOT NULL,
+    claim             TEXT NOT NULL,
+    -- 'active'   -- admitted; servable for as long as its evidence still hashes.
+    -- 'rejected' -- a judge refused it. RETAINED, never deleted: the rejections are
+    --               the only evidence that the gate does anything at all, and a
+    --               store that deletes them can report whatever pass rate it likes.
+    -- 'stale'    -- a cited span changed underneath it. Also retained, because it
+    --               names exactly what is worth re-deriving and what it used to say.
+    -- The CHECK belongs here rather than in Python because a typo'd status is
+    -- otherwise indistinguishable from a rejected one -- both merely fail to be
+    -- 'active', so the claim stops being served with no record of why.
+    status            TEXT NOT NULL DEFAULT 'active'
+                      CHECK (status IN ('active', 'rejected', 'stale')),
+    -- Model id + prompt version that produced this. The unit of recall: when a
+    -- generator turns out to hallucinate one particular shape of claim, this makes
+    -- "find everything it wrote" a query rather than a re-run of the whole pipeline.
+    generator         TEXT,
+    -- The generator's own confidence in [0,1]. Advisory, and deliberately NOT an
+    -- input to servability: a model's confidence in an uncited claim is a number
+    -- about the model, not about the code.
+    confidence        REAL,
+    created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    -- When `status` last moved. Answers "how long were we serving that" after the
+    -- fact, which is the first question asked once a bad claim is found.
+    status_changed_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_assertions_subject ON assertions(subject_qualname);
+CREATE INDEX IF NOT EXISTS idx_assertions_symbol ON assertions(subject_symbol_id);
+CREATE INDEX IF NOT EXISTS idx_assertions_status ON assertions(status);
+
+-- The citations. This table is the whole reason a tier-2 claim is checkable: it
+-- records the exact bytes the claim was derived from, so a reader can go look, and
+-- so the store can re-hash them at serve time and notice when they have moved.
+--
+-- `path` is a plain repo-relative string and NOT a reference to files(id). That is
+-- deliberate and it is the subtlest rule in this schema. A file dropped from the
+-- index -- renamed, deleted, newly gitignored -- would cascade its spans away, and
+-- an assertion that loses its last span does not become unsupported. It becomes
+-- VACUOUSLY supported, because "every cited span still matches" is trivially true
+-- of no spans at all. Storing the path as text turns that case into a span whose
+-- file is missing, which is a staleness event with a reason attached instead of a
+-- silent promotion. (The reader checks for an empty evidence set anyway; a rule
+-- this easy to get wrong deserves both.)
+CREATE TABLE IF NOT EXISTS evidence_spans (
+    id           INTEGER PRIMARY KEY,
+    assertion_id INTEGER NOT NULL REFERENCES assertions(id) ON DELETE CASCADE,
+    -- Repo-root-relative, POSIX separators -- the same coordinate space as
+    -- `files.path`, so a citation reads the same whether or not the file is indexed.
+    path         TEXT NOT NULL,
+    -- 1-based inclusive lines, for the human-facing `file:line` citation. Derived
+    -- FROM the byte range at write time rather than accepted alongside it: a
+    -- citation whose line numbers disagree with its bytes is one nobody can check,
+    -- and that disagreement would never surface on its own.
+    line_start   INTEGER NOT NULL,
+    line_end     INTEGER NOT NULL,
+    -- Byte span, for re-slicing exactly the evidence without re-deriving offsets.
+    byte_start   INTEGER NOT NULL,
+    byte_end     INTEGER NOT NULL,
+    -- sha256 of exactly source[byte_start:byte_end] as it read at write time (see
+    -- ingest.types.content_hash). THE expiry primitive. Explicitly not the whole
+    -- file's hash: an unrelated edit elsewhere in a 2,000-line module must not
+    -- expire a claim about one function in it, or staleness becomes noise and the
+    -- first thing anyone does with noise is stop reading it.
+    content_hash TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_evidence_assertion ON evidence_spans(assertion_id);
+CREATE INDEX IF NOT EXISTS idx_evidence_path ON evidence_spans(path);
+
+-- Adjudication. A judge is asked to REFUTE a claim using only the spans that claim
+-- cites -- a different question from "does this look right", and the only one with
+-- a checkable answer, because the evidence it may use is finite and written down.
+--
+-- Every verdict is kept, the refusals most of all. A pipeline that deletes what it
+-- rejected cannot show its gate does anything, and cannot tell a generator that got
+-- better from a judge that got lazier -- the two look identical from the pass rate.
+CREATE TABLE IF NOT EXISTS verdicts (
+    id           INTEGER PRIMARY KEY,
+    assertion_id INTEGER NOT NULL REFERENCES assertions(id) ON DELETE CASCADE,
+    -- Judge identity (model + prompt version), for the same recall reason as
+    -- `assertions.generator`.
+    judge        TEXT NOT NULL,
+    -- 'supported'   -- the cited spans do establish the claim.
+    -- 'refuted'     -- the cited spans contradict it.
+    -- 'unsupported' -- the spans neither establish nor contradict it. Kept distinct
+    --                  from 'refuted' on purpose: "the evidence is silent" is a
+    --                  fixable citation problem and "the evidence says otherwise" is
+    --                  a wrong claim, and collapsing them hides which one a
+    --                  generator actually has. Both stop it being served.
+    verdict      TEXT NOT NULL
+                 CHECK (verdict IN ('supported', 'refuted', 'unsupported')),
+    -- The judge's reasoning, in its own words. Kept because the rejection log is
+    -- only useful if someone can read WHY, and because a judge that rejects for
+    -- consistently bad reasons is a thing that has to be discoverable.
+    rationale    TEXT,
+    created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_verdicts_assertion ON verdicts(assertion_id);
+CREATE INDEX IF NOT EXISTS idx_verdicts_verdict ON verdicts(verdict);
+
+-- Expiry events. Staleness is detected on READ -- the check is a re-hash of the
+-- cited bytes at the moment something asks for the claim, not a background sweep --
+-- so without this table the event would exist only as a status flip, with nothing
+-- recording which citation moved or when it was noticed.
+--
+-- One row per transition, not per read: a stale assertion is never re-checked
+-- (`status` alone excludes it from the serving path), so the log grows only when
+-- something actually expires. That makes its growth rate a real signal about how
+-- fast this repo invalidates what was inferred about it.
+CREATE TABLE IF NOT EXISTS staleness_log (
+    id            INTEGER PRIMARY KEY,
+    assertion_id  INTEGER NOT NULL REFERENCES assertions(id) ON DELETE CASCADE,
+    -- The span that failed. A plain integer, not a reference: re-citing an assertion
+    -- replaces its span rows, and a log has to outlive the rows it describes or it
+    -- stops being a record of what happened.
+    span_id       INTEGER,
+    -- 'hash_mismatch'  -- the file is there; the cited bytes are not what they were.
+    -- 'file_missing'   -- the cited file is gone from disk entirely.
+    -- 'span_truncated' -- the file is now shorter than the cited byte range.
+    -- 'no_evidence'    -- the assertion has no spans at all. Unreachable if the
+    --                     write gate holds, and checked anyway, because the failure
+    --                     it guards against is serving a claim on the strength of an
+    --                     empty evidence set -- which reads as success everywhere.
+    reason        TEXT NOT NULL,
+    -- What was cited vs. what is on disk now. Both nullable: a missing file has no
+    -- observed hash, and that absence is itself the finding.
+    expected_hash TEXT,
+    observed_hash TEXT,
+    detected_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_staleness_assertion ON staleness_log(assertion_id);

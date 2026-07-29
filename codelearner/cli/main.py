@@ -1,0 +1,147 @@
+"""Argument parsing and dispatch for the `codelearner` command.
+
+The parser is built by a function rather than at import time so tests can construct
+one per case, and `main` takes `argv` and an embedder factory as parameters rather
+than reading `sys.argv` and constructing a model itself. Both are the same decision:
+the CLI is a library with a thin shell around it, so its behaviour can be asserted
+in milliseconds instead of by shelling out and grepping text.
+
+The embedder factory in particular is the seam that keeps the test suite off the
+GPU. Loading `Qwen3-Embedding-0.6B` takes tens of seconds and ~1.2GB of VRAM that
+another process may be holding; a fake that returns three floats proves the wiring
+just as well, and proves it on a laptop with no card at all.
+"""
+from __future__ import annotations
+
+import argparse
+import sqlite3
+import sys
+from pathlib import Path
+
+from ..index import DEFAULT_MODEL, Embedder
+from .commands import CliError, EmbedderFactory, cmd_index, cmd_search, cmd_stats
+
+DEFAULT_K = 10
+
+# Exit codes. 0 success, 1 a condition the tool predicted and explained, 2 a usage
+# error (argparse's own convention, kept rather than re-invented). The distinction
+# matters to a script: 2 means the command line was wrong, 1 means the world was.
+EXIT_OK = 0
+EXIT_ERROR = 1
+
+
+def _positive_int(text: str) -> int:
+    value = int(text)
+    if value < 1:
+        raise argparse.ArgumentTypeError(f"must be 1 or greater, got {value}")
+    return value
+
+
+def _default_embedder(model_name: str) -> Embedder:
+    """Build the real embedder. Imported late -- the import pulls in torch."""
+    from ..index import SentenceTransformerEmbedder
+
+    return SentenceTransformerEmbedder(model_name)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="codelearner",
+        description="GraphRAG over a codebase: index it, then ask it questions.",
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p_index = sub.add_parser("index", help="parse a repository into an index")
+    p_index.add_argument("repo", type=Path, help="repository root to index")
+    p_index.add_argument(
+        "--index-path",
+        type=Path,
+        default=None,
+        help="where to write the index (default: <repo>/.codelearner/index.db)",
+    )
+    p_index.add_argument(
+        "--force",
+        action="store_true",
+        help="delete and rebuild an existing index (discards its embeddings)",
+    )
+    p_index.add_argument(
+        "--embed",
+        action="store_true",
+        help="also build dense vectors (slow; needs the [embed] extra and a GPU to be quick)",
+    )
+    p_index.add_argument(
+        "--model",
+        default=DEFAULT_MODEL,
+        help=f"embedding model, with --embed (default: {DEFAULT_MODEL})",
+    )
+    p_index.add_argument("--json", action="store_true", help="emit JSON instead of a table")
+    p_index.set_defaults(func=cmd_index)
+
+    p_search = sub.add_parser("search", help="hybrid search over an index")
+    p_search.add_argument("query", help="what to look for, in plain words")
+    _add_index_location(p_search)
+    p_search.add_argument(
+        "-k", "--k", type=_positive_int, default=DEFAULT_K, help=f"results to return (default: {DEFAULT_K})"
+    )
+    p_search.add_argument(
+        "--facts-only",
+        action="store_true",
+        help="return T0/T1 only -- parsed facts and resolved names, nothing inferred",
+    )
+    # The three modality switches exist for the same reason `search()` has them:
+    # "which modality actually carries retrieval" is a question that can only be
+    # answered by turning each one off.
+    p_search.add_argument("--no-lexical", action="store_true", help="disable BM25 lexical search")
+    p_search.add_argument("--no-dense", action="store_true", help="disable vector search")
+    p_search.add_argument("--no-graph", action="store_true", help="disable graph expansion")
+    p_search.add_argument("--json", action="store_true", help="emit JSON instead of a table")
+    p_search.set_defaults(func=cmd_search)
+
+    p_stats = sub.add_parser("stats", help="what is in an index")
+    _add_index_location(p_stats)
+    p_stats.add_argument("--json", action="store_true", help="emit JSON instead of a table")
+    p_stats.set_defaults(func=cmd_stats)
+
+    return parser
+
+
+def _add_index_location(parser: argparse.ArgumentParser) -> None:
+    """The two ways every read-only command finds its index.
+
+    Defaulting `--repo` to the working directory is what makes `codelearner search
+    "..."` work with no arguments from inside a repo, which is the shape of the
+    command people actually type.
+    """
+    parser.add_argument(
+        "--repo",
+        type=Path,
+        default=Path.cwd(),
+        help="repository whose index to use (default: the working directory)",
+    )
+    parser.add_argument(
+        "--index-path",
+        type=Path,
+        default=None,
+        help="index file to use (default: <repo>/.codelearner/index.db)",
+    )
+
+
+def main(argv: list[str] | None = None, embedder_factory: EmbedderFactory | None = None) -> int:
+    """Run one command. Returns the process exit code; never raises for a
+    predictable failure."""
+    args = build_parser().parse_args(argv)
+    factory: EmbedderFactory = embedder_factory or _default_embedder
+    try:
+        return int(args.func(args, factory))
+    except CliError as exc:
+        print(f"codelearner: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+    except (OSError, sqlite3.Error) as exc:
+        # The environmental failures -- unreadable path, full disk, locked database.
+        # Predictable in kind if not in detail, and a traceback tells the user
+        # nothing they can act on.
+        print(f"codelearner: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+    except KeyboardInterrupt:
+        print("codelearner: interrupted", file=sys.stderr)
+        return 130

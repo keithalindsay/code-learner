@@ -38,9 +38,12 @@ SCHEMA = SCHEMA_PATH.read_text()
 #         refused and re-indexed per the policy above rather than migrated.
 #   v3 -- `files.is_test`, so retrieval can distinguish a test from the code it
 #         tests. Both modalities were measured ranking tests above implementations.
-SCHEMA_VERSION = 3
+#   v4 -- the tier-2 assertion store: `assertions`, `evidence_spans`, `verdicts`,
+#         `staleness_log`. An inferred claim is admitted only with citations, and is
+#         served only while those citations still hash to what was cited.
+SCHEMA_VERSION = 4
 
-EXPECTED_TABLES = ("files", "symbols", "edges", "chunks")
+EXPECTED_TABLES = ("files", "symbols", "edges", "chunks", "assertions")
 
 # How long a write that loses a brief lock race waits for the winner instead of
 # failing with "database is locked".

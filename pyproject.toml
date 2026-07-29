@@ -30,6 +30,12 @@ dev = [
     "mypy>=1.11",
 ]
 
+[project.scripts]
+# The human entry point. `main` returns an exit code rather than calling sys.exit,
+# which is what console_scripts expects and what makes it callable from a test
+# without catching SystemExit.
+codelearner = "codelearner.cli:main"
+
 [tool.setuptools.packages.find]
 include = ["codelearner*"]
 

@@ -11,3 +11,7 @@ dist/
 *.db
 *.db-wal
 *.db-shm
+
+# swarm-sync coordination markers (machine-local, not project config)
+.swarmsync-active
+.swarmsync-last-contact
