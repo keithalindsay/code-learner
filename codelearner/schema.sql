@@ -278,6 +278,52 @@ CREATE TABLE IF NOT EXISTS verdicts (
 CREATE INDEX IF NOT EXISTS idx_verdicts_assertion ON verdicts(assertion_id);
 CREATE INDEX IF NOT EXISTS idx_verdicts_verdict ON verdicts(verdict);
 
+-- The stat baseline for the two-stage freshness check (see assertions/stale.py).
+--
+-- Re-hashing every cited span on every query is O(spans) file reads per query. The
+-- fast path is a stat(): if a span's file has the same mtime_ns AND the same size as
+-- when the span was last hash-verified, the bytes are taken to be unchanged and no
+-- read happens. Only a moved mtime (or a changed size) falls through to the full
+-- re-hash. Measured on this repo's own index, the steady state is one stat() per
+-- distinct cited FILE per query and zero reads.
+--
+-- This table is separate from `evidence_spans` rather than three more columns on it,
+-- because the two have opposite lifetimes. A citation is the immutable thing the
+-- claim was admitted on -- path, byte range, hash -- and nothing at serve time should
+-- be writing to that row. This is the mutable observation ABOUT that citation, and it
+-- is disposable: delete every row here and the only consequence is that the next
+-- query re-hashes, which is exactly the pre-fast-path behaviour. The CASCADE matters
+-- for the same reason -- re-citing an assertion replaces its span rows, and a stat
+-- baseline that outlived the hash it was a shortcut for would authorise skipping the
+-- read for a span nobody ever verified.
+--
+-- `files.mtime_ns` is deliberately NOT reused for this. That column records when a
+-- file was last INDEXED, which is a different event from when a citation was last
+-- verified, and it exists only for files currently in the index -- a span may cite a
+-- file that was never indexed or has since been dropped. Sharing one column between
+-- the two would make a re-index look like a verification.
+CREATE TABLE IF NOT EXISTS span_verifications (
+    -- One row per span, so a span that has NEVER been hash-verified simply has no
+    -- row and cannot take the fast path. Per-file would be wrong here: it would let
+    -- a brand-new citation inherit a neighbour's baseline and be served without its
+    -- own hash ever having been checked once.
+    span_id       INTEGER PRIMARY KEY REFERENCES evidence_spans(id) ON DELETE CASCADE,
+    -- st_mtime_ns and st_size of the cited file at that verification. Both, not just
+    -- mtime: size is free once the file is stat'd, and a same-second edit that
+    -- changes length is caught by it.
+    mtime_ns      INTEGER NOT NULL,
+    size_bytes    INTEGER NOT NULL,
+    -- The hash actually observed on disk at that verification. Stored (rather than
+    -- implied by evidence_spans.content_hash) so the row states what it witnessed:
+    -- the fast path requires this to still equal the cited hash, so a baseline can
+    -- never vouch for a hash it did not see.
+    verified_hash TEXT NOT NULL,
+    -- When those bytes were last actually read and hashed. THE honest freshness
+    -- number: a claim confirmed by stat() alone is only as fresh as this timestamp,
+    -- and every served assertion carries it so a caller can see that for itself.
+    verified_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
 -- Expiry events. Staleness is detected on READ -- the check is a re-hash of the
 -- cited bytes at the moment something asks for the claim, not a background sweep --
 -- so without this table the event would exist only as a status flip, with nothing

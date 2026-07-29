@@ -10,8 +10,8 @@ source spans it came from and expires when those spans change.
 
 **Status: early.** Ingest, storage, tier-1 name resolution, symbol-boundary
 chunking, and the full hybrid retrieval pipeline -- lexical, dense, graph expansion,
-RRF fusion -- work, are tested, and are measured against a gold set. Cross-encoder
-reranking, the inference layer, and the onboarding surface are not built yet.
+RRF fusion, and optional cross-encoder reranking -- work, are tested, and are
+measured against a gold set. The inference layer is not built yet.
 
 ---
 
@@ -54,7 +54,7 @@ unresolved reference is represented honestly rather than dropped or guessed.
 
 ### The T2 assertion store
 
-The storage layer for tier 2 is built (`codelearner/assertions/`, schema v4). It is
+The storage layer for tier 2 is built (`codelearner/assertions/`, schema v5). It is
 the gate, not the pipeline — nothing in it calls a model. What it does is refuse the
 two ways an inferred claim becomes unaccountable:
 
@@ -81,6 +81,75 @@ reference to `files(id)` — because an assertion that loses its last span doesn
 become unsupported, it becomes *vacuously* supported. "Every cited span still
 matches" is trivially true of no spans, and reads as success everywhere it isn't
 specifically looked for. The reader checks for an empty evidence set anyway.
+
+### The staleness engine
+
+`servable_assertions` re-hashes every cited byte range on every call, which is
+`O(cited bytes)` per query. `codelearner/assertions/stale.py` is the two-stage version
+of the same check:
+
+1. **`stat()`.** If a cited file's `st_mtime_ns` *and* `st_size` are exactly what they
+   were when that span was last actually hashed (`span_verifications`, schema v5),
+   nothing is read.
+2. **Full re-hash.** Runs when the stat differs, when a span has never been hashed at
+   all, and whenever a caller passes `force_hash=True`.
+
+The obvious way to make this fast is to cache the freshness verdict, and a cached
+freshness verdict is the exact failure tier 2 exists to prevent — it is
+indistinguishable from a real check right up until it is wrong. So every served claim
+carries its own provenance instead: `checked_at` (when we looked), `verified_at` (when
+the cited bytes were last genuinely hashed — *older* than `checked_at` on a fast-path
+hit, and that gap is the point), `method` (`'stat'` or `'hash'`, weakest citation
+wins), and `bound_hashes`. A caller seeing `method='stat', verified_at=<three days
+ago>` knows precisely what it is holding.
+
+**The fast path's limits are stated, not hidden.** It promises mtime and size are
+unchanged; it does not promise the bytes are. An edit that restores the timestamp and
+preserves the length gets through. There is a test that asserts that hole exists, and
+`force_hash=True` closes it on demand. Relatedly, **a touch is not an edit**: `touch`
+moves mtime, so stage one misses, stage two runs, the hash still matches, and nothing
+is marked stale — the stat is an accelerator over the hash, never an authority beside
+it. Only a hash can expire a claim.
+
+`refresh_staleness(conn, repo_root)` sweeps every active assertion and reports counts
+(`383 active, 383 still fresh, 0 expired; 36 stat, 0 read, 383 spans fast-pathed, 0
+re-hashed`). The sweep is not what keeps the index honest — serve-time verification
+is, and it has no window — but it reaches the claims nothing ever queries again, which
+is most of them, and its `spans_hashed` vs `spans_fast_pathed` split is the only
+evidence anyone gets that the fast path is working at all.
+
+The four failure modes stay apart (`hash_mismatch`, `file_missing`, `span_truncated`,
+`no_evidence`) because they call for different repairs. Serving withholds stale claims
+by default and returns them only under `include_stale=True`, always labelled.
+
+#### The number that did not go the way it was supposed to
+
+Serving every claim in an index; median of interleaved A/B blocks; warm page cache.
+
+| index | spans | cited bytes | always-rehash | two-stage | ratio |
+|---|---|---|---|---|---|
+| code-learner | 383 | 0.28 MiB | 4.97 ms | 6.91 ms | **0.72×** |
+| swarm-sync | 1,100 | 0.95 MiB | 13.99 ms | 20.09 ms | **0.70×** |
+| synthetic, 8 × 128 KiB | 168 | 1.01 MiB | 3.21 ms | 3.53 ms | 0.91× |
+| synthetic, 8 × 256 KiB | 168 | 2.01 MiB | 4.35 ms | 3.41 ms | 1.28× |
+| synthetic, 8 × 512 KiB | 168 | 4.01 MiB | 5.03 ms | 2.62 ms | 1.92× |
+| synthetic, 8 × 1 MiB | 168 | 8.01 MiB | 8.65 ms | 2.60 ms | 3.33× |
+
+On both *real* repositories the fast path is about **1.4× slower**. The premise was
+wrong: sha256 over a page-cached Python file is far cheaper than assumed — re-hashing
+all of swarm-sync's cited bytes costs under a millisecond — while the extra
+`span_verifications` lookup and the per-span record-keeping cost a few microseconds per
+span whether or not anything moved. The crossover is around 1.5 MiB of cited bytes per
+query; below that, the unconditional re-hash wins.
+
+What the table shows is the shape rather than the constant. The two-stage column is
+*flat* in file size (2.6–3.5 ms across an 8× range) because it is `O(spans)`; the
+re-hash column grows because it is `O(bytes)`. So the two-stage check is the one that
+holds up as cited volume grows, and the only one whose cost does not depend on how the
+filesystem feels that day — a page-cache miss, an NFS mount or an encrypted volume
+moves the re-hash column and leaves this one alone. Both verifiers ship, a test asserts
+they reach identical verdicts across every failure mode, and on a small warm repo the
+unconditional one is genuinely the better choice.
 
 ## Measured, on real repositories
 
@@ -111,8 +180,8 @@ resolver on day one. See [docs/PHASE0-FINDINGS.md](docs/PHASE0-FINDINGS.md).
 ## Retrieval: what the ablation actually showed
 
 Three modalities — lexical (BM25 over FTS5), dense (vector), and graph expansion —
-fused with Reciprocal Rank Fusion. Measured against a 16-query hand-labelled gold
-set on swarm-sync:
+fused with Reciprocal Rank Fusion, then optionally reordered by a cross-encoder.
+Measured against a 16-query hand-labelled gold set on swarm-sync:
 
 | configuration | recall@5 | recall@10 | hit@5 | MRR |
 |---|---|---|---|---|
@@ -120,10 +189,20 @@ set on swarm-sync:
 | dense only | 0.542 | 0.635 | 0.562 | 0.407 |
 | graph only (dense-seeded) | 0.188 | 0.188 | 0.250 | 0.172 |
 | lexical + dense | 0.573 | 0.635 | 0.625 | 0.331 |
-| lexical + dense + prefer-impl | 0.604 | 0.781 | 0.688 | **0.516** |
-| **hybrid, all three (default)** | **0.646** | **0.802** | **0.750** | 0.463 |
+| lexical + dense + prefer-impl | 0.604 | 0.781 | 0.688 | 0.516 |
+| hybrid, all three (default) | 0.646 | **0.802** | 0.750 | 0.453 |
+| **hybrid + rerank** | **0.708** | **0.802** | 0.750 | **0.614** |
+| lexical + dense + prefer-impl + rerank | 0.708 | 0.802 | 0.750 | 0.614 |
+| hybrid + rerank, no prefer-impl | 0.708 | 0.802 | 0.750 | 0.613 |
 
-Three findings worth more than the final number.
+The reranker is **`zeroentropy/zerank-1-small-reranker`** — 1.7B parameters,
+Qwen3-based, ~3.4GB of weights, run on a 10GB RTX 3080. That is the model these rows
+were produced with. `BAAI/bge-reranker-base` is wired as a fallback for machines that
+cannot hold the larger one and has **not** been benchmarked here; nothing in this
+table is attributable to it. Reranking is opt-in (`--rerank`) and its absence is not
+an error — without it the pipeline returns the fused rows above.
+
+Six findings worth more than the final number.
 
 **The graph modality made things worse before it made them better.** At its first
 guessed weight of 0.6, the full hybrid scored **0.385** recall@5 — well below
@@ -135,22 +214,67 @@ The default is 0.3 because that is what measured best, and a test pins the const
 so it cannot drift without re-running the ablation.
 
 **Recall and ranking pull in opposite directions.** Adding graph raises recall@5
-(0.604 → 0.646) and hit@5 (0.688 → 0.750) while *lowering* MRR (0.516 → 0.463). It
+(0.604 → 0.646) and hit@5 (0.688 → 0.750) while *lowering* MRR (0.516 → 0.453). It
 finds code the text modalities missed, then dilutes the top of the ranking. That
-trade is real and is documented rather than tuned away — reranking (not yet built)
-is the honest fix.
+trade is documented rather than tuned away, and it is what Phase 3b set out to fix.
 
-**The biggest single lever was not a modality at all.** Demoting test code moves
-recall@10 from 0.635 to 0.781 — more than adding an entire retrieval modality. Both
-text modalities systematically rank tests above the implementations they exercise,
-because a test states the behaviour in prose, names it in the function title, and
-repeats the vocabulary; the implementation just does it.
+**Reranking is the largest lever measured so far, and it lands where the diagnosis
+said it would — but smaller than first reported.** A cross-encoder reads the query
+and one candidate *together*, the one thing neither RRF (which sees only positions)
+nor the bi-encoder (which sees the two texts separately) can do. It moves MRR
+0.454 → **0.614**, clearing the 0.516 that lexical+dense+prefer-impl reached before
+the graph modality started diluting it. Retrieval widens the candidate set to
+`k × 4`; the reranker reorders it.
+
+> **These rows were corrected.** The reranking numbers first published here
+> (0.750 / 0.781 / 0.875 / 0.679) did not reproduce. Re-running the ablation four
+> times — two independently built indexes, two repeats each — gave identical results
+> every time, and they are the rows above. The likely cause is that the original
+> measurement predates a later change to what text the reranker is shown. Two of the
+> three original claims do not survive the correction: **recall@10 does not fall**
+> (0.802 → 0.802) and **hit@5 does not improve** (0.750 → 0.750). What survives is
+> the MRR gain, which is still the largest in the project. A number that cannot be
+> reproduced against the code shipped beside it is not a measurement, and correcting
+> it in place is cheaper than being wrong in public.
+
+**Reranking bought ranking, not recall.** recall@10 is unchanged at 0.802 and hit@5
+unchanged at 0.750; only the ordering within those hits improved. That is the
+expected shape — reranking reorders a fixed candidate set and cannot manufacture
+recall — but it is worth stating plainly, because "biggest lever in the project" and
+"found no additional code" are both true of the same change.
+
+**The result that was not the hypothesis: reranking did not vindicate graph
+expansion.** With the reranker on, turning graph expansion *off* scores identically —
+0.708 / 0.802 / 0.750, and 0.614 vs 0.613 MRR. That tie was suspicious enough to
+check per query rather than report, and the check says it is real and not a stuck
+flag: graph expansion contributed **436 symbols** the text modalities never returned,
+and **5 of the 16** reranked top-tens genuinely differ between the two
+configurations, yet **zero** queries change whether a gold-labelled symbol is in the
+top ten. It changes *what* comes back and never whether the right answer is present.
+So "graph widens, the cross-encoder reorders" is half confirmed. The reordering earns
+its cost. The widening, on this gold set, does not demonstrably earn anything — and
+the modality stays in at weight 0.3 pending a gold set large enough to say otherwise,
+not because this measurement defended it.
+
+**The biggest single lever was not a modality at all** — until the reranker took
+half its job. Demoting test code moves recall@10 from 0.635 to 0.781, more than
+adding an entire retrieval modality. Both text modalities systematically rank tests
+above the implementations they exercise, because a test states the behaviour in
+prose, names it in the function title, and repeats the vocabulary; the
+implementation just does it. With reranking on the demotion becomes redundant —
+0.708 / 0.802 / 0.750 and 0.614 vs 0.613 MRR with it or without — because the
+cross-encoder makes the same judgement from the query itself rather than from a path
+convention. It stays on because it costs nothing and still carries the unreranked
+path, which is the default when no reranker is installed.
 
 *Caveat that limits all of the above:* the gold set is 16 queries, hand-labelled by
 the author, and every one is of the form "how does X work" — the exact shape the
 test demotion helps. Differences of one or two points are noise. This is enough to
 tell a modality that works from one that does not, and not enough to justify
-fine-grained tuning.
+fine-grained tuning. It also bounds the reranking result specifically: a +0.226 MRR
+swing is far outside that noise band and is safe to believe, while the recall@10
+decline and the graph-with-rerank tie are both inside it, and either could reverse
+on a larger set.
 
 ## Onboarding tours
 
@@ -337,6 +461,7 @@ Three things that line-up is trying to make impossible to miss:
 | `-k N` | results to return (default 10) |
 | `--facts-only` | T0/T1 only — parsed facts and resolved names, nothing inferred |
 | `--no-lexical`, `--no-dense`, `--no-graph` | turn a modality off; the switches the ablation needs |
+| `--rerank` | reorder with a cross-encoder that reads the query (opt-in; downloads ~3.4GB on first use, and says so and answers anyway if it cannot load) |
 | `--json` | machine-readable output on stdout, notes on stderr |
 | `--repo`, `--index-path` | which index to use (default: `$PWD/.codelearner/index.db`) |
 
@@ -453,6 +578,128 @@ embeddings, an embedder that does not match the vectors on disk — these are no
 states of the world, and each one gets a sentence saying what happened and what to
 do about it.
 
+## MCP server
+
+The CLI is for a human. The MCP server is for the agent already sitting in your
+editor, and it exists because of one architectural decision: **this tool does not
+call an LLM.**
+
+A retrieval tool that wanted to answer "what does this function guarantee" would
+have to call a model — which means an API key, a bill, a rate limit, and a second
+place where an unciteable sentence can be born. Inverting it costs nothing and buys
+everything. The agent is already running and already paid for, so it calls *in*. The
+tool does the deterministic half — parse, retrieve, hash, gate, store — and the agent
+supplies the judgement through `submit_assertion`, where a gate decides whether that
+judgement may be kept.
+
+The gate is worth something only because it cannot be argued with. It checks that
+every cited span exists at the lines given and that its bytes still hash to what was
+cited. Both are arithmetic. A model cannot talk its way past a sha256, and when it
+fails it is told which citation moved and what the file says now — so the next
+attempt is a correction rather than another guess.
+
+### Install and configure
+
+```bash
+pip install -e ".[mcp]"            # `mcp` pulls in pydantic/starlette/uvicorn
+codelearner index /path/to/repo    # the server serves an index; build one first
+```
+
+Paste this into your MCP client's config (`claude_desktop_config.json`, `.mcp.json`,
+or your client's equivalent):
+
+```json
+{
+  "mcpServers": {
+    "codelearner": {
+      "command": "codelearner-mcp",
+      "args": ["/path/to/repo"]
+    }
+  }
+}
+```
+
+`--index-path /elsewhere/index.db` overrides the default location, and
+`--transport streamable-http` serves over a port instead of stdio for a remote or
+shared index. From a bare checkout, before anything is installed, point `command` at
+the venv's own interpreter instead:
+
+```json
+{
+  "mcpServers": {
+    "codelearner": {
+      "command": "/path/to/code-learner/.venv/bin/python",
+      "args": ["-m", "codelearner.server", "/path/to/repo"]
+    }
+  }
+}
+```
+
+The server **starts even when the index does not exist**. That is deliberate: an MCP
+client launches its servers at session start and marks one that exits non-zero as
+failed, so refusing to start over a missing index would take the whole integration
+down over a condition that one command fixes. It starts, and the first tool call
+returns `{"ok": false, "error": {"code": "no_index", ...}}` with the command to run.
+
+### The tools
+
+| tool | what it returns |
+|---|---|
+| `search_code(query, k, facts_only)` | hybrid retrieval — lexical + dense + graph, RRF-fused. Tier-labelled hits with qualname, `path` and line range, the modalities that found it, `via` (the account of how graph expansion reached it), and the `content_hash` needed to cite it. `facts_only` drops tier 2. |
+| `get_symbol(qualname)` | one symbol, its resolved callers and callees (T1, each with its resolver's confidence), its unbound call sites (T0), and any servable assertions about it. |
+| `reading_path(topic, limit)` | the onboarding tour, ordered by dependency depth so a stop's callees come before it. With a topic it is seeded from retrieval; without one, from call-graph centrality. |
+| `submit_assertion(subject_qualname, claim, evidence_spans, …)` | the inversion. Stores a tier-2 claim if and only if its citations hold. |
+| `index_stats()` | what is in the index, by tier: counts, edges split T0/T1, assertions split active/rejected/stale, resolution rates, and whether vectors are present. |
+
+Every tool returns `{"ok": true, …}` or `{"ok": false, "error": {"code", "message",
+…}}`. No predictable condition raises into the transport — a traceback crossing an
+MCP boundary tells the agent the tool is broken, which is the one conclusion that
+stops it trying again. This is the machine-facing half of the same policy the CLI's
+exit codes implement for a human.
+
+### The gate
+
+An evidence span is `{path, line_start, line_end}` plus **something to check it
+against**: either the `content_hash` retrieval already handed you, or the exact
+`text` you read at those lines. Lines are 1-based and inclusive.
+
+`submit_assertion` refuses, and says why:
+
+| code | when |
+|---|---|
+| `evidence_required` | zero evidence spans. An uncited claim cannot be adjudicated, cannot expire, and cannot be checked by a reader — it is indistinguishable from a good one at every stage after this, so the only place to stop it is the door. |
+| `hash_mismatch` | the cited bytes no longer hash to what was cited. Returns `observed_hash` and `observed_text`, so the citation can be corrected rather than re-guessed. |
+| `evidence_unverifiable` | a span with neither hash nor text. A location that asserts nothing about what is there can never be found to be wrong. |
+| `bad_range` / `file_missing` / `path_escapes_repo` | the citation does not point at readable bytes inside this repo. |
+
+One bad span refuses the whole submission. Admitting the ones that happened to verify
+would leave a claim standing on a subset of the evidence its author thought it had.
+
+A line range has two honest readings — the symbol that occupies those lines, and the
+whole lines themselves — and they hash differently. A symbol's stored bytes begin at
+`def` rather than in the indentation before it, at the `@` for a decorated symbol,
+and run to the last byte of the file for a module. Measured on code-learner itself,
+that is 85 of 383 symbols. Both readings are built and both are re-hashed off disk,
+and the cited hash may match either. That is not a loosening: every candidate is read
+from the file as it is right now, so a stale or invented hash still matches nothing.
+What it removes is a false rejection — the more dangerous failure here, because an
+agent told that its correct citation is wrong learns that the gate is noise.
+
+Admission is not a permanent licence either. `get_symbol` re-reads and re-hashes
+every cited span on every call, so a claim whose evidence has been edited is expired
+on the way past rather than served one last time — and marked `stale`, never deleted.
+The rejected and stale sets are the only evidence that the gate does anything.
+
+The loop the whole design rests on is three calls:
+
+```
+search_code("how are leases acquired")   -> hits, each carrying a content_hash
+  (the agent reads the code and forms a claim)
+submit_assertion(qualname, claim, [{path, line_start, line_end, content_hash}])
+  -> accepted, or refused with a reason it can act on
+get_symbol(qualname)                     -> the claim, re-verified against disk
+```
+
 ## Roadmap
 
 | Phase | | Status |
@@ -462,17 +709,17 @@ do about it.
 | 2 | Symbol-boundary chunking + FTS5 lexical index | done |
 | 2b | Dense embeddings (`Qwen3-Embedding-0.6B`) into sqlite-vec | done |
 | 3 | Hybrid retrieval: RRF fusion + graph expansion | done |
-| 3b | Cross-encoder reranking | next |
+| 3b | Cross-encoder reranking (`zerank-1-small`) | done |
 | 4 | Assertion pipeline + adversarial gate | |
 | 5 | Staleness engine | |
 | 6 | Onboarding tours | done |
-| 7 | MCP server + CLI | |
+| 7 | MCP server + CLI | done |
 | 8 | Eval: per-modality ablation (done), faithfulness, gate controls | partial |
 
 ## Verification
 
 ```bash
-.venv/bin/python -m pytest tests/ -q      # 167 tests
+.venv/bin/python -m pytest tests/ -q      # 248 tests
 .venv/bin/ruff check .
 .venv/bin/mypy codelearner --ignore-missing-imports
 ```
@@ -488,3 +735,20 @@ from codelearner.eval import run_ablation, format_table
 conn = db.connect(Path("/path/to/.codelearner/index.db"))
 print(format_table(run_ablation(conn, SentenceTransformerEmbedder())))
 ```
+
+The reranked rows are opt-in for the same reason the CLI flag is — they cost a model
+forward pass per candidate, roughly 640 per row, and the modality rows must stay
+runnable on a machine with no GPU:
+
+```python
+from codelearner.retrieve import load_reranker
+
+reranker = load_reranker(conn=conn)   # None if no model can be loaded
+print(format_table(run_ablation(conn, SentenceTransformerEmbedder(), reranker=reranker)))
+```
+
+`load_reranker` returns `None` rather than raising when there is no model, no
+network, or no memory, and `run_ablation` and `search` both read `None` as *skip the
+stage*. On the 10GB RTX 3080 the full table takes 167s; the reranker needs ~3.5GB of
+it and will fall back to CPU if the card is busy, which is correct but far too slow
+to benchmark with.

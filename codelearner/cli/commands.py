@@ -19,7 +19,7 @@ from typing import Any
 from .. import db
 from ..index import Embedder, embed_chunks
 from ..ingest import index_repo
-from ..retrieve import search, stored_embed_model
+from ..retrieve import load_reranker, search, stored_embed_model
 from .render import count_line, facts_only, format_hit, hit_json
 
 # Kept in step with `indexer.index_repo`'s own default. One file per repo is what
@@ -235,6 +235,18 @@ def cmd_search(args: Any, factory: EmbedderFactory) -> int:
             "or build embeddings with `codelearner index <repo> --embed --force`."
         )
 
+    reranker = None
+    if getattr(args, "rerank", False):
+        reranker = load_reranker(conn=conn)
+        if reranker is None:
+            # Asked for and not available. Say so and keep going -- the fused order
+            # is the result every release before Phase 3b returned, and refusing the
+            # query would be a strictly worse answer than a slightly worse ranking.
+            notes.append(
+                "reranking unavailable: no cross-encoder could be loaded (no model "
+                "weights, or not enough memory). Returning the fused order."
+            )
+
     result = search(
         conn,
         args.query,
@@ -243,6 +255,7 @@ def cmd_search(args: Any, factory: EmbedderFactory) -> int:
         use_lexical=use_lexical,
         use_dense=use_dense,
         use_graph=use_graph,
+        reranker=reranker,
     )
     hits = facts_only(result.hits) if args.facts_only else list(result.hits)
 

@@ -313,6 +313,7 @@ def mark_stale(
     span_id: int | None = None,
     expected_hash: str | None = None,
     observed_hash: str | None = None,
+    detected_at: str | None = None,
 ) -> bool:
     """Expire an active assertion and log which citation moved. Returns True if it
     transitioned.
@@ -322,6 +323,16 @@ def mark_stale(
     one row per expiry event rather than one per read -- which is what makes its
     growth rate a real signal about how fast this repo invalidates its own
     inferences, instead of a count of how often somebody asked.
+
+    `detected_at` exists so ONE expiry carries ONE timestamp. A caller that has
+    already read the clock -- `stale.serve_assertions` reports that read back as
+    `checked_at` -- must be able to stamp the log with the same instant instead of
+    letting the column default fire a second read. Two reads of the same event drift
+    by a millisecond, and a later call that correctly reports the logged
+    `detected_at` then disagrees with what the detecting call returned. The record
+    of when a claim expired must not depend on which function looked at the clock.
+    Omitted, the schema default applies, which is right for callers with no clock
+    read of their own to reconcile.
     """
     with _atomic(conn):
         cur = conn.execute(
@@ -329,11 +340,19 @@ def mark_stale(
         )
         if cur.rowcount == 0:
             return False
-        conn.execute(
-            "INSERT INTO staleness_log (assertion_id, span_id, reason, "
-            " expected_hash, observed_hash) VALUES (?,?,?,?,?)",
-            (assertion_id, span_id, reason, expected_hash, observed_hash),
-        )
+        if detected_at is None:
+            conn.execute(
+                "INSERT INTO staleness_log (assertion_id, span_id, reason, "
+                " expected_hash, observed_hash) VALUES (?,?,?,?,?)",
+                (assertion_id, span_id, reason, expected_hash, observed_hash),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO staleness_log (assertion_id, span_id, reason, "
+                " expected_hash, observed_hash, detected_at) VALUES (?,?,?,?,?,?)",
+                (assertion_id, span_id, reason, expected_hash, observed_hash,
+                 detected_at),
+            )
     return True
 
 

@@ -41,7 +41,11 @@ SCHEMA = SCHEMA_PATH.read_text()
 #   v4 -- the tier-2 assertion store: `assertions`, `evidence_spans`, `verdicts`,
 #         `staleness_log`. An inferred claim is admitted only with citations, and is
 #         served only while those citations still hash to what was cited.
-SCHEMA_VERSION = 4
+#   v5 -- `span_verifications`, the stat (mtime_ns + size) baseline that lets the
+#         staleness engine skip the re-read when nothing moved. Purely an
+#         accelerator: the table is disposable, and dropping every row costs
+#         correctness nothing -- the next query simply re-hashes.
+SCHEMA_VERSION = 5
 
 EXPECTED_TABLES = ("files", "symbols", "edges", "chunks", "assertions")
 

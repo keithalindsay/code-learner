@@ -94,6 +94,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_search.add_argument("--no-lexical", action="store_true", help="disable BM25 lexical search")
     p_search.add_argument("--no-dense", action="store_true", help="disable vector search")
     p_search.add_argument("--no-graph", action="store_true", help="disable graph expansion")
+    # Opt-in, not on by default: it downloads ~3.4GB of weights on first use and
+    # costs a model forward pass per candidate. Off, `search` behaves exactly as it
+    # did before Phase 3b; on and unavailable, it says so and still answers.
+    p_search.add_argument(
+        "--rerank",
+        action="store_true",
+        help="reorder results with a cross-encoder that reads the query (slow, downloads a model)",
+    )
     p_search.add_argument("--json", action="store_true", help="emit JSON instead of a table")
     p_search.set_defaults(func=cmd_search)
 

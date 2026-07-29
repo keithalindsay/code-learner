@@ -26,6 +26,7 @@ from .dense import search_dense
 from .fuse import reciprocal_rank_fusion
 from .graph import expand
 from .lexical import Hit, search_lexical
+from .rerank import Reranker
 
 # Each modality retrieves deeper than the final k, so fusion has room to promote a
 # symbol that several modalities agree on but none ranked first.
@@ -49,13 +50,20 @@ def search(
     use_lexical: bool = True,
     use_dense: bool = True,
     use_graph: bool = True,
-    reranker: object | None = None,
+    reranker: Reranker | None = None,
     prefer_implementation: bool = True,
 ) -> SearchResult:
     """Run the hybrid pipeline and return the top `k` symbols.
 
     `embedder` is required for the dense modality; without one, dense is skipped
     rather than erroring, so an index built without embeddings still answers.
+
+    `reranker` is optional and `None` means "skip the stage" -- a machine with no
+    model retrieves exactly as this pipeline did before Phase 3b. When one IS given,
+    fusion deliberately returns `k * CANDIDATE_MULTIPLIER` candidates instead of `k`,
+    because the whole point of the stage is to reorder a set wider than the answer:
+    truncating to `k` first would let RRF discard the recall graph expansion bought
+    before the cross-encoder ever saw it. See `rerank.py` for the measured effect.
 
     `prefer_implementation` defaults ON: measured on the swarm-sync gold set it is
     the largest single quality lever (recall@10 0.635 -> 0.781). Turn it off for
@@ -83,7 +91,7 @@ def search(
     )
 
     if reranker is not None and fused:
-        fused = reranker.rerank(query, fused, k=k)  # type: ignore[attr-defined]
+        fused = reranker.rerank(query, fused, k=k)
         return SearchResult(hits=fused, per_modality=per_modality, reranked=True)
 
     return SearchResult(hits=fused[:k], per_modality=per_modality)

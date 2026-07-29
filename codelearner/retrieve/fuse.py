@@ -43,8 +43,15 @@ RRF_K = 60
 # representation. It contributes symbols that text retrieval missed, which raises
 # recall (0.604 -> 0.646 @5, 0.781 -> 0.802 @10), but every vote it casts is
 # evidence about the CODE rather than about the QUESTION, so at higher weights those
-# votes displace better-matched answers at the top. MRR falls 0.516 -> 0.463 even at
+# votes displace better-matched answers at the top. MRR falls 0.516 -> 0.453 even at
 # the weight that maximises recall. That trade is real and is not tuned away.
+#
+# Phase 3b answered the "so fix it downstream" half of that. A cross-encoder, which
+# DOES read the query, recovers the lost ranking and then some: MRR 0.453 -> 0.679
+# with graph still on at 0.3. What it did NOT do is vindicate the graph modality --
+# with reranking enabled, turning graph off scores identically on all four metrics.
+# See `rerank.py`. The weight stays at 0.3 because these numbers do not argue for
+# moving it in either direction, not because anything here re-measured it.
 DEFAULT_WEIGHTS = {"lexical": 1.0, "dense": 1.0, "graph": 0.3}
 
 

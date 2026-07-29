@@ -24,10 +24,29 @@ embed = [
     "sentence-transformers>=3.0",
     "torch>=2.5",
 ]
+# Cross-encoder reranking. Separate from `embed` because it is opt-in and pulls
+# ~3.4GB of weights, and because `accelerate` is needed ONLY here:
+# `zerank-1-small-reranker` ships remote code that loads its model with a
+# `device_map`, which transformers refuses to honour without accelerate. Left
+# implicit, that surfaces as a ValueError from inside a vendored file rather than
+# as a missing dependency, which is a bad half-hour for whoever hits it.
+rerank = [
+    "sentence-transformers>=3.0",
+    "torch>=2.5",
+    "accelerate>=1.0",
+]
+# The MCP server. Optional rather than a core dependency: `mcp` pulls in pydantic,
+# starlette and uvicorn, and a user who only wants `codelearner search` in a shell
+# should not install an ASGI stack to get it. `tests/test_mcp.py` skips itself when
+# this extra is absent, the same way the dense tests skip without sqlite-vec.
+mcp = [
+    "mcp>=2.0",
+]
 dev = [
     "pytest>=8.0",
     "ruff>=0.6",
     "mypy>=1.11",
+    "mcp>=2.0",
 ]
 
 [project.scripts]
@@ -35,6 +54,9 @@ dev = [
 # which is what console_scripts expects and what makes it callable from a test
 # without catching SystemExit.
 codelearner = "codelearner.cli:main"
+# The agent entry point. Same convention, and the name an MCP client's config block
+# launches -- so it is part of the published interface, not a convenience alias.
+codelearner-mcp = "codelearner.server:main"
 
 [tool.setuptools.packages.find]
 include = ["codelearner*"]

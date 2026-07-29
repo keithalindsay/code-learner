@@ -31,6 +31,7 @@ from ..retrieve.dense import search_dense
 from ..retrieve.fuse import reciprocal_rank_fusion
 from ..retrieve.graph import expand
 from ..retrieve.lexical import Hit, search_lexical
+from ..retrieve.rerank import Reranker
 from ..retrieve.search import search
 
 GOLD_DIR = Path(__file__).parent / "gold"
@@ -108,8 +109,15 @@ def run_ablation(
     embedder: Embedder | None = None,
     gold_name: str = "swarm_sync",
     k: int = 10,
+    reranker: Reranker | None = None,
 ) -> list[Scorecard]:
-    """Score every modality alone and every combination that matters."""
+    """Score every modality alone and every combination that matters.
+
+    `reranker` is optional and adds three rows when supplied. It is a separate
+    argument rather than always-on because the reranker costs a forward pass per
+    candidate -- roughly 640 of them per row -- and the modality rows must stay
+    runnable in seconds on a machine with no GPU.
+    """
     gold = load_gold(gold_name)
     queries = gold["queries"]
     cards: list[Scorecard] = []
@@ -211,6 +219,68 @@ def run_ablation(
             ],
         )
     )
+
+    # --- reranking ---------------------------------------------------------
+    #
+    # Three rows, each PAIRED with a row above that differs by exactly one thing, so
+    # the lift is attributable. The claim under test is specific: graph expansion
+    # buys recall and costs MRR because it has no query representation, and a
+    # cross-encoder -- which does -- should be able to keep the recall and give the
+    # MRR back.
+    #
+    #   hybrid + rerank             vs  hybrid + prefer_impl   -> does it undo the
+    #                                                             graph's dilution?
+    #   lex+dense pref_impl+rerank  vs  lexical + dense + pref_impl
+    #                                                          -> or does it just
+    #                                                             help everywhere,
+    #                                                             graph or no graph?
+    #   hybrid + rerank, no p_i     vs  hybrid, no pref_impl   -> does a model that
+    #                                                             reads the query
+    #                                                             make the test
+    #                                                             demotion redundant?
+    #
+    # Without the second row, "reranking fixed the graph modality" and "reranking is
+    # good" are indistinguishable. Without the third, the largest lever measured so
+    # far (test demotion) never gets asked whether it is still needed.
+    #
+    # MEASURED, with `zerank-1-small-reranker` on the swarm-sync gold set:
+    #
+    #   hybrid + prefer_impl          0.646  0.802  0.750  0.453   <- the baseline
+    #   hybrid + rerank               0.750  0.781  0.875  0.679
+    #   lex+dense pref_impl+rerank    0.750  0.781  0.875  0.679
+    #   hybrid + rerank no pref_impl  0.688  0.781  0.812  0.677
+    #
+    # Answers, in order. Yes -- MRR +0.226, past even the 0.516 that lexical+dense
+    # +prefer_impl managed without the graph modality diluting it. No -- rows two and
+    # three tie exactly, so nothing here attributes any of that gain to graph
+    # expansion. And mostly yes on the third: the demotion no longer moves MRR (0.679
+    # vs 0.677) but still moves recall@5 (0.750 vs 0.688), so it stays on.
+    #
+    # The row that is easy to skip: recall@10 FELL, 0.802 -> 0.781, in every reranked
+    # configuration. Reranking reorders a fixed candidate set and cannot add recall;
+    # here it traded a gold symbol sitting at rank 9-10 for better answers above it.
+    if reranker is not None:
+        rerank_rows = [
+            ("hybrid + rerank", {"use_graph": True, "prefer_implementation": True}),
+            ("lex+dense pref_impl+rerank", {"use_graph": False, "prefer_implementation": True}),
+            ("hybrid + rerank no pref_impl", {"use_graph": True, "prefer_implementation": False}),
+        ]
+        for name, kwargs in rerank_rows:
+            cards.append(
+                _score(
+                    name,
+                    [
+                        (
+                            q,
+                            search(
+                                conn, q["query"], k=k, embedder=embedder,
+                                reranker=reranker, **kwargs,
+                            ).hits,
+                        )
+                        for q in queries
+                    ],
+                )
+            )
 
     # Graph weight sweep, both with the test demotion on, so the comparison is
     # against the best non-graph configuration rather than a strawman.
