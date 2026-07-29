@@ -33,9 +33,12 @@ SCHEMA = SCHEMA_PATH.read_text()
 # History:
 #   v1 -- files, symbols, edges. The tier-0/tier-1 split lives in `edges`
 #         (`dst_name` always set, `dst_symbol_id` only once resolved).
-SCHEMA_VERSION = 1
+#   v2 -- `chunks` (symbol-boundary retrieval units) plus the `chunks_fts` external-
+#         content FTS5 index and its three sync triggers. Additive, but a v1 DB is
+#         refused and re-indexed per the policy above rather than migrated.
+SCHEMA_VERSION = 2
 
-EXPECTED_TABLES = ("files", "symbols", "edges")
+EXPECTED_TABLES = ("files", "symbols", "edges", "chunks")
 
 # How long a write that loses a brief lock race waits for the winner instead of
 # failing with "database is locked".

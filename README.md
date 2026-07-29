@@ -8,9 +8,10 @@ classes and functions, resolves the references between them, and (from Phase 4)
 layers on *purpose* — what each piece is for — where every inferred claim cites the
 source spans it came from and expires when those spans change.
 
-**Status: early. Phase 1 of 8.** Ingest, storage, and tier-1 name resolution work
-and are tested. Chunking, embeddings, retrieval, the inference layer, and the eval
-harness are not built yet.
+**Status: early.** Ingest, storage, tier-1 name resolution, symbol-boundary
+chunking, and lexical (BM25) retrieval work and are tested. Embeddings, hybrid
+fusion, graph expansion, reranking, the inference layer, and the eval harness are
+not built yet.
 
 ---
 
@@ -121,7 +122,8 @@ print(f"{stats.resolve.rate_of_internal:.1%} of in-repo references resolved")
 |---|---|---|
 | 0 | Spike on a real repo | done |
 | 1 | Ingest + store + tier-1 resolution | done |
-| 2 | Symbol-boundary chunking, FTS5, embeddings | next |
+| 2 | Symbol-boundary chunking + FTS5 lexical index | done |
+| 2b | Embeddings (`C2LLM-0.5B`) into sqlite-vec | next |
 | 3 | Hybrid retrieval: RRF fusion, graph expansion, rerank | |
 | 4 | Assertion pipeline + adversarial gate | |
 | 5 | Staleness engine | |
@@ -132,7 +134,7 @@ print(f"{stats.resolve.rate_of_internal:.1%} of in-repo references resolved")
 ## Verification
 
 ```bash
-.venv/bin/python -m pytest tests/ -q      # 33 tests
+.venv/bin/python -m pytest tests/ -q      # 47 tests
 .venv/bin/ruff check .
 .venv/bin/mypy codelearner --ignore-missing-imports
 ```

@@ -90,3 +90,49 @@ CREATE INDEX IF NOT EXISTS idx_edges_src ON edges(src_symbol_id);
 CREATE INDEX IF NOT EXISTS idx_edges_dst ON edges(dst_symbol_id);
 CREATE INDEX IF NOT EXISTS idx_edges_dst_name ON edges(dst_name);
 CREATE INDEX IF NOT EXISTS idx_edges_kind ON edges(kind);
+
+-- Retrieval units. One chunk per symbol, cut on symbol boundaries rather than a
+-- fixed window: splitting a function in half produces two fragments that are each
+-- individually misleading, and the embedding of half a function is not the
+-- embedding of anything a question would ever be about.
+CREATE TABLE IF NOT EXISTS chunks (
+    id           INTEGER PRIMARY KEY,
+    symbol_id    INTEGER NOT NULL UNIQUE REFERENCES symbols(id) ON DELETE CASCADE,
+    -- Retrieval text: a generated context header followed by the source slice. The
+    -- header exists because a bare method body is not self-describing -- `def
+    -- acquire(...)` retrieved alone gives a reader no idea which class or module
+    -- it belongs to, and the embedding loses that signal too.
+    text         TEXT NOT NULL,
+    -- Header alone, so a caller can show provenance without re-deriving it.
+    header       TEXT NOT NULL,
+    char_count   INTEGER NOT NULL,
+    -- Hash of `text`. Lets a re-index skip re-embedding chunks that did not change,
+    -- which is the difference between a 3-second and a 3-minute update.
+    text_hash    TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_chunks_symbol ON chunks(symbol_id);
+
+-- Lexical retrieval modality. `content=''` makes this an external-content index:
+-- FTS5 stores only the inverted index, not a second copy of every chunk's text.
+CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
+    text,
+    content='chunks',
+    content_rowid='id',
+    tokenize='unicode61 remove_diacritics 0'
+);
+
+-- Keep the FTS index in step with the table it mirrors. Without these an edited or
+-- deleted chunk leaves a phantom entry that keeps matching queries forever.
+CREATE TRIGGER IF NOT EXISTS chunks_fts_insert AFTER INSERT ON chunks BEGIN
+    INSERT INTO chunks_fts(rowid, text) VALUES (new.id, new.text);
+END;
+
+CREATE TRIGGER IF NOT EXISTS chunks_fts_delete AFTER DELETE ON chunks BEGIN
+    INSERT INTO chunks_fts(chunks_fts, rowid, text) VALUES ('delete', old.id, old.text);
+END;
+
+CREATE TRIGGER IF NOT EXISTS chunks_fts_update AFTER UPDATE ON chunks BEGIN
+    INSERT INTO chunks_fts(chunks_fts, rowid, text) VALUES ('delete', old.id, old.text);
+    INSERT INTO chunks_fts(rowid, text) VALUES (new.id, new.text);
+END;

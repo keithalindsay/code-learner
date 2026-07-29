@@ -47,8 +47,10 @@ class IndexStats:
     symbols: int = 0
     edges: int = 0
     edges_resolved: int = 0
+    chunks: int = 0
     skipped: int = 0
     resolve: ResolveStats = field(default_factory=ResolveStats)
+    chunk: object = None  # ChunkStats; typed loosely to avoid a circular import
 
     @property
     def resolution_rate(self) -> float:
@@ -199,5 +201,14 @@ def index_repo(
     rstats = resolve_all(conn)
     stats.edges_resolved = rstats.resolved
     stats.resolve = rstats
+
+    # Pass 4 -- retrieval units. Imported here rather than at module scope: `chunk`
+    # reads the symbol table this module writes, so a top-level import would be
+    # circular.
+    from ..chunk import build_chunks
+
+    cstats = build_chunks(conn, repo_root)
+    stats.chunks = cstats.chunks
+    stats.chunk = cstats
 
     return conn, stats
