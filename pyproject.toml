@@ -7,10 +7,12 @@ name = "code-learner"
 version = "0.0.1"
 description = "GraphRAG over a codebase, for agents and for humans"
 readme = "README.md"
-# 3.11+: matches the venv this is developed against. Pinned deliberately rather
-# than left open -- a system default of 3.10 is exactly the kind of interpreter
-# drift that produces phantom test failures.
-requires-python = ">=3.11"
+# 3.12+, and the floor is deliberate. It is not that 3.11 lacks a needed feature --
+# it is that a 3.11.0rc build lacks `sys.get_int_max_str_digits` (added in 3.11.0
+# final), which modern torch imports unconditionally, producing an error message
+# that points nowhere near the cause. Requiring 3.12 makes that class of interpreter
+# drift impossible rather than merely documented.
+requires-python = ">=3.12"
 dependencies = [
     "tree-sitter>=0.25",
     "tree-sitter-python>=0.25",

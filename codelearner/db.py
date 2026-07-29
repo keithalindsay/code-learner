@@ -57,6 +57,31 @@ class RepoRootMismatchError(RuntimeError):
     two unrelated codebases into one graph. Raised by `bind_repo_root`."""
 
 
+def load_vec_extension(conn: sqlite3.Connection) -> bool:
+    """Load sqlite-vec on `conn`. Returns True on success.
+
+    Optional by design: the lexical and graph modalities work without it, and a
+    missing vector extension should degrade retrieval rather than prevent the tool
+    from opening an index at all.
+    """
+    try:
+        import sqlite_vec
+    except ImportError:
+        return False
+    try:
+        conn.enable_load_extension(True)
+        sqlite_vec.load(conn)
+        return True
+    except (AttributeError, sqlite3.OperationalError):
+        # Python built without extension support, or a host SQLite that refuses.
+        return False
+    finally:
+        try:
+            conn.enable_load_extension(False)
+        except AttributeError:
+            pass
+
+
 def _configure(conn: sqlite3.Connection) -> None:
     """Apply the pragmas + row factory every connection to an index must use."""
     conn.row_factory = sqlite3.Row
@@ -76,6 +101,10 @@ def connect(path: StrPath) -> sqlite3.Connection:
     """
     conn = sqlite3.connect(str(path), isolation_level=None, check_same_thread=False)
     _configure(conn)
+    # Vector search lives in the same file, so the extension has to be present on
+    # every handle that might query it -- a vec0 table is invisible to a connection
+    # that did not load it.
+    load_vec_extension(conn)
     return conn
 
 

@@ -9,9 +9,9 @@ layers on *purpose* — what each piece is for — where every inferred claim ci
 source spans it came from and expires when those spans change.
 
 **Status: early.** Ingest, storage, tier-1 name resolution, symbol-boundary
-chunking, and lexical (BM25) retrieval work and are tested. Embeddings, hybrid
-fusion, graph expansion, reranking, the inference layer, and the eval harness are
-not built yet.
+chunking, and both retrieval modalities -- lexical (BM25) and dense (vector) -- work
+and are tested. Hybrid fusion, graph expansion, reranking, the inference layer, and
+the eval harness are not built yet.
 
 ---
 
@@ -99,13 +99,23 @@ mutation-verified — delete the fix, confirm the test fails, restore, confirm g
 
 ## Quickstart
 
-Requires Python 3.11+.
+Requires **Python 3.12+**.
 
 ```bash
-python3.11 -m venv .venv
+uv venv --python 3.12 .venv          # or: python3.12 -m venv .venv
 .venv/bin/pip install -e ".[dev]"
 .venv/bin/python -m pytest tests/ -q
+
+# Dense retrieval (optional; downloads ~1.2GB of model weights on first run)
+.venv/bin/pip install -e ".[embed]"
 ```
+
+> **Check `python3 -V` reports a final release, not a release candidate.** This was
+> developed on a box whose `/usr/bin/python3.11` is `3.11.0rc1`, which lacks
+> `sys.get_int_max_str_digits` — added in 3.11.0 final. Modern torch imports it
+> unconditionally, so the whole ML stack fails with a `ModuleNotFoundError` about
+> `PreTrainedModel` that says nothing about the real cause. An hour lost to that is
+> why the floor is 3.12.
 
 ```python
 from pathlib import Path
@@ -123,8 +133,8 @@ print(f"{stats.resolve.rate_of_internal:.1%} of in-repo references resolved")
 | 0 | Spike on a real repo | done |
 | 1 | Ingest + store + tier-1 resolution | done |
 | 2 | Symbol-boundary chunking + FTS5 lexical index | done |
-| 2b | Embeddings (`C2LLM-0.5B`) into sqlite-vec | next |
-| 3 | Hybrid retrieval: RRF fusion, graph expansion, rerank | |
+| 2b | Dense embeddings (`Qwen3-Embedding-0.6B`) into sqlite-vec | done |
+| 3 | Hybrid retrieval: RRF fusion, graph expansion, rerank | next |
 | 4 | Assertion pipeline + adversarial gate | |
 | 5 | Staleness engine | |
 | 6 | Onboarding tours | |
@@ -134,7 +144,7 @@ print(f"{stats.resolve.rate_of_internal:.1%} of in-repo references resolved")
 ## Verification
 
 ```bash
-.venv/bin/python -m pytest tests/ -q      # 47 tests
+.venv/bin/python -m pytest tests/ -q      # 60 tests
 .venv/bin/ruff check .
 .venv/bin/mypy codelearner --ignore-missing-imports
 ```
