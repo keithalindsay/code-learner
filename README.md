@@ -276,6 +276,255 @@ swing is far outside that noise band and is safe to believe, while the recall@10
 decline and the graph-with-rerank tie are both inside it, and either could reverse
 on a larger set.
 
+## Faithfulness: does a claim follow from what it cites?
+
+The assertion store checks that every cited span exists and still hashes to what was
+cited. That is arithmetic, and a model cannot argue with it. What it cannot check is
+whether the span *supports* the claim — a citation can be perfectly present,
+perfectly unedited, and completely silent on what the claim asserts.
+`codelearner.eval.faithfulness` measures that, and it is the only measurement in this
+repo that needs a model to produce it.
+
+**The judge is a different model family from the generator, on purpose.** Claude
+writes the assertions through `submit_assertion`; `qwen3.5:9b` judges them. That is a
+methodological requirement, not a cost saving — a generator grading its own output
+shares its blind spots, its tokenizer, its training distribution and its particular
+way of being confidently wrong, so agreement between the two measures consistency
+rather than truth. The number is only worth reading because the thing producing it is
+not the thing being measured.
+
+**The judge is prompted to refute, and every unclear path lands on "not supported".**
+An LLM asked "does this follow?" will say yes to almost anything plausible, and a
+permissive judge is worse than no judge: it converts an unmeasured risk into a number
+that reads like a guarantee, so everything downstream then trusts the claim *more*
+than before anyone looked. So the task is inverted — the burden of proof is on the
+claim, silence in the evidence is a failure rather than a neutral outcome, and an
+unparseable answer, an empty answer, or a claim with no spans left to read all fail
+closed. The one failure that does *not* fail closed into a verdict is an unreachable
+judge: recording "uncertain" because ollama was not running would reject every
+assertion in the store and log a reason that blames the claims.
+
+Verdicts go through the existing `store.record_verdict`, which already owns the policy
+(one unsupportive verdict rejects; rejection is a state, never a delete). The judge's
+three answers map onto the store's existing vocabulary rather than extending it:
+`supported` → `supported`, `not_supported` → `refuted`, `uncertain` → `unsupported`.
+"The evidence says otherwise" and "the judge could not tell" are different facts and
+both stop a claim being served.
+
+The score is **RAGAS-style faithfulness** — the fraction of claims a judge can support
+from their own retrieved context. RAGAS decomposes an answer into atomic statements
+first because an answer is prose; here that already happened upstream, so one
+assertion *is* one atomic claim and its `evidence_spans` *are* its context. Over an
+empty set the score is `None`, not 1.0: "every claim was supported" is trivially true
+of no claims, and this repo has already been bitten once by a vacuous truth reading as
+success.
+
+### Measured
+
+16 assertions about code-learner's own committed source, authored by Claude from the
+code, each citing exactly one span (the enclosing symbol). Judged by `qwen3.5:9b` at
+temperature 0, thinking off, output constrained to a JSON schema. 48s for the whole
+pass on a shared 10GB RTX 3080 — about 3s per claim, which is cheap enough to audit a
+whole store rather than a sample.
+
+```
+faithfulness 0.625  judge=ollama/qwen3.5:9b  n=16 supported=10 not_supported=6 uncertain=0
+```
+
+Three consecutive runs returned the same score and the same per-claim labels. Claude
+had pre-labelled its own 16 claims before the judge ran — 11 expected to be supported,
+five written to be refusable — so the honest headline is not 0.625 but **15/16
+agreement with a label set the judge never saw**. A judge that approves everything
+scores 1.000 and agrees on 11/16; one that refuses everything scores 0.000 and agrees
+on 5/16. Reporting only the score cannot tell any of those apart.
+
+The single disagreement is the useful one. Claude claimed `record_verdict` "moves the
+assertion to 'rejected' only when it is currently 'active'", which is true, and the
+judge refused it:
+
+> the evidence shows `record_verdict` [...] explicitly checks for `STATUS_ACTIVE`, but
+> it does not provide any information about what happens when the assertion is in a
+> different state [...] so we cannot confirm the claim [...] without assuming
+> behavior outside the provided code.
+
+The judge is right and the *citation* is wrong. The SQL that enforces this
+(`_TOUCH_STATUS`, with its `WHERE id = ? AND status = ?`) is a module-level constant
+outside the cited symbol's byte range, so the claim genuinely rests on evidence it did
+not cite. That is exactly the failure the metric is for, and it is invisible to the
+hash gate — every hash matched.
+
+**A bug this found by being run for real.** On the first pass one claim scored
+`uncertain` because the judge, quoting `embed.serialize` back at itself, emitted
+`{"verdict": "supported", "reasoning": "... the format string `f"{len(values)}f"` ..."}`
+— an unescaped double quote inside its own JSON, because the code it was quoting
+contains one. Invalid JSON, verdict lost, failing closed as designed and giving the
+wrong diagnosis: the claim was blamed for a judge-side transcription bug. The bias is
+systematic, firing on claims about code containing quote characters, which in Python
+means anything involving strings. The parser now recovers the verdict *field*
+specifically — a short token that survives the escaping bug beside it — and the
+recovered token still has to normalise to a recognised label, so nothing can become
+`supported` unless the judge wrote `supported`. `tests/test_faithfulness.py` pins that
+exact string as a regression.
+
+### What it does not measure
+
+- **Whether the claim is true.** Only whether the cited evidence establishes it. A
+  correct claim citing an irrelevant span scores as unfaithful, and that is intended:
+  the citation is the only thing a later reader can check.
+- **The judge is not an oracle.** It is one 9B model, with its own error rate, and it
+  will credit a docstring as evidence for a claim about behaviour if the prompt lets
+  it. `report.unfaithful` exists so a low score is read by looking at the claims that
+  failed, not by trusting the number. Temperature 0 removes the variance that is free
+  to remove; it is not determinism, and the same claim has been observed flipping
+  label between prompts that differed only in whitespace around the span.
+- **Anything about coverage.** A store with three easy claims in it can score 1.000.
+  Faithfulness is a property of the claims that exist, not evidence that the
+  interesting ones were made.
+
+```python
+from codelearner import db
+from codelearner.eval import OllamaJudge, adjudicate
+
+conn = db.connect("/path/to/.codelearner/index.db")
+judge = OllamaJudge()                       # qwen3.5:9b via ollama
+report = adjudicate(conn, judge, record=False)   # record=True writes the verdicts
+print(report.format_report())
+judge.release()                             # frees ~6.6GB of a shared 10GB card
+```
+
+Only *servable* assertions are scored — the candidate set comes from
+`servable_assertions`, so every span handed to the judge has just been re-hashed off
+disk. A claim whose evidence has been edited is stale, which is a different failure
+with a different repair; counting it here would make faithfulness fall whenever the
+repo changed and the number would be measuring two things at once.
+
+## Purpose accuracy: gold labels mined from git history
+
+Faithfulness asks whether a claim follows from its citations. It cannot ask whether the
+claim is *right* about what the code is for — that needs ground truth, and hand-writing
+a purpose statement per symbol costs a paragraph of careful prose a thousand times over.
+That cost is the reason the purpose layer has no accuracy number.
+
+`codelearner/eval/gold_from_history.py` tests a way around it: **the commit that
+introduced a symbol usually says in prose why it was written.** If so, every repo with
+real history is already a labelled purpose corpus — free, unlimited, and written years
+before anyone thought about an eval, so leak-free by construction *provided the
+generator never sees it*.
+
+### The leak boundary, and why it is structural
+
+An eval whose ground truth is reachable from its input measures nothing, and it fails
+*silently* — the scores go up, which is not the direction that prompts anyone to check.
+So the boundary is enforced by construction rather than by review:
+
+- The generator is handed a `SourceView`: a frozen record with fields for source,
+  signature, docstring, path and span, and **no field for a commit, message or
+  subject**. A test asserts the exact field set, so adding one turns it red.
+- `source_view()` never invokes git. The test that says so makes `subprocess.run` raise,
+  builds a view anyway, *and then* calls the miner to prove the sabotage was really in
+  force — without that second half a monkeypatch on the wrong module would leave the
+  test green while proving nothing.
+- `assert_view_is_source_only()` is the primary gate and it is structural: every string
+  in a view must occur in the file on disk. A harness bug that routed a commit message
+  into the view produces text the file does not contain. A text search cannot make that
+  distinction, because an author quoting their own commit message in a docstring is
+  legitimate source.
+- `find_leaks()` is the second gate, a recursive walk of the view's whole object graph
+  for any clause of the held-out prose. `audit_leak_boundary()` runs both across the
+  full label × view cross product: **1,764 pairs on swarm-sync, 0 findings.**
+- `suspect_tokens()` checks the other direction — a rare word present in the answer and
+  in the generator's output but nowhere in its input. Zero across every condition.
+
+Both gates are wired into `score_purposes`, and both wires are tested by forging a view
+at the seam, because a guard that is never reached reads exactly like a working one.
+
+### Measured, on swarm-sync (93 commits, 316 non-test symbols)
+
+**The technique works, and it is expensive: 13.3% yield.** 42 usable labels; 272 symbols
+rejected because the commit that introduced them never names them, 2 because the label
+was copied verbatim into the docstring and so is not held out.
+
+The prior going in was that commit messages would be too *low-quality* — "fix", "wip",
+"address review". On this corpus that prior was simply wrong: the boilerplate filter
+rejected **zero** symbols, and the median commit body is 1,021 characters of careful
+prose. The problem is **attribution**, not quality. 163 symbols (52%) trace to one
+initial commit whose entire message is a 602-character project summary, and the rest
+come from work-package commits touching 2–57 files (median 6) whose prose describes a
+change, usually several. Excellent prose about a work package is not a purpose statement
+about a symbol.
+
+Two independent checks that the surviving labels are about their symbols:
+
+| condition | n | gold | shuffled control | lift |
+|---|---|---|---|---|
+| docstring first sentence | 42 | 0.159 | 0.023 | 0.136 |
+| name + signature only | 42 | 0.020 | 0.002 | 0.019 |
+| body identifiers | 42 | 0.208 | 0.047 | 0.161 |
+| body identifiers, docstring-blind | 42 | 0.124 | 0.035 | 0.089 |
+
+Name-blind token-F1 against a deranged control. Every condition clears its control by
+4–7×, so the labels carry symbol-specific signal. Swapping token-F1 for
+`Qwen3-Embedding-0.6B` cosine reproduces the ordering exactly (0.631/0.427,
+0.451/0.416, 0.675/0.480, 0.557/0.420) — two unrelated similarity measures ranking four
+conditions the same way is evidence about the labels rather than about either metric.
+
+Second check, needing no generator at all: use each label as a search query and see
+whether it retrieves the symbol it was mined from. Lexical, name-blind: **MRR 0.288,
+hit@5 0.452, hit@10 0.500.** For scale, the hand-labelled retrieval gold set scored the
+same way on the same modality reaches MRR 0.221 / hit@10 0.435 — on the *easier*
+criterion of several acceptable symbols per query.
+
+### What this gold set does not establish
+
+- **It is not a labelling of a repo, it is a 13% sample** — and a biased one. The
+  symbols that get labels are the ones a commit message happened to name, which skews
+  toward things that were fixed, argued about, or added late. Nothing here licenses a
+  claim about the other 87%.
+- **42 labels are not 42 independent measurements.** They come from 17 distinct commits;
+  one commit supplies 9 of them. Treat a few points as noise, as the ablation says of
+  its 16 queries.
+- **A mention is not a purpose statement.** For a symbol introduced by a bug-fix commit,
+  the prose that names it often describes the bug rather than the symbol's standing job.
+  Those labels are kept, because filtering them would take exactly the judgement the
+  eval is supposed to be measuring — and they are the main reason absolute similarity
+  stays low even for a good generator.
+- **The label is not independent of the source.** One author wrote the docstring and the
+  commit message in one sitting, so a docstring-reading generator scores partly on
+  shared authorship. Verbatim copies are rejected outright and a `docstring_blind`
+  condition is reported (it costs the body-identifier generator a third of its lift,
+  0.161 → 0.089), but correlated phrasing cannot be filtered away. All 42
+  usable-labelled symbols in swarm-sync have a docstring, so this is the whole corpus,
+  not a corner of it.
+- **Token-F1 rewards vocabulary, not meaning.** It cannot tell "opens the connection"
+  from "closes the connection" — there is a test pinning that. Read the *gap* to the
+  control, never the score.
+- **No generator is measured here yet.** The three shipped generators are baselines that
+  read source deterministically: a docstring copier (the upper reference — it relays
+  documentation rather than inferring anything), a name echo (the floor), and a bag of
+  body identifiers. What the harness establishes is that the *measurement* has
+  resolution, which is a precondition for evaluating a real generator, not a result
+  about one.
+- **It needs fine-grained history.** Run against code-learner itself — 7 commits, 231
+  symbols — the yield is **3 labels, 1.3%**. This technique does not pay for itself on a
+  young repo, and it is not a substitute for hand labelling so much as a way to get a
+  free second opinion on a repo that has been worked in for a while.
+
+```python
+from pathlib import Path
+from codelearner.eval import run_purpose_eval, format_report
+
+report, cards = run_purpose_eval(Path("/path/to/some/repo"))   # read-only; git + tree
+print(format_report(report, cards))
+```
+
+`to_gold_json(report, head)` dumps the mined labels in the same shape as
+`gold/swarm_sync.json`, including a `labelling_rule` stated in the same terms, so the
+two gold sets can be read side by side. It is deliberately **not** checked in: a mined
+set is a function of a repo's history and goes stale on the next commit, so it is
+regenerated rather than trusted. The two sets barely overlap in any case — only 5 of the
+hand set's 23 symbols got a mined label, which makes them complementary rather than
+alternative.
+
 ## Onboarding tours
 
 Retrieval ranks. Onboarding **orders**. `codelearner.onboard` cuts the same call
@@ -592,11 +841,50 @@ tool does the deterministic half — parse, retrieve, hash, gate, store — and 
 supplies the judgement through `submit_assertion`, where a gate decides whether that
 judgement may be kept.
 
-The gate is worth something only because it cannot be argued with. It checks that
-every cited span exists at the lines given and that its bytes still hash to what was
-cited. Both are arithmetic. A model cannot talk its way past a sha256, and when it
-fails it is told which citation moved and what the file says now — so the next
-attempt is a correction rather than another guess.
+The gate is worth something only because it cannot be argued with. It checks that the
+subject is a symbol this index actually parsed, that every cited span exists at the
+lines given, and that its bytes still hash to what was cited. All three are
+arithmetic. A model cannot talk its way past a sha256, and when it fails it is told
+which citation moved and what the file says now — so the next attempt is a correction
+rather than another guess.
+
+None of which is worth believing on the strength of a paragraph describing it.
+`codelearner.eval.gate_controls` generates an adversarial corpus from what the index
+actually holds — nine distinct attacks, seven of them instantiated per symbol and two
+per file, from zero citations through a hash that was correct until the file changed
+under it — and reports a rate. Measured on this repository, 850 symbols:
+
+| | |
+|---|---|
+| attacks submitted | **6,091** |
+| refused | **100.00%**, every one by the rule it targets, none leaving a row behind |
+| correct citations submitted | **1,688** |
+| admitted | **100.00%** |
+
+The second pair of rows is not decoration. A gate that refuses everything scores a
+perfect rejection rate, so the corpus also submits every symbol cited by the hash this
+index published for it and by its exact lines quoted off disk, and those must be
+admitted — including the 217 of 850 symbols (25.5%: every method, every module, and
+the decorated functions and classes) whose stored bytes are *not* their lines' bytes,
+which a narrowed gate would falsely reject while still refusing every attack.
+
+Each of the twelve control families is verified by deleting the rule it names from a
+copy of the package and confirming the attack then succeeds — 12 of 12 detected. A
+control that cannot see its own rule removed is decoration, and this is the project
+that has already shipped three tests which passed while asserting nothing.
+
+The controls found a real hole on their first run, which is the argument for writing
+them: a claim whose spans hash-matched perfectly but whose `subject_qualname` named no
+indexed symbol was **admitted** — stored `active`, reported `servable`, and then
+unreachable forever, because `get_symbol` answers `no_such_symbol` for the only name
+that would find it. Verified evidence had made an unciteable claim indistinguishable
+from a good one, which is the exact failure the zero-evidence rule exists to prevent,
+reached through the other door. It is refused now as `unknown_subject`.
+
+```bash
+.venv/bin/python -m codelearner.eval.gate_controls --repo .      # the corpus, at scale
+.venv/bin/python -m codelearner.eval.gate_controls --mutations   # the controls on it
+```
 
 ### Install and configure
 
@@ -714,12 +1002,12 @@ get_symbol(qualname)                     -> the claim, re-verified against disk
 | 5 | Staleness engine | |
 | 6 | Onboarding tours | done |
 | 7 | MCP server + CLI | done |
-| 8 | Eval: per-modality ablation (done), faithfulness, gate controls | partial |
+| 8 | Eval: per-modality ablation (done), faithfulness scoring with a cross-family judge (done), git-history purpose gold (done, 13% yield), gate negative controls (done — **6,091 attacks refused, 100.00%**; 1,688 correct citations admitted, 100.00%; 12/12 controls mutation-verified) | partial |
 
 ## Verification
 
 ```bash
-.venv/bin/python -m pytest tests/ -q      # 248 tests
+.venv/bin/python -m pytest tests/ -q      # 369 tests
 .venv/bin/ruff check .
 .venv/bin/mypy codelearner --ignore-missing-imports
 ```

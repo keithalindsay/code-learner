@@ -653,14 +653,32 @@ def _submit_body(
     confidence: float | None,
 ) -> dict[str, Any]:
     root = source.repo_root(conn)
+    # The cheapest rule, and the one the negative controls in `eval.gate_controls`
+    # found missing: a claim whose subject is not in the index is refused before any
+    # file is read. Every span can hash-match perfectly while the qualname they are
+    # attached to was invented -- `core.frobnicate_nothing`, cited with real bytes out
+    # of core.py. Verified spans made that submission indistinguishable from a good
+    # one: stored `active`, reported `servable`, and unreachable forever, because
+    # `get_symbol` answers `no_such_symbol` for the only name that would find it. An
+    # inference no reader can reach is the accountability failure the zero-evidence
+    # rule exists to prevent, arrived at through the other door.
+    subject = conn.execute(
+        "SELECT id FROM symbols WHERE qualname = ? ORDER BY id", (subject_qualname,)
+    ).fetchone()
+    if subject is None:
+        raise ToolError(
+            "unknown_subject",
+            f"no symbol named {subject_qualname!r} in this index, so there is nothing "
+            "for this claim to be about. Qualnames are dotted paths from the module "
+            "root -- use search_code or get_symbol to find the exact one. Only what "
+            "this index parsed can be the subject of a stored claim.",
+            subject_qualname=subject_qualname,
+        )
+
     # Verified before anything is written, and one failure stops the whole
     # submission. Admitting the spans that happened to verify would leave a claim
     # standing on a subset of the evidence its author thought it had.
     spans = [_verify_span(conn, root, raw) for raw in evidence_spans]
-
-    subject = conn.execute(
-        "SELECT id FROM symbols WHERE qualname = ? ORDER BY id", (subject_qualname,)
-    ).fetchone()
 
     try:
         assertion_id = store.write_assertion(
@@ -669,7 +687,7 @@ def _submit_body(
             kind=kind or DEFAULT_ASSERTION_KIND,
             claim=claim,
             spans=spans,
-            subject_symbol_id=None if subject is None else int(subject["id"]),
+            subject_symbol_id=int(subject["id"]),
             generator=generator,
             confidence=confidence,
         )
@@ -689,7 +707,7 @@ def _submit_body(
         "accepted": True,
         "assertion_id": assertion_id,
         "subject_qualname": subject_qualname,
-        "subject_symbol_id": None if subject is None else int(subject["id"]),
+        "subject_symbol_id": int(subject["id"]),
         "kind": kind or DEFAULT_ASSERTION_KIND,
         "tier": "T2",
         # Re-read and re-hashed a second time, by the same function that will decide
@@ -832,12 +850,14 @@ def build_server(
         """Store an inference about a symbol, if and only if its citations hold.
 
         This is the inversion: the index does no inference of its own, you do, and
-        this gate decides whether it may be stored. Two rules, both arithmetic.
+        this gate decides whether it may be stored. Three rules, all arithmetic.
 
         An assertion with zero evidence spans is refused ('evidence_required'). A span
         whose bytes no longer hash to what you cited is refused ('hash_mismatch'), and
         the refusal returns the observed hash and the text that is actually there, so
-        you can correct the citation rather than guess again.
+        you can correct the citation rather than guess again. A subject_qualname that
+        names no indexed symbol is refused ('unknown_subject') -- verified spans do
+        not make a claim about a symbol that does not exist accountable to anyone.
 
         Cite what you read: pass the content_hash that search_code or get_symbol
         returned, or the exact source text at those lines.
