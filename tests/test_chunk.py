@@ -105,6 +105,25 @@ def test_index_builds_one_chunk_per_non_empty_symbol(tmp_path):
     assert "m.helper" in quals
 
 
+def test_a_decorated_function_chunk_shows_the_model_its_decorators(tmp_path):
+    """The compounding half of the decorator defect. `generate/pipeline.py` drafts
+    from the same bytes this chunk holds, so a chunk that started at `def` asked a
+    model to describe a route handler it had never been shown the route of -- and
+    then the retrieval index could not match `@route` either. The chunker takes the
+    span straight from `symbols`, so this stays true only while extraction keeps the
+    decorator inside the span, which is exactly what it is here to catch."""
+    repo = _mkrepo(tmp_path / "r", {
+        "app.py": '@route("/users")\n@cache(ttl=60)\ndef list_users():\n    return []\n',
+    })
+    conn, _ = index_repo(repo, index_path=tmp_path / "i.db")
+    text = conn.execute(
+        "SELECT c.text FROM chunks c JOIN symbols s ON s.id = c.symbol_id "
+        "WHERE s.qualname = 'app.list_users'"
+    ).fetchone()["text"]
+    assert '@route("/users")' in text
+    assert "@cache(ttl=60)" in text
+
+
 def test_a_module_with_nothing_in_it_produces_no_chunk(tmp_path):
     """A chunk that is only its own header can never be anything but a false
     positive in the retrieval set.

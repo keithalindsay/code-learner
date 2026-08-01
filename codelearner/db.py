@@ -45,7 +45,17 @@ SCHEMA = SCHEMA_PATH.read_text()
 #         staleness engine skip the re-read when nothing moved. Purely an
 #         accelerator: the table is disposable, and dropping every row costs
 #         correctness nothing -- the next query simply re-hashes.
-SCHEMA_VERSION = 5
+#   v6 -- no DDL at all: a symbol's span now starts at its first decorator rather
+#         than at `def`, so every stored `byte_start`, `line_start` and
+#         `content_hash` for a decorated symbol has changed. A v5 index is refused
+#         here for exactly the reason the policy exists -- its hashes are still
+#         well-formed and would still verify, while excluding the decorators the
+#         claims above them are about. That is the one failure mode this project
+#         calls fail-open, and it must not survive an upgrade. Rebuild with
+#         `codelearner index <repo> --force --carry-assertions`, which carries the
+#         tier-2 store across, re-resolves subjects by qualname, and marks the
+#         claims whose evidence moved as `stale` instead of deleting them.
+SCHEMA_VERSION = 6
 
 EXPECTED_TABLES = ("files", "symbols", "edges", "chunks", "assertions")
 

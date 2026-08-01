@@ -108,6 +108,75 @@ _STORE_REFUSALS = (
     store.SpanEscapesRepo,
 )
 
+# Every `code` this module can put in front of an agent, grouped by what the agent
+# should DO about it. Kept here rather than only in the tool docstrings because the
+# codes are the branchable half of the contract and the docstrings are prose: a code
+# that exists in the code and in no table is one an agent meets for the first time at
+# runtime, with nothing to match it against. `test_mcp` asserts this table and the
+# `ToolError` codes raised in this file are the same set, so adding a refusal without
+# documenting it fails rather than drifts.
+#
+# RETRY THE SAME CALL -- the condition is transient or one-shot:
+#   index_replaced        the index was rebuilt under this server; the next call opens
+#                         the new one. Re-read your hashes first: they are one build old.
+#
+# FIX THE CALL AND RESUBMIT -- something in the arguments is wrong:
+#   no_such_symbol        get_symbol: no symbol by that qualname
+#   unknown_subject       submit_assertion: the subject qualname is not in the index
+#   hash_mismatch         the cited bytes are not what you said; the observed hash and
+#                         text come back with it
+#   evidence_unverifiable a span carries neither content_hash nor text
+#   evidence_required     zero spans
+#   empty_claim           no claim text
+#   invalid_span          a span the store cannot store (byte_end <= byte_start, etc.)
+#   evidence_stale        the store's own re-hash disagrees with the file on disk
+#   bad_range             the line range does not exist in that file
+#   bad_path              the path contains a NUL byte
+#   path_escapes_repo     the cited path resolves outside the repository
+#   span_escapes_repo     the store's copy of that rule, reached through write_assertion
+#   file_missing          the path is not one this index parsed, or is not readable now
+#   file_too_large        the cited file is over MAX_CITED_FILE_BYTES
+#   too_many_spans        over MAX_EVIDENCE_SPANS citations in one submission
+#   claim_too_long        over MAX_CLAIM_CHARS characters of claim
+#   bad_confidence        confidence is not a real number in [0, 1]
+#
+# TELL THE HUMAN -- no argument of yours will change the answer:
+#   no_index              nothing at the index path; someone must run `codelearner index`
+#   index_unreadable      the file is not a code-learner index, or will not open
+#   index_unbound         the index has no repo root, so citations cannot be re-read
+#   schema_mismatch       the index was built by different code; it must be rebuilt
+#
+# A BUG IN THIS FILE:
+#   bad_request           `_guard` caught a ValueError this module should have named
+#                         itself. A rising count here is a defect report, not a user error.
+ERROR_CODES = frozenset(
+    {
+        "bad_confidence",
+        "bad_path",
+        "bad_range",
+        "bad_request",
+        "claim_too_long",
+        "empty_claim",
+        "evidence_required",
+        "evidence_stale",
+        "evidence_unverifiable",
+        "file_missing",
+        "file_too_large",
+        "hash_mismatch",
+        "index_replaced",
+        "index_unbound",
+        "index_unreadable",
+        "invalid_span",
+        "no_index",
+        "no_such_symbol",
+        "path_escapes_repo",
+        "schema_mismatch",
+        "span_escapes_repo",
+        "too_many_spans",
+        "unknown_subject",
+    }
+)
+
 INSTRUCTIONS = """\
 GraphRAG over an indexed codebase.
 
@@ -123,6 +192,12 @@ are re-read and re-hashed off disk before anything is written. Zero spans is
 refused; a span whose bytes have changed is refused, and the refusal tells you what
 the file says now. Cite what you actually read -- retrieval hands you the
 content_hash of every hit for exactly this purpose.
+
+Every refusal carries a stable `code` worth branching on. One of them concerns the
+index rather than your call: if a human rebuilds the index while you are working,
+the next call refuses with `index_replaced`. That refusal is not about the call --
+it is telling you that every hash, symbol_id and line number you are holding
+describes the previous build. Re-run your retrieval before you cite anything.
 """
 
 
@@ -180,28 +255,131 @@ class IndexSource:
     A server that refuses to start because the index has not been built yet is a
     server the agent's client marks as failed and stops launching; one that starts
     and says `no_index` on the first call tells the agent what to do about it.
+
+    Everything held here is bound to a FILE, not to a path, and this process outlives
+    the file: an index is deleted and rebuilt by one `codelearner index --force` in
+    another terminal. `_identity` is what makes that visible from inside; `connect`
+    is where it is checked and what it costs to miss it.
     """
 
     path: Path
     embedder_factory: Any | None = None
     _conn: sqlite3.Connection | None = None
+    # `(st_dev, st_ino)` of the file `_conn` was opened on. The only thing that can
+    # tell a rebuilt index from the one this server is already holding -- see
+    # `_identity_now`, and `connect` for what happens when it moves.
+    _identity: tuple[int, int] | None = None
     _embedder: Embedder | None = None
     _embed_checked: bool = False
 
-    def connect(self) -> sqlite3.Connection:
-        """The open connection, or a `ToolError` explaining what is missing.
+    def _identity_now(self) -> tuple[int, int] | None:
+        """`(st_dev, st_ino)` of the file at `path`, or None if nothing is there.
 
-        Existence is re-checked on every call even when a connection is cached,
-        because `sqlite3.connect` will happily create an empty file at any path --
-        which is how a typo'd `--index-path` becomes "0 results" instead of "no such
-        index", and how a deleted index becomes an empty one.
+        The pair identifies the FILE. The path identifies only a name, and a name can
+        be made to point at a different file between two tool calls without anything
+        observable changing about the name.
+
+        Deliberately not `st_mtime_ns` or `st_size`, which look like the better
+        staleness signals and are the wrong ones here: the index is opened in WAL
+        mode, so a checkpoint rewrites the main database file, and a server that read
+        its own committed assertion as a replacement would refuse every call it made
+        after its first write. `meta.indexed_at` is worse still -- reading it means
+        querying THIS connection, which is the handle whose staleness is the question,
+        so it would report the old file's stamp forever. Only an out-of-band stat of
+        the path can see past a cached handle.
+
+        Inode reuse cannot defeat this during the only window in which the answer
+        matters. While a connection is open the kernel cannot free the old inode, so
+        no file created afterwards can be given the same number: a rebuild is always a
+        different pair, never a coincidentally equal one.
         """
-        if not self.path.exists():
-            self._conn = None
+        try:
+            stat = self.path.stat()
+        except OSError:
+            return None
+        return (stat.st_dev, stat.st_ino)
+
+    def _drop(self) -> None:
+        """Close and forget everything cached off the file that used to be here.
+
+        `close()`, and not merely rebinding `self._conn = None` -- which is what this
+        did, and which leaves sqlite holding the descriptor, and therefore the
+        unlinked inode, for the life of the process. A server watching a repository
+        that is re-indexed daily leaked one handle and one deleted database file per
+        rebuild, and neither is visible from anywhere a human looks.
+
+        The embedder question is reopened as well. `_embed_checked` records an answer
+        read out of the OLD index's `meta`, so an index rebuilt with `--embed` would
+        otherwise be told "this index has no embeddings" by a server that decided
+        that before the embeddings existed and never looked again. The loaded model
+        itself is kept: what went stale is the stamp, not the weights, and `embedder`
+        reuses them when the new stamp names the same model.
+        """
+        conn, self._conn, self._identity = self._conn, None, None
+        self._embed_checked = False
+        if conn is not None:
+            try:
+                conn.close()
+            except sqlite3.Error:
+                # Already unusable, which is the case this exists to clean up after.
+                # Raising here would replace a precise `index_replaced` with a bare
+                # transport failure, which is this module's first rule broken.
+                pass
+
+    def connect(self) -> sqlite3.Connection:
+        """The open connection, or a `ToolError` naming what changed underneath it.
+
+        Two things are re-checked on every call even when a connection is cached, and
+        they defend different failures.
+
+        EXISTENCE, because `sqlite3.connect` will happily create an empty file at any
+        path -- which is how a typo'd `--index-path` becomes "0 results" instead of
+        "no such index", and how a deleted index becomes an empty one.
+
+        IDENTITY, because existence alone is a check that `codelearner index --force`
+        walks straight through. That command deletes the index file and builds a new
+        one, so the path exists again the moment it finishes -- and the cached
+        connection, still bound to the unlinked inode, kept being returned. An auditor
+        submitted an assertion through a live server after a rebuild and was told
+        `ok: true, accepted: true, servable: true` for a row written into a file
+        nobody could open; zero assertions survived on disk. Every READ had the same
+        shape and made less noise: hits, hashes and line numbers derived from the
+        previous build, served as though they were current. This is not an exotic
+        sequence. It is the second morning -- an agent session left open in the
+        editor, a human re-indexing in a terminal.
+
+        The first call after a swap fails rather than transparently reconnecting, and
+        the choice is deliberate. A silent reconnect would return correct data about a
+        codebase the agent is not holding: every `content_hash` it collected before
+        the rebuild was published by the old index, and a rebuild happens because the
+        source changed. The agent would carry on citing hashes that no longer describe
+        anything, planning against symbol ids that now number different symbols, and
+        the only rule that would catch any of it is the citation gate -- which reports
+        `hash_mismatch`, i.e. "you cited something that changed", when the truth is
+        "everything you know is one build old". Succeeding quietly is precisely the
+        bug being fixed here, in a politer form. The refusal costs one retry and is
+        self-clearing: the connection is dropped on the way out, so the very next call
+        opens the new file and answers normally.
+        """
+        identity = self._identity_now()
+        if identity is None:
+            self._drop()
             raise ToolError(
                 "no_index",
                 f"no index at {self.path}. Build one with `codelearner index <repo>`, "
                 "or start this server with --index-path pointing at an existing one.",
+                index=str(self.path),
+            )
+        if self._conn is not None and identity != self._identity:
+            self._drop()
+            raise ToolError(
+                "index_replaced",
+                f"the index at {self.path} has been rebuilt since this server opened "
+                "it -- `codelearner index --force` replaces the file rather than "
+                "updating it. Nothing was read from the old one. Every content_hash, "
+                "symbol_id and line number you are holding came from the previous "
+                "build and may no longer describe anything: re-run your retrieval and "
+                "cite what it returns now. Retrying this call opens the new index.",
                 index=str(self.path),
             )
         if self._conn is None:
@@ -213,7 +391,34 @@ class IndexSource:
                     f"could not open the index at {self.path}: {exc}",
                     index=str(self.path),
                 ) from exc
+            self._identity = identity
         return self._conn
+
+    def replaced(self) -> bool:
+        """Whether the file at `path` is no longer the one `_conn` is bound to.
+
+        The after-the-fact half of `connect`'s identity check, for a caller that has
+        already written something. `connect` runs once, before a tool body starts; a
+        rebuild that lands while that body is running passes the check and the write
+        commits into the deleted file regardless. Nothing available here closes that
+        window -- sqlite cannot be asked whether the file under an open handle has
+        been unlinked, and there is no lock shared with the `codelearner index`
+        process to take against it.
+
+        What this closes is the REPORT of it. A lost write returned as `ok: true` and
+        a lost write returned as `index_replaced` lose the same row; only the second
+        makes the agent submit it again. Nothing else in this process will ever notice
+        that the row is gone.
+
+        Drops the cached connection when the answer is yes, so one swap produces one
+        refusal and the next call opens what is actually at the path.
+        """
+        if self._conn is None:
+            return False
+        if self._identity_now() == self._identity:
+            return False
+        self._drop()
+        return True
 
     def repo_root(self, conn: sqlite3.Connection) -> Path:
         root = db.stored_repo_root(conn)
@@ -232,11 +437,26 @@ class IndexSource:
         Loaded once and kept. The model is ~1.2GB of weights and tens of seconds;
         rebuilding it per tool call would make dense retrieval cost more than the
         answer is worth, and this process outlives many calls.
+
+        The CHECK is cheaper to redo than the load, and they expire differently. A
+        rebuilt index carries a new `meta` stamp -- possibly its first, if the rebuild
+        was the one that added `--embed` -- so `_drop` clears `_embed_checked` and the
+        stamp is read again off the new file. The weights survive that, because a
+        rebuild does not change what `Qwen3-Embedding-0.6B` is, and reloading it to
+        learn that would charge tens of seconds for an answer already in memory.
         """
         if self._embed_checked:
             return self._embedder, []
         self._embed_checked = True
         stored = stored_embed_model(conn)
+        if stored is not None and self._embedder is not None and self._embedder.name == stored:
+            # A rebuild that kept the same model. Nothing to reload.
+            return self._embedder, []
+        # Every path below reaches a different index from the one `_embedder` was
+        # loaded for, so the old model is forgotten first. Leaving it set would let a
+        # rebuild that DROPPED its embeddings keep answering dense queries out of the
+        # previous index's model while the note explaining their absence went unsent.
+        self._embedder = None
         if stored is None:
             # Not an error. Lexical and graph still answer; degrading loudly beats
             # failing, and the note tells the agent why dense is absent.
@@ -368,17 +588,25 @@ def _symbol_bytes_at(
 
     A symbol's stored bytes are NOT its lines' bytes, and the gap is not rare. The
     parser records the symbol node: it begins at `def`, not in the indentation before
-    it, and for a decorated symbol it begins at the `@`. A module's span runs to the
-    last byte of the file, which is one line past the last line anything is written
-    on. Measured on this repository at 36 modules, 36 methods, 11 functions and 2
-    classes out of 383 symbols -- around 15% -- where the two disagree.
+    it, and for a decorated symbol it begins at the `@`, because the decorators are
+    part of what the symbol is. A module's span runs to the last byte of the file,
+    which is one line past the last line anything is written on.
 
-    That matters because the hash `search_code` and `get_symbol` hand back is the
-    hash of the SYMBOL's bytes. Checking a citation only against the lines' bytes
-    would reject the exact hash this server just published, for 15% of symbols, with
-    a message accusing the agent of citing something that had changed. Looking the
-    symbol up is what closes that gap -- and it is the same reason
-    `store.span_for_symbol` exists.
+    The proportion of this repository's symbols where the two readings disagree is
+    NOT STATED HERE PENDING RE-MEASUREMENT (WP8). The figure this docstring used to
+    quote -- "36 modules, 36 methods, 11 functions and 2 classes out of 383 symbols
+    -- around 15%" -- is one measurement reported three incompatible ways across this
+    file and the README (15% / 22.2% / 25.5%; 85 of 383 is 22.2%), so at most one of
+    them was ever right and nothing in the tree says which. The decorator span change
+    moves the true value again. Do not quote a number from here until WP8 replaces
+    this paragraph with a measured one.
+
+    That the gap exists at all is what matters here, because the hash `search_code`
+    and `get_symbol` hand back is the hash of the SYMBOL's bytes. Checking a citation
+    only against the lines' bytes would reject the exact hash this server just
+    published, for a substantial minority of symbols, with a message accusing the
+    agent of citing something that had changed. Looking the symbol up is what closes
+    that gap -- and it is the same reason `store.span_for_symbol` exists.
     """
     return [
         (int(r["byte_start"]), int(r["byte_end"]))
@@ -940,6 +1168,25 @@ def _submit_body(
             subject_qualname=subject_qualname,
         ) from exc
 
+    # Asked again, on the far side of the write. `connect` checked identity before
+    # this body started; a `codelearner index --force` that lands in between passes
+    # that check and the commit above goes into the deleted file, where nothing will
+    # ever read it again. The window cannot be closed from here (see `replaced`), so
+    # what is refused is the CLAIM OF SUCCESS: the one report an agent will not act
+    # on is `ok: true`.
+    if source.replaced():
+        raise ToolError(
+            "index_replaced",
+            f"the index at {source.path} was rebuilt while this submission was being "
+            "written, so the assertion was committed to the "
+            "file that was deleted rather than to the one at this path, and nothing "
+            "here can recover it. Re-run your retrieval against the new index, check "
+            "the hashes you were holding, and submit again. A duplicate claim is "
+            "recoverable; a silently lost one is not.",
+            index=str(source.path),
+            subject_qualname=subject_qualname,
+        )
+
     return {
         "ok": True,
         "accepted": True,
@@ -1043,12 +1290,21 @@ def build_server(
         """Hybrid retrieval over the index: lexical + dense + graph expansion, fused.
 
         Returns tier-labelled hits. Each carries qualname, path with a line range, the
-        modalities that found it, and `via` -- the account of which symbol's call edge
-        reached it, non-empty only when graph expansion produced the hit.
+        modalities that found it, `via` -- the account of which symbol's call edge
+        reached it, non-empty only when graph expansion produced the hit -- and the
+        `content_hash` you need to cite it in submit_assertion.
 
-        Set facts_only=true to exclude tier 2, leaving only parsed facts (T0) and
-        resolved names (T1). Each hit also carries the `content_hash` you need to cite
-        it in submit_assertion.
+        `facts_only` drops anything above tier 1, and today it drops nothing: no
+        modality in this server retrieves at tier 2, so every hit is already a parsed
+        fact (T0) or a resolved name (T1), and passing it changes no result you will
+        see. It is wired at the seam a tier-2 modality would arrive through, so it
+        starts meaning something the day one exists, and it fails closed until then --
+        a hit arriving under a modality this server does not recognise is treated as
+        an inference and dropped.
+
+        It is NOT a way to keep stored inferences out of your context. The tier-2
+        claims this index holds hang off symbols, and get_symbol returns them with no
+        equivalent switch.
         """
         return _guard(source, _search_body, query=query, k=k, facts_only=facts_only)
 
@@ -1057,11 +1313,16 @@ def build_server(
         """One symbol, its resolved callers and callees, and any servable assertions.
 
         `qualname` is the dotted path from the module root, e.g.
-        'codelearner.db.init_db'. Callers and callees are tier 1 -- resolved name
-        bindings, each with the confidence its resolver assigned. Unbound call sites
-        are returned separately as tier 0. Assertions are re-verified against the file
-        on disk before being returned; one whose evidence has moved is expired rather
-        than served.
+        'codelearner.db.init_db'; a name this index does not hold is refused with
+        'no_such_symbol'. Callers and callees are tier 1 -- resolved name bindings,
+        each with the confidence its resolver assigned. Unbound call sites are
+        returned separately as tier 0.
+
+        `assertions` is the only tier-2 content this server ever returns, and it comes
+        back unfiltered: there is no facts_only here, because a stored claim about
+        this symbol is part of what you asked for. Each is re-verified against the
+        file on disk before it is returned, so one whose evidence has moved is expired
+        rather than served.
         """
         return _guard(source, _get_symbol_body, qualname=qualname)
 
@@ -1100,9 +1361,20 @@ def build_server(
         about a symbol that does not exist accountable to anyone.
 
         Cite what you read: pass the content_hash that search_code or get_symbol
-        returned, or the exact source text at those lines. Spans must name files this
-        index parsed ('file_not_indexed'), at most 32 of them; the claim is capped at
-        4096 characters and confidence, if given, is a probability between 0 and 1.
+        returned, or the exact source text at those lines. A span carrying neither is
+        'evidence_unverifiable'. Spans must name a file this index parsed
+        ('file_missing'), inside the repository ('path_escapes_repo',
+        'span_escapes_repo'), at lines that exist in it ('bad_range'), by a path
+        containing no NUL byte ('bad_path'), in a file under 4MiB ('file_too_large').
+        At most 32 spans per submission ('too_many_spans'); the claim is capped at
+        4096 characters ('claim_too_long'); confidence, if given, must be a real
+        number between 0 and 1 ('bad_confidence').
+
+        One refusal is not about your call at all. If a human rebuilds the index while
+        you are working, this returns 'index_replaced' -- before writing anything if
+        the rebuild is already visible, after writing if it lands mid-call, in which
+        case the claim went into the deleted file and is gone. Either way the hashes
+        you are holding are one build old: re-run your retrieval, then submit again.
         """
         return _guard(
             source,
@@ -1129,6 +1401,7 @@ def build_server(
 
 
 __all__ = [
+    "ERROR_CODES",
     "MAX_CITED_FILE_BYTES",
     "MAX_CLAIM_CHARS",
     "MAX_EVIDENCE_SPANS",

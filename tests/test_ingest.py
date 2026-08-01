@@ -127,6 +127,224 @@ def test_extract_survives_a_syntax_error_without_raising():
 
 
 # --------------------------------------------------------------------------
+# decorators are part of the symbol
+# --------------------------------------------------------------------------
+#
+# The failure being defended against is the only FAIL-OPEN defect the audits found.
+# tree-sitter's `function_definition` starts at `def`, not at `@`, so a symbol's
+# stored span used to exclude every decorator above it. A claim "serves GET /users,
+# cached 60s" then cited bytes containing neither `@route` nor `@cache`: rewrite the
+# decorators and both verifiers report `fresh`, `force_hash=True` does not help
+# because the cited bytes genuinely did not move, nothing lands in `staleness_log`,
+# the faithfulness judge is shown the same truncated span and correctly rules the
+# claim supported, and a human following the citation finds those exact bytes
+# unchanged. There is no signal anywhere -- which is why these tests are here and
+# why one of them goes all the way to expiry rather than stopping at the span.
+#
+# `test_an_undecorated_symbol_span_is_unchanged` is the control. Without it a change
+# that widened EVERY span -- to the whole file, say -- would pass this whole section.
+
+def _sym(source: bytes, qualname: str):
+    return next(s for s in extract(source, "app.py").symbols if s.qualname == qualname)
+
+
+def test_a_decorated_function_span_begins_at_the_at_sign():
+    src = (
+        b'@cache(ttl=60)\n'
+        b'def list_users():\n'
+        b'    """List users."""\n'
+        b'    return []\n'
+    )
+    fn = _sym(src, "app.list_users")
+    cited = src[fn.byte_start : fn.byte_end]
+    assert cited.startswith(b"@cache(ttl=60)")
+    assert b"def list_users" in cited
+    assert fn.line_start == 1  # the `@` line, not the `def` line
+    assert src.splitlines()[fn.line_start - 1].startswith(b"@")
+
+
+def test_a_stacked_decorator_span_reaches_the_outermost_at_sign():
+    """The span must start at the FIRST decorator. Taking `node.parent` gets this
+    right for free; walking up one sibling at a time would stop at `@b`."""
+    src = (
+        b'@route("/users")\n'
+        b'@auth_required\n'
+        b'@cache(ttl=60)\n'
+        b'def list_users():\n'
+        b'    return []\n'
+    )
+    fn = _sym(src, "app.list_users")
+    cited = src[fn.byte_start : fn.byte_end]
+    assert cited.startswith(b'@route("/users")')
+    for dec in (b'@route("/users")', b"@auth_required", b"@cache(ttl=60)"):
+        assert dec in cited
+    assert fn.line_start == 1
+
+
+def test_a_decorated_class_span_begins_at_the_at_sign():
+    src = b'@register\nclass Widget:\n    """A widget."""\n'
+    cls = _sym(src, "app.Widget")
+    assert src[cls.byte_start : cls.byte_end].startswith(b"@register\nclass Widget")
+    assert cls.line_start == 1
+
+
+def test_a_decorated_async_function_span_begins_at_the_at_sign():
+    """`async def` is not a separate node type in this grammar -- the `async`
+    keyword is a child of `function_definition` -- so it needs no special case, but
+    it needs a test, because a grammar that DID split it would break silently."""
+    src = b'@retry(times=3)\nasync def fetch():\n    return 1\n'
+    fn = _sym(src, "app.fetch")
+    assert src[fn.byte_start : fn.byte_end].startswith(b"@retry(times=3)\nasync def fetch")
+    assert fn.line_start == 1
+
+
+def test_a_decorator_whose_arguments_span_lines_is_inside_the_span():
+    """The prevalence figure quoted in the audit was a lower bound precisely because
+    the single-line-lookback heuristic that produced it misses this shape."""
+    src = (
+        b'@route(\n'
+        b'    "/users",\n'
+        b'    methods=["GET"],\n'
+        b')\n'
+        b'def list_users():\n'
+        b'    return []\n'
+    )
+    fn = _sym(src, "app.list_users")
+    cited = src[fn.byte_start : fn.byte_end]
+    assert cited.startswith(b"@route(")
+    assert b'methods=["GET"]' in cited
+    assert fn.line_start == 1
+
+
+def test_a_decorated_method_inside_a_decorated_class_keeps_both_decorators():
+    """Nesting is where an implementation that looked at the enclosing node rather
+    than the immediate parent goes wrong: the method's own `@property` and the
+    class's `@register` are two different spans, and each symbol gets its own."""
+    src = (
+        b'@register\n'
+        b'class Tray:\n'
+        b'    @property\n'
+        b'    def count(self):\n'
+        b'        return 0\n'
+    )
+    cls = _sym(src, "app.Tray")
+    meth = _sym(src, "app.Tray.count")
+    assert src[cls.byte_start : cls.byte_end].startswith(b"@register\nclass Tray")
+    assert src[meth.byte_start : meth.byte_end].startswith(b"@property\n    def count")
+    assert meth.line_start == 3
+    # The method's span is strictly inside its class's.
+    assert cls.byte_start < meth.byte_start and meth.byte_end <= cls.byte_end
+
+
+def test_a_comment_between_decorators_is_inside_the_span():
+    """Not cosmetic: tree-sitter keeps the comment as a child of the
+    `decorated_definition`, so a span taken from the parent covers it, and a reader
+    following the citation sees the same bytes the hash was taken over."""
+    src = b'@a\n# why this is here\n@b\ndef f():\n    return 1\n'
+    fn = _sym(src, "app.f")
+    assert src[fn.byte_start : fn.byte_end].startswith(b"@a\n# why this is here\n@b\ndef f")
+
+
+def test_an_undecorated_symbol_span_is_unchanged():
+    """THE CONTROL. Widening every span would satisfy every test above; this one
+    fails if the span moved for a symbol that has no decorator."""
+    src = b'def plain():\n    return 1\n\n\nclass Bare:\n    pass\n'
+    fn = _sym(src, "app.plain")
+    cls = _sym(src, "app.Bare")
+    assert fn.byte_start == 0
+    assert src[fn.byte_start : fn.byte_end] == b"def plain():\n    return 1"
+    assert fn.line_start == 1 and fn.line_end == 2
+    assert src[cls.byte_start : cls.byte_end] == b"class Bare:\n    pass"
+    assert cls.line_start == 5 and cls.line_end == 6
+
+
+def test_a_widened_span_takes_its_name_signature_and_docstring_from_the_def():
+    """Only the START moves. The name, the signature and the docstring still come
+    from the inner definition -- a symbol called `cache` because its decorator was
+    read as the definition would be worse than the bug being fixed."""
+    src = (
+        b'@cache(ttl=60)\n'
+        b'def list_users(active: bool = True) -> list:\n'
+        b'    """List users."""\n'
+        b'    return []\n'
+    )
+    fn = _sym(src, "app.list_users")
+    assert fn.name == "list_users"
+    assert fn.signature == "list_users(active: bool = True) -> list"
+    assert fn.docstring == "List users."
+    assert fn.line_end == 4
+
+
+def test_the_stored_hash_covers_the_decorator_bytes():
+    """The hash is what every verifier compares against, so it has to be the hash of
+    the widened span. A span that moved without its hash moving would expire every
+    decorated claim on the next sweep instead of none of them."""
+    from codelearner.ingest.types import content_hash as _hash
+
+    src = b'@cache(ttl=60)\ndef list_users():\n    return []\n'
+    fn = _sym(src, "app.list_users")
+    assert fn.content_hash == _hash(src[fn.byte_start : fn.byte_end])
+    assert fn.content_hash != _hash(src[src.index(b"def") : fn.byte_end])
+
+
+DECORATED_APP = (
+    '@cache(ttl=60)\n'
+    'def list_users():\n'
+    '    """List every user."""\n'
+    '    return []\n'
+)
+# Same LENGTH as the original, so every byte offset in the file is unmoved and the
+# function\'s own bytes are identical. Under the old span this edit was invisible to
+# both verifiers; it is the exact shape of the fail-open failure.
+DECORATOR_REWRITTEN = DECORATED_APP.replace("@cache(ttl=60)", "@cache(ttl=99)")
+assert len(DECORATOR_REWRITTEN) == len(DECORATED_APP)
+
+
+def test_rewriting_only_a_decorator_expires_the_claim_that_cites_it(tmp_path):
+    """THE TEST THAT WOULD HAVE CAUGHT THE BUG, end to end.
+
+    Admit a claim about a decorated symbol, citing the span the index itself
+    published; change nothing but the decorator's arguments, keeping the byte length
+    identical so the function body neither moves nor changes; then ask the store to
+    serve it. Before the fix the claim came back `fresh` with nothing in
+    `staleness_log`, because the cited bytes genuinely had not changed -- the claim
+    "responses are cached for 60 seconds" outliving the 60.
+    """
+    from codelearner.assertions import stale, store
+
+    repo = _mkrepo(tmp_path / "r", {"app.py": DECORATED_APP})
+    conn, _ = index_repo(repo, index_path=tmp_path / "i.db")
+    sid = conn.execute(
+        "SELECT id FROM symbols WHERE qualname = 'app.list_users'"
+    ).fetchone()["id"]
+
+    span = store.span_for_symbol(conn, sid)
+    assert (repo / "app.py").read_bytes()[span.byte_start : span.byte_end].startswith(
+        b"@cache(ttl=60)"
+    ), "the index published a span that does not contain the decorator"
+
+    aid = store.write_assertion(
+        conn,
+        subject_qualname="app.list_users",
+        subject_symbol_id=sid,
+        kind="purpose",
+        claim="lists every user; responses are cached for 60 seconds",
+        spans=[span],
+        generator="test-model/v1",
+        confidence=0.9,
+    )
+    assert [r.assertion.id for r in stale.serve_assertions(conn)] == [aid]
+
+    (repo / "app.py").write_text(DECORATOR_REWRITTEN)
+
+    assert stale.serve_assertions(conn) == [], "a rewritten decorator left the claim servable"
+    assert [a.id for a in store.assertions_with_status(conn, store.STATUS_STALE)] == [aid]
+    assert [row["reason"] for row in store.staleness_events(conn, aid)] == [
+        stale.REASON_HASH_MISMATCH
+    ]
+
+
+# --------------------------------------------------------------------------
 # repo indexing + isolation
 # --------------------------------------------------------------------------
 

@@ -6,6 +6,15 @@ predicted. A missing index, an index without embeddings, a model that does not m
 the vectors in the file -- these are all normal states of the world, and each one
 gets a sentence that says what happened and what to do about it. `CliError` is the
 carrier for exactly that: raised here, printed without a stack by `main`.
+
+The same principle extends one step further, and the drift survey below is where it
+lands: **a user must not see a WRONG ANSWER for a condition the tool could have
+predicted either.** An index built on Monday and queried on Friday serves tier-0
+line numbers -- "deterministic, reproducible from source alone" -- for a file that
+has since moved under it. There is no traceback and no error; the citation is simply
+off by twenty lines and looks exactly like one that is right. That is a worse failure
+than the ones this module was already built to catch, because nothing about the
+output invites doubt.
 """
 from __future__ import annotations
 
@@ -13,15 +22,17 @@ import json
 import os
 import sqlite3
 import sys
+import textwrap
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from dataclasses import fields as dataclass_fields
 from pathlib import Path
 from typing import Any
 
 from .. import db
 from ..assertions import store
 from ..index import Embedder, embed_chunks
-from ..ingest import index_repo
+from ..ingest import index_repo, iter_python_files
 from ..retrieve import load_reranker, search, stored_embed_model
 from .render import count_line, facts_only, format_hit, hit_json
 
@@ -44,12 +55,275 @@ def resolve_index_path(repo: Path, index_path: Path | None) -> Path:
     return repo / INDEX_RELPATH
 
 
-def open_index(index_path: Path) -> sqlite3.Connection:
-    """Open an EXISTING index, or explain how to make one.
+# ---------------------------------------------------------------------------
+# drift: the index measured against the tree it was built from
+# ---------------------------------------------------------------------------
+#
+# `files.content_hash`, `files.mtime_ns` and `files.size_bytes` were written at index
+# time and read by NO code path. Tier 2 meanwhile has a two-stage staleness engine, a
+# `span_verifications` baseline and a `staleness_log` -- so the tier this project
+# describes as *inferred* was the one with a drift check, and the tier it describes as
+# *fact* was the one that would serve a line number that had moved and say nothing.
+# That inversion is what this section closes.
+#
+# Three failures, deliberately counted apart, because they are not the same event and
+# they do not have the same symptom:
+#
+#   changed   -- the file is there and its bytes are not the ones that were parsed.
+#                Citations still resolve, still look right, and point at the wrong
+#                lines. This is the dangerous one: it is invisible in the output.
+#   missing   -- an indexed file is gone. Citations name a path with nothing behind
+#                it, so the failure at least announces itself when followed.
+#   unindexed -- a .py file the tree has and the index does not. Nothing is wrong
+#                with what IS returned; the problem is what is absent. A query about
+#                a symbol added after indexing returns "no results", exit 0, which is
+#                indistinguishable from a repo that genuinely does not contain it.
+#
+# Folding them into one number would tell a reader to expect the wrong symptom.
+
+# Named in the payload and in the note so nobody has to guess what was compared, and
+# therefore what was not. Content hashing every file would be exhaustive; it would
+# also read every byte of the repository on every `search`, which is a cost this check
+# cannot justify when the cheap comparison catches every edit made by an ordinary
+# editor. The residual is stated wherever the count is printed.
+DRIFT_METHOD = "mtime_ns+size_bytes"
+
+
+@dataclass(frozen=True)
+class DriftReport:
+    """How far the tree has moved since the index was built, by three measures.
+
+    `checked` is False when the survey could not be run at all -- an index bound to
+    no repo root, or bound to one that is not on this machine. It is NOT a synonym
+    for "clean", which is why every count is None rather than 0 in that state: a
+    reader who cannot tell "measured zero" from "did not measure" will read the
+    second as the first, and the whole value of this check is that it does not
+    quietly assert things it did not establish.
+
+    `unindexed` is separately nullable, because the tree enumeration can fail (an
+    unreadable directory) while the stat sweep over the indexed files succeeds.
+    """
+
+    checked: bool
+    repo_root: str | None = None
+    indexed: int | None = None
+    changed: int | None = None
+    missing: int | None = None
+    unindexed: int | None = None
+
+    def as_json(self) -> dict[str, Any]:
+        """The machine-readable half of the note, for `--json` on stdout."""
+        return {
+            "checked": self.checked,
+            "indexed": self.indexed,
+            "changed": self.changed,
+            "missing": self.missing,
+            "unindexed": self.unindexed,
+            "method": DRIFT_METHOD,
+        }
+
+
+def _count_unindexed(root: Path, indexed: set[str]) -> int | None:
+    """How many .py files the tree has that the index does not. None if unknowable.
+
+    Enumerated with `iter_python_files` -- the indexer's own function, not a second
+    walk written to look like it. Any independent enumeration would drift from the
+    one that built the index and start reporting `.venv/` or a worktree copy as
+    "added", which is a false alarm on a warning whose entire value is that it is
+    never a false alarm. Using the same function means "in the tree and not in the
+    index" is exactly "would be indexed now, and was not".
+
+    Two causes, and the note says both: a file written since the index was built,
+    and a file that was present then and was counted in `IndexStats.skipped` because
+    it would not parse or would not read. The second does not go away on re-index,
+    and a message that promised it would is a message that sends its reader round a
+    loop.
+
+    The comparison runs the index's relative paths OUT to absolute strings rather
+    than running the tree's absolute paths back IN via `Path.relative_to`, and it
+    builds them by string join rather than with `/`. Both are measured choices and
+    neither is stylistic, because this runs on every `search`: at 2,556 files,
+    `relative_to().as_posix()` per file cost ~90ms and `root / rel` per file another
+    ~15ms, against ~0.5ms for the join and ~32ms for the enumeration they were
+    wrapping. The naive spelling was three times the cost of the work itself.
+    """
+    try:
+        found = list(iter_python_files(root))
+    except OSError:
+        return None
+    prefix = str(root)
+    if not prefix.endswith(os.sep):
+        prefix += os.sep
+    if os.sep == "/":
+        known = {prefix + rel for rel in indexed}
+    else:  # pragma: no cover - stored paths are POSIX; this is the Windows spelling
+        known = {prefix + rel.replace("/", os.sep) for rel in indexed}
+    return sum(1 for path in found if str(path) not in known)
+
+
+def survey_drift(conn: sqlite3.Connection) -> DriftReport:
+    """`stat()` every indexed file and compare against what the index recorded.
+
+    **Every file, never a sample.** Measured on a 2,556-file repository: 25ms for the
+    stat sweep over the indexed files, 32ms for the tree enumeration, 58ms together,
+    against 2ms of actual query work and a ~100ms interpreter-and-import floor that
+    `codelearner search` pays before it does anything at all. So the sweep is roughly
+    a third of a search invocation, and it is linear -- 25,000 files would be ~0.6s,
+    at which point it is worth revisiting.
+
+    Sampling was rejected on correctness rather than on that cost. The question this
+    check answers is "is this index behind the tree", which is a property of the union
+    of the files; a sample of k answers only "these k are current", and the useful
+    output -- silence -- is exactly the output a sample is not entitled to produce. A
+    note reading "no changes detected (sampled 200 of 2,556)" would be a statement the
+    tool cannot back, printed at the moment a user is deciding whether to trust a
+    citation, and this project's entire thesis is the difference between measured and
+    asserted. A cheap check that is wrong is worse than no check: it converts "I do not
+    know whether this index is fresh" into "I have been told it is".
+
+    The repo root comes from the index's own `meta`, never from `--repo`. The
+    question being asked is "has the tree this index was built from moved", and the
+    index is the only thing that knows which tree that was; taking the answer from a
+    command-line argument would let a mistyped `--repo` report drift against a
+    directory the index was never about.
+
+    **An `OSError` that is not an absence is not counted.** A `chmod 000` file, an
+    `EMFILE`, an NFS blip: none of those are evidence that the file changed, and
+    reporting them as drift would make a transient environmental fault look like an
+    edit -- the same mistake WP10.3 records on the tier-2 side, where a swallowed
+    `OSError` permanently expired claims. Withholding is the honest answer, and it
+    errs towards under-reporting, which is the direction this check is already
+    documented to err in.
+    """
+    root_text = db.stored_repo_root(conn)
+    if root_text is None:
+        return DriftReport(checked=False)
+    root = Path(root_text)
+    if not root.is_dir():
+        # The index is on this machine and the tree it describes is not. Nothing can
+        # be compared, and saying "0 changed" would be a claim about a directory this
+        # process cannot see.
+        return DriftReport(checked=False, repo_root=root_text)
+    try:
+        rows = conn.execute("SELECT path, size_bytes, mtime_ns FROM files").fetchall()
+    except sqlite3.Error:
+        return DriftReport(checked=False, repo_root=root_text)
+
+    indexed: set[str] = set()
+    changed = missing = 0
+    for row in rows:
+        rel = str(row["path"])
+        indexed.add(rel)
+        try:
+            st = os.stat(root / rel)
+        except (FileNotFoundError, NotADirectoryError):
+            # Real absence, the same split `assertions/stale.py` makes: the file is
+            # not there, as opposed to this process being unable to look at it.
+            missing += 1
+            continue
+        except OSError:
+            continue
+        if st.st_size != int(row["size_bytes"]) or st.st_mtime_ns != int(row["mtime_ns"]):
+            changed += 1
+
+    return DriftReport(
+        checked=True,
+        repo_root=root_text,
+        indexed=len(rows),
+        changed=changed,
+        missing=missing,
+        unindexed=_count_unindexed(root, indexed),
+    )
+
+
+def drift_note(report: DriftReport) -> str | None:
+    """One sentence-set for stderr, or None when there is nothing to say.
+
+    **None on a clean tree is the design, not an omission.** A line printed on every
+    invocation is a line a user has stopped reading by Wednesday, and a warning that
+    has been trained out of its reader is worth less than no warning -- it occupies
+    the place where a real one would have gone. So this speaks only when the
+    condition is true, which is also why there is no flag to silence it: the mute
+    switch for a warning that only fires when the index IS behind the tree is
+    `codelearner index --force`, and anything else silences the sole indication that
+    tier-0 answers have stopped being facts. A pipeline that wants it gone has
+    `2>/dev/null` and, better, the `drift` object in the `--json` document.
+
+    The counts are described as floors, in the message and not only in this
+    docstring, because mtime and size can both survive an edit -- a writer that
+    restores the timestamp, or a same-length substitution. This is a cheap check that
+    is right when it speaks and incomplete when it is silent, and it says so.
+    """
+    if not report.checked:
+        return None
+    moved: list[str] = []
+    if report.changed:
+        moved.append(
+            f"{report.changed} of {_plural(report.indexed or 0, 'indexed file')} "
+            f"{'has' if report.changed == 1 else 'have'} changed on disk since this "
+            "index was built"
+        )
+    if report.missing:
+        moved.append(
+            f"{_plural(report.missing, 'indexed file')} "
+            f"{'is' if report.missing == 1 else 'are'} no longer on disk"
+        )
+
+    sentences: list[str] = []
+    if moved:
+        sentences.append(
+            " and ".join(moved)
+            + "; hits and claims may cite bytes that have moved or are not there."
+        )
+    if report.unindexed:
+        sentences.append(
+            f"{_plural(report.unindexed, '.py file')} in the tree "
+            f"{'is' if report.unindexed == 1 else 'are'} not in this index at all "
+            "(written since it was built, or skipped as unreadable at index time), so "
+            "a query about them returns nothing rather than something wrong."
+        )
+    if not sentences:
+        return None
+    sentences.append(
+        f"Re-run `codelearner index {report.repo_root or '<repo>'} --force "
+        "--carry-assertions`."
+    )
+    sentences.append(
+        f"Compared by {DRIFT_METHOD} only -- an edit that preserves both is not "
+        "detected, so these counts are floors rather than an audit."
+    )
+    return " ".join(sentences)
+
+
+def open_index(index_path: Path) -> tuple[sqlite3.Connection, DriftReport]:
+    """Open an EXISTING index, or explain how to make one. Survey it for drift.
 
     `db.connect` happily creates an empty SQLite file at any path, which is how a
     typo'd path becomes "0 results" instead of "no such index". Checking for the
     file first is the difference between a wrong answer and an error message.
+
+    **The drift survey lives here for the same reason the schema check does**: every
+    read command arrives through this function, so a rule enforced here cannot be
+    forgotten by the next one added. The note is printed here rather than by each
+    caller, so a future command gets the human warning whether or not its author
+    thought about staleness; the report is RETURNED as well, so a `--json` caller can
+    put the same facts in its document without re-running the sweep. The worst a
+    forgetful caller can now do is omit the machine-readable copy, never the warning.
+
+    Printing to stderr is what makes that safe: this module's standing rule is that
+    stdout under `--json` is one parseable document, so a note on stderr can be
+    unconditional without any caller having to know it exists.
+
+    `SchemaVersionError` is caught here and not only in `cmd_index`, because it is
+    the READ paths that meet it. `db.connect` gained its version check precisely so
+    that a stale index cannot answer a query, and every one of those queries arrives
+    through this function -- so catching only `sqlite3.Error` meant the single most
+    predicted failure in the design (the stamp has moved five times) came out of
+    `stats`, `search`, and `learn` as a traceback, which this module's first
+    sentence promises it never will. `RepoRootMismatchError` rides along: it is
+    raised by `bind_repo_root` rather than by `connect` today, but it is the same
+    class of condition -- a file this code refuses to read -- and a caller that
+    starts binding here would otherwise reintroduce the same traceback.
 
     `SchemaVersionError` is caught here and not only in `cmd_index`, because it is
     the READ paths that meet it. `db.connect` gained its version check precisely so
@@ -69,7 +343,7 @@ def open_index(index_path: Path) -> sqlite3.Connection:
             f"--index-path."
         )
     try:
-        return db.connect(index_path)
+        conn = db.connect(index_path)
     except (db.SchemaVersionError, db.RepoRootMismatchError) as exc:
         # The exception's own remedy says "delete the index file and re-index",
         # which was the honest advice until the tier-2 store could survive a
@@ -77,6 +351,11 @@ def open_index(index_path: Path) -> sqlite3.Connection:
         raise CliError(f"{exc} {REBUILD_ADVICE}") from exc
     except sqlite3.Error as exc:
         raise CliError(f"could not open the index at {index_path}: {exc}") from exc
+    drift = survey_drift(conn)
+    note = drift_note(drift)
+    if note is not None:
+        print(f"codelearner: {note}", file=sys.stderr)
+    return conn, drift
 
 
 def build_embedder(factory: EmbedderFactory, model_name: str) -> Embedder:
@@ -678,7 +957,7 @@ def cmd_index(args: Any, factory: EmbedderFactory) -> int:
 
 def cmd_search(args: Any, factory: EmbedderFactory) -> int:
     index_path = resolve_index_path(args.repo.expanduser().resolve(), args.index_path)
-    conn = open_index(index_path)
+    conn, drift = open_index(index_path)
 
     use_lexical = not args.no_lexical
     use_dense = not args.no_dense
@@ -764,6 +1043,10 @@ def cmd_search(args: Any, factory: EmbedderFactory) -> int:
                         "graph": use_graph,
                     },
                     "count": len(hits),
+                    # The machine-readable half of the stderr note. A consumer that
+                    # never sees stderr would otherwise be the one surface that
+                    # cannot tell it is being handed line numbers that have moved.
+                    "drift": drift.as_json(),
                     "hits": [hit_json(hit, i) for i, hit in enumerate(hits, start=1)],
                 },
                 indent=2,
@@ -837,10 +1120,63 @@ def _embedding_info(conn: sqlite3.Connection) -> dict[str, Any]:
     }
 
 
+def _print_freshness(drift: DriftReport) -> None:
+    """The one place the clean case is printed as well as the dirty one.
+
+    `search` stays silent on a fresh index, because a line on every query is a line
+    nobody reads. `stats` is the opposite situation: somebody typed it to ask what
+    state this index is in, so "nothing has moved" is an answer to the question they
+    asked rather than noise attached to a different one. Both halves state what was
+    compared, so neither reads as a guarantee about bytes.
+    """
+    if not drift.checked:
+        body = (
+            "not checked: this index names no repository root, or names one that is "
+            "not a directory on this machine."
+        )
+    else:
+        body = drift_note(drift) or (
+            f"{_plural(drift.indexed or 0, 'indexed file')} still match the tree by "
+            f"{DRIFT_METHOD}, and no .py file in the tree is missing from the index. "
+            "An edit that preserves mtime and size is not detected by this check, so "
+            "this is not a statement about bytes."
+        )
+    print("freshness")
+    # `break_long_words=False` is load-bearing: the note carries the remedy command
+    # with an absolute repo path in it, and a wrapper that splits that path mid-token
+    # produces a line the reader cannot copy, which is the only thing they wanted it
+    # for. Better an over-long line than a broken command.
+    print(
+        textwrap.fill(
+            body,
+            width=88,
+            initial_indent="  ",
+            subsequent_indent="  ",
+            break_long_words=False,
+            break_on_hyphens=False,
+        )
+    )
+
+
 def cmd_stats(args: Any, factory: EmbedderFactory) -> int:
+    """What is in this index -- including the half of it that was not derived from source.
+
+    This command was blind to the assertion store for the whole of Phase 9. It read a
+    `T2 INFERRED` count out of `edges.tier`, a column tier 2 never occupies, so the
+    number was structurally always 0; and it annotated that structural 0 with "the
+    inference layer is not built yet" while the layer sat in the same file holding
+    claims, verdicts and expiries. After a full `learn` run, the one command whose
+    entire job is to say what an index contains reported nothing about what had been
+    learned, and said something false about why.
+
+    The assertion payload deliberately matches the MCP `index_stats` tool's, field for
+    field: `counts["assertions"]` and `assertions_by_status` with explicit zeros. Two
+    surfaces over one index that disagree about the shape of the answer are worse than
+    either shape, because the disagreement is what a reader ends up debugging.
+    """
     del factory  # stats never loads a model; the stored name is all it reports
     index_path = resolve_index_path(args.repo.expanduser().resolve(), args.index_path)
-    conn = open_index(index_path)
+    conn, drift = open_index(index_path)
 
     try:
         counts = {
@@ -848,9 +1184,13 @@ def cmd_stats(args: Any, factory: EmbedderFactory) -> int:
             "symbols": _scalar(conn, "SELECT count(*) FROM symbols"),
             "edges": _scalar(conn, "SELECT count(*) FROM edges"),
             "chunks": _scalar(conn, "SELECT count(*) FROM chunks"),
+            "assertions": _scalar(conn, "SELECT count(*) FROM assertions"),
         }
         tier_rows = conn.execute(
             "SELECT tier, count(*) AS n FROM edges GROUP BY tier"
+        ).fetchall()
+        status_rows = conn.execute(
+            "SELECT status, count(*) AS n FROM assertions GROUP BY status"
         ).fetchall()
         kind_rows = conn.execute(
             "SELECT kind, count(*) AS n FROM symbols GROUP BY kind ORDER BY n DESC"
@@ -866,6 +1206,7 @@ def cmd_stats(args: Any, factory: EmbedderFactory) -> int:
         ) from exc
 
     by_tier = {int(r["tier"]): int(r["n"]) for r in tier_rows}
+    by_status = {str(r["status"]): int(r["n"]) for r in status_rows}
     resolved = _scalar(conn, "SELECT count(*) FROM edges WHERE dst_symbol_id IS NOT NULL")
     external, ambiguous = _classify_unresolved(conn)
     in_repo = counts["edges"] - external
@@ -880,12 +1221,23 @@ def cmd_stats(args: Any, factory: EmbedderFactory) -> int:
         "counts": counts,
         # The tier column lives on edges: 0 is the call site as written, 1 is that
         # site bound to a symbol. Symbols themselves are all T0 by construction --
-        # they were parsed, not decided.
+        # they were parsed, not decided. `T2` is kept in the map at a permanent 0 so
+        # the shape matches the MCP payload, and is explained rather than left to
+        # imply that nothing was inferred: tier 2 lives in `assertions`, below.
         "tiers": {
             "T0": by_tier.get(0, 0),
             "T1": by_tier.get(1, 0),
             "T2": by_tier.get(2, 0),
         },
+        # Explicit zeros, so the shape does not change when the store is empty and so
+        # `rejected` is visible rather than merely absent. The rejected set is the
+        # only evidence the gate does anything at all.
+        "assertions_by_status": {
+            "active": by_status.get("active", 0),
+            "rejected": by_status.get("rejected", 0),
+            "stale": by_status.get("stale", 0),
+        },
+        "drift": drift.as_json(),
         "symbol_kinds": {str(r["kind"]): int(r["n"]) for r in kind_rows},
         "resolution": {
             "total": counts["edges"],
@@ -918,10 +1270,26 @@ def cmd_stats(args: Any, factory: EmbedderFactory) -> int:
     for label in ("files", "symbols", "edges", "chunks"):
         print(count_line(label, counts[label]))
     print()
+    _print_freshness(drift)
+    print()
     print("edges by tier")
     print(count_line("T0 FACT", by_tier.get(0, 0), width=12) + "  call site as written, unbound")
     print(count_line("T1 RESOLVED", by_tier.get(1, 0), width=12) + "  bound to a symbol, with confidence")
-    print(count_line("T2 INFERRED", by_tier.get(2, 0), width=12) + "  the inference layer is not built yet")
+    print(
+        count_line("T2 INFERRED", by_tier.get(2, 0), width=12)
+        + "  always 0 here: inference lives in assertions, not on edges"
+    )
+    print()
+    print("assertions (tier 2)")
+    if counts["assertions"]:
+        for label in ("active", "rejected", "stale"):
+            print(count_line(label, by_status.get(label, 0), width=12))
+        print(count_line("total", counts["assertions"], width=12))
+    else:
+        print(
+            "  none. Draft some with `codelearner learn`; only claims that cite "
+            "evidence the gate can re-verify are admitted."
+        )
     print()
     print("symbol kinds")
     for row in kind_rows:
@@ -972,7 +1340,7 @@ def cmd_learn(args: Any, factory: EmbedderFactory) -> int:
 
     repo = args.repo.expanduser().resolve()
     index_path = resolve_index_path(repo, args.index_path)
-    conn = open_index(index_path)
+    conn, drift = open_index(index_path)
 
     model = args.model or DEFAULT_GENERATOR_MODEL
     generator = OllamaClaimGenerator(model=model, host=args.host)
@@ -1027,24 +1395,40 @@ def cmd_learn(args: Any, factory: EmbedderFactory) -> int:
         print("\r" + " " * 72 + "\r", end="", file=sys.stderr)
 
     if args.json:
+        # DERIVED from `LearnReport`, never listed. The hand-written dict this
+        # replaces omitted every counter waves 1-2 added -- `refused_invalid_span`,
+        # `refused_unverifiable`, `refused_unknown_subject`, `refused_stale_evidence`,
+        # `refused_escaping_span`, and `offers_dropped_oversize` with them -- so a run
+        # the gate refused outright serialised as a run that admitted nothing and gave
+        # no reason. That is precisely the reading `learn` exists to make impossible:
+        # `admitted` alone cannot distinguish a generator that understood the repo
+        # from one that cited whatever was in front of it, and the refusal breakdown
+        # is the thing that separates them. A list of keys is a place for the next
+        # counter to be forgotten; the field set cannot be.
+        #
+        # `results` is the one field excluded, by name rather than by sniffing its
+        # type, because a type filter is exactly how the next counter would be
+        # silently dropped. `tests/test_cli.py` asserts this key set against
+        # `dataclasses.fields(LearnReport)`, so a field that is neither serialised
+        # nor deliberately excluded fails the suite rather than a user's pipeline.
+        counters = {
+            field.name: getattr(report, field.name)
+            for field in dataclass_fields(report)
+            if field.name != "results"
+        }
         print(
             json.dumps(
                 {
                     "repo": str(repo),
                     "index": str(index_path),
-                    "generator": report.generator,
-                    "considered": report.considered,
-                    "skipped_existing": report.skipped_existing,
-                    "symbols_without_offers": report.symbols_without_offers,
-                    "drafts_requested": report.drafts_requested,
-                    "admitted": report.admitted,
-                    "refused_empty_claim": report.refused_empty_claim,
-                    "refused_no_citation": report.refused_no_citation,
-                    "invalid_refs": report.invalid_refs,
-                    "drafts_citing_off_menu": report.drafts_citing_off_menu,
-                    "offers_dropped_unreadable": report.offers_dropped_unreadable,
-                    "generator_errors": report.generator_errors,
+                    **counters,
+                    # Properties, not fields, so they are named here on purpose.
                     "admission_rate": report.admission_rate,
+                    "refused_by_the_gate": report.refused_by_the_gate,
+                    # A run that drafted claims against an index the tree has moved
+                    # under is a run whose refusal counts are about the drift as much
+                    # as about the model.
+                    "drift": drift.as_json(),
                 },
                 indent=2,
             )

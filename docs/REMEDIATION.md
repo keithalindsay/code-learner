@@ -13,9 +13,19 @@ completeness, test quality, security). This is the implementation plan derived f
 | WP2 file-read oracle | **done** | `31e6c97` |
 | WP3 transport + unbounded writes | **done** (schema CHECK deferred to WP8) | `31e6c97` |
 | WP6 pin `Outcome.held` | **done** | `31e6c97` |
-| WP4 consolidate the gate | in flight | |
-| WP19 remaining unguarded reads | in flight | |
-| WP5, WP7–WP18 | not started | |
+| WP4 consolidate the gate | **done** | `72e5a0c` |
+| WP19 remaining unguarded reads | **done** | `72e5a0c` |
+| WP7 re-index carries the store | **done** | `243095d` |
+| WP10.1 `SchemaVersionError` handling | **done** | `243095d` |
+| WP10.3 non-destructive expiry + `reinstate` | **done** | `243095d` |
+| WP5 controls at both doors | **done** | `243095d` |
+| WP20 repo containment at the chokepoint | **done** (found by WP5) | `243095d` |
+| WP8 decorator span + schema v6 | in flight | |
+| WP9 MCP index invalidation | in flight | |
+| WP10.2 tier-0/1 drift detection | in flight | |
+| WP11–WP18 | not started | |
+
+Test count: 484 at audit time → **631** at `243095d`.
 
 ### Amendments from Wave 0
 
@@ -46,6 +56,39 @@ that does.
    mutation to remove all three. **Any WP that adds a guard in front of an existing
    controlled rule must re-check that rule's mutation still flips it.** This applies directly
    to WP4.
+
+   *This has now bitten three times, in three distinct shapes, and each would have reported
+   a control as detecting a rule it does not name:*
+
+   | shape | family | how it hid |
+   |---|---|---|
+   | **duplicated** | `unknown_subject` (WP4) | the store's copy of the rule refused with the same code |
+   | **bypassed** | `unverifiable_span` (WP5) | the server substitutes the observed hash, so the store's rule is unreachable by construction |
+   | **stacked** | `escaping_path` (WP20) | deleting containment drops the attack onto the index-membership guard, and the two cannot be separated by *any* submission — every path that escapes the repo is by construction a path the index never parsed |
+
+   Treat the rule as standing procedure, not a Wave-0 note.
+
+### Amendments from Wave 2
+
+4. **A declared gap is a debt the suite makes you settle.** WP5 recorded the missing
+   containment rule as an `Unenforced` gate entry — controls still generated, still
+   submitted, still scored as the failures they were — with `STORE_GAPS` asserted as an
+   exact set. Closing the hole then *failed a test*, which is the behaviour that entry was
+   built for. Keep the empty set asserted: an `Unenforced` entry added without editing that
+   line now fails.
+
+5. **Adding a measurement surface finds what reading the code does not.** Six auditors read
+   `write_assertion` and none found the containment hole. Running the *existing* corpus at a
+   *second door* surfaced it immediately. But note the honest limit, which WP5 stated
+   itself: the corpus still found no attack nobody had enumerated. Two auditors found two by
+   probing outside the family list; this apparatus has found none. Adding doors is a second
+   axis with the same property — it can only expose rules some family already names.
+
+6. **Counters must be wired, not merely declared.** During WP20 the synthesiser added a
+   `refused_escaping_span` field and a term in the documented partition identity, but did not
+   add it to `_OUTCOME_COUNTERS`. It would have read zero forever while the draft vanished
+   out of `drafts_requested` — breaking the identity on the first such refusal and on no run
+   before it. A counter wired to nothing is worse than a missing one.
 
 ### WP19 — remaining unguarded reads (added post-Wave-0, not audit-derived)
 

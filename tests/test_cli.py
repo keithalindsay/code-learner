@@ -782,6 +782,236 @@ def test_dense_is_disabled_when_the_model_does_not_match_the_vectors(tmp_path, c
 
 
 # ---------------------------------------------------------------------------
+# drift -- the index measured against the tree it was built from
+# ---------------------------------------------------------------------------
+#
+# Tier 2 has a two-stage staleness engine, a `span_verifications` baseline and a
+# `staleness_log`. Tier 0/1 had NOTHING: `files.mtime_ns` and `files.size_bytes`
+# were written at index time and read by no code path at all, so after any edit
+# `search` went on serving T0 rows -- "deterministic, reproducible from source
+# alone" -- at line numbers that had moved, with nothing anywhere saying the index
+# was behind the tree. That the facts tier was the one with no drift check is the
+# inversion these tests exist to keep closed.
+#
+# Every assertion below is on stderr or on a `drift` key, never on stdout prose,
+# because the note must never be able to corrupt a `--json` document.
+
+CHANGED_MARK = "since this index was built"
+FLOOR_MARK = "these counts are floors"
+
+
+def _edit(path: Path, text: str) -> None:
+    """Rewrite a file so that BOTH mtime and size move.
+
+    Size is the belt: two writes inside one filesystem timestamp tick are entirely
+    possible on a fast machine, and a test that relied on mtime alone would be the
+    kind that passes on a laptop and fails in CI once a year.
+    """
+    path.write_text(text)
+
+
+def test_an_edited_file_makes_search_say_the_index_is_behind_the_tree(tmp_path, capsys):
+    """The whole point: a moved line must not be served in silence.
+
+    Shifting the file down changes every line number the index recorded for it, and
+    before this the only symptom was a citation that was quietly wrong."""
+    repo, _ = _indexed(tmp_path, capsys)
+    _edit(repo / "core.py", "# a new header line\n" + (repo / "core.py").read_text())
+
+    assert main(["search", QUERY, "--repo", str(repo)], embedder_factory=fake_factory) == 0
+    err = capsys.readouterr().err
+    assert CHANGED_MARK in err
+    assert "1 of 1 indexed file has changed" in err
+    assert "--force --carry-assertions" in err
+    assert "Traceback" not in err
+
+
+def test_an_untouched_index_says_nothing_at_all(tmp_path, capsys):
+    """The control, and the more important half of the pair.
+
+    A check that fires on a clean tree is a check that gets ignored within a day,
+    and once ignored it is worth less than no check at all -- the user has learnt
+    to scroll past the one line that would have told them their answer was wrong."""
+    repo, _ = _indexed(tmp_path, capsys)
+
+    # --no-dense only so that the (unrelated, expected) "no embeddings" note does not
+    # occupy stderr; the assertion worth making is that stderr is EMPTY, not that it
+    # merely lacks two substrings.
+    assert main(
+        ["search", QUERY, "--repo", str(repo), "--no-dense"], embedder_factory=fake_factory
+    ) == 0
+    err = capsys.readouterr().err
+    assert CHANGED_MARK not in err
+    assert "not in this index" not in err
+    assert err.strip() == ""
+
+
+def test_the_note_never_corrupts_a_json_document(tmp_path, capsys):
+    """`--json` is a machine surface, so the warning goes to stderr and the FACTS go
+    into the document. A human-readable note on stdout would break every pipeline
+    that pipes this into `jq`, and dropping the facts entirely would mean the machine
+    surface is the one that cannot tell it is being served stale line numbers."""
+    repo, _ = _indexed(tmp_path, capsys)
+    _edit(repo / "core.py", "# a new header line\n" + (repo / "core.py").read_text())
+
+    assert main(
+        ["search", QUERY, "--repo", str(repo), "--json"], embedder_factory=fake_factory
+    ) == 0
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)  # the assertion: still ONE parseable document
+    assert CHANGED_MARK in captured.err
+    assert payload["drift"]["checked"] is True
+    assert payload["drift"]["changed"] == 1
+    assert payload["drift"]["missing"] == 0
+    assert payload["drift"]["unindexed"] == 0
+    assert payload["drift"]["indexed"] == 1
+    # Named so a reader knows what was compared and therefore what was NOT.
+    assert payload["drift"]["method"] == "mtime_ns+size_bytes"
+
+
+def test_a_file_the_index_never_had_is_counted_apart_from_a_changed_one(tmp_path, capsys):
+    """Two different failures, so two different numbers.
+
+    A modified file moves citations -- the answer is wrong and looks right. A file
+    that was never indexed is simply absent -- the answer is missing and looks like
+    "no results", exit 0. Folding them into one count would tell a user to expect
+    the wrong symptom."""
+    repo, _ = _indexed(tmp_path, capsys)
+    (repo / "extra.py").write_text('def newly_written():\n    """Added later."""\n    return 1\n')
+    _git_add(repo)
+
+    assert main(
+        ["search", QUERY, "--repo", str(repo), "--json"], embedder_factory=fake_factory
+    ) == 0
+    captured = capsys.readouterr()
+    drift = json.loads(captured.out)["drift"]
+    assert drift["changed"] == 0
+    assert drift["unindexed"] == 1
+    assert "not in this index" in captured.err
+    assert CHANGED_MARK not in captured.err
+
+
+def test_an_indexed_file_that_is_gone_is_counted_apart_again(tmp_path, capsys):
+    """A third failure: the citation names a path with nothing behind it. Reported
+    separately because "the bytes moved" and "the file is not there" have different
+    remedies and different blast radii."""
+    repo, _ = _indexed(
+        tmp_path,
+        capsys,
+        files={**REPO_FILES, "doomed.py": 'def gone():\n    """Bye."""\n    return 1\n'},
+    )
+    (repo / "doomed.py").unlink()
+
+    assert main(
+        ["search", QUERY, "--repo", str(repo), "--json"], embedder_factory=fake_factory
+    ) == 0
+    captured = capsys.readouterr()
+    drift = json.loads(captured.out)["drift"]
+    assert drift["missing"] == 1
+    assert drift["changed"] == 0
+    assert "no longer on disk" in captured.err
+
+
+def test_the_note_says_it_is_a_floor_and_not_an_audit(tmp_path, capsys):
+    """mtime+size can miss an edit that preserves both, so the note must never read
+    as an exhaustive audit. It reports what it measured and says what it did not."""
+    repo, _ = _indexed(tmp_path, capsys)
+    _edit(repo / "core.py", "# a new header line\n" + (repo / "core.py").read_text())
+
+    assert main(["search", QUERY, "--repo", str(repo)], embedder_factory=fake_factory) == 0
+    assert FLOOR_MARK in capsys.readouterr().err
+
+
+def test_stats_reports_drift_too_including_the_clean_case(tmp_path, capsys):
+    """`stats` is the command someone types to ask "what is in this index", so it is
+    the one surface where the freshness answer is worth printing even when it is
+    "nothing has moved" -- unlike `search`, where an unconditional line would train
+    the reader to ignore it."""
+    repo, index_path = _indexed(tmp_path, capsys)
+    assert main(["stats", "--repo", str(repo), "--json"], embedder_factory=fake_factory) == 0
+    clean = json.loads(capsys.readouterr().out)["drift"]
+    assert clean == {
+        "checked": True,
+        "indexed": 1,
+        "changed": 0,
+        "missing": 0,
+        "unindexed": 0,
+        "method": "mtime_ns+size_bytes",
+    }
+
+    _edit(repo / "core.py", "# a new header line\n" + (repo / "core.py").read_text())
+    assert main(["stats", "--repo", str(repo)], embedder_factory=fake_factory) == 0
+    out = capsys.readouterr().out
+    assert str(index_path)  # the path is still reported; nothing was swallowed
+    assert "freshness" in out
+    assert "1 of 1" in out
+
+
+def test_an_unmeasurable_tree_is_not_reported_as_a_clean_one(tmp_path, capsys):
+    """"Did not measure" and "measured zero" are different answers, and the second is
+    the one a reader will assume unless the payload refuses to say it.
+
+    Reached by pointing an index at a tree that is not on this machine -- an index
+    copied off a build box, a repo on an unmounted volume. Every count is null rather
+    than 0, and nothing is printed, because there is nothing this process established."""
+    repo, index_path = _indexed(tmp_path, capsys)
+    moved = tmp_path / "elsewhere"
+    moved.mkdir()
+    # The WAL sidecars come too. Copying only the main file leaves the tables that
+    # have not been checkpointed behind, which is a different bug pretending to be
+    # this one -- `_delete_index` exists for the mirror-image of the same fact.
+    for suffix in ("", "-wal", "-shm"):
+        sidecar = Path(str(index_path) + suffix)
+        if sidecar.exists():
+            (moved / ("index.db" + suffix)).write_bytes(sidecar.read_bytes())
+
+    assert main(
+        ["stats", "--repo", str(repo), "--index-path", str(moved / "index.db"), "--json"],
+        embedder_factory=fake_factory,
+    ) == 0
+    captured = capsys.readouterr()
+    # The repo still exists here, so first prove the fixture: nothing has moved.
+    assert json.loads(captured.out)["drift"]["checked"] is True
+
+    # Now take the tree away and ask again.
+    for path in sorted(repo.rglob("*"), reverse=True):
+        path.unlink() if path.is_file() else path.rmdir()
+    repo.rmdir()
+    assert main(
+        ["stats", "--repo", str(moved), "--index-path", str(moved / "index.db"), "--json"],
+        embedder_factory=fake_factory,
+    ) == 0
+    captured = capsys.readouterr()
+    drift = json.loads(captured.out)["drift"]
+    assert drift == {
+        "checked": False,
+        "indexed": None,
+        "changed": None,
+        "missing": None,
+        "unindexed": None,
+        "method": "mtime_ns+size_bytes",
+    }
+    assert CHANGED_MARK not in captured.err
+    assert "Traceback" not in captured.err
+
+
+def test_drift_survives_a_search_that_returns_nothing(tmp_path, capsys):
+    """The nastiest case in the report: a symbol added after indexing returns "no
+    results", exit 0, which is indistinguishable from a repo that does not contain
+    it. The note is the only thing that separates them."""
+    repo, _ = _indexed(tmp_path, capsys)
+    (repo / "extra.py").write_text('def zzzqqq_nonexistent():\n    return 1\n')
+    _git_add(repo)
+
+    assert main(
+        ["search", "zzzqqq nonexistent", "--repo", str(repo)], embedder_factory=fake_factory
+    ) == 0
+    captured = capsys.readouterr()
+    assert "no results" in captured.out
+    assert "not in this index" in captured.err
+
+
+# ---------------------------------------------------------------------------
 # tiers and --facts-only
 # ---------------------------------------------------------------------------
 
@@ -844,10 +1074,15 @@ def test_stats_json_shape(tmp_path, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert payload["index"] == str(index_path)
     assert payload["repo_root"] == str(repo)
+    # `assertions` joins the count map here rather than living somewhere else, because
+    # the MCP `index_stats` payload already carries it there and two surfaces over one
+    # index that disagree about the shape of the answer are worse than either shape.
     assert payload["counts"] == {"files": 1, "symbols": 3, "edges": payload["counts"]["edges"],
-                                 "chunks": 3}
+                                 "chunks": 3, "assertions": 0}
     assert set(payload["tiers"]) == {"T0", "T1", "T2"}
-    assert payload["tiers"]["T2"] == 0  # the inference layer is not built yet
+    # Structurally always 0: tier 2 lives in `assertions`, never on `edges.tier`.
+    # Kept in the shape so the MCP `index_stats` payload and this one agree.
+    assert payload["tiers"]["T2"] == 0
     assert payload["symbol_kinds"]["function"] == 2
     assert payload["resolution"]["by_resolver"]["module_local/v1"]["count"] == 1
     assert payload["resolution"]["by_resolver"]["module_local/v1"]["confidence"] == pytest.approx(0.9)
@@ -865,6 +1100,39 @@ def test_stats_reports_which_model_produced_the_vectors(tmp_path, capsys):
     assert embeddings["model"] == "fake/v1"
     assert embeddings["dim"] == 3
     assert embeddings["vectors"] == 3
+
+
+def test_stats_reports_the_assertion_store_it_used_to_be_blind_to(tmp_path, capsys):
+    """Phase 9 shipped and `stats` never noticed.
+
+    It printed a `T2 INFERRED` count read from `edges.tier` -- a column tier 2 never
+    occupies, so the number was structurally always 0 -- annotated "the inference
+    layer is not built yet", next to a store holding claims, verdicts and expiries.
+    After a full `learn` run the one command whose job is "what is in this index"
+    said nothing about the only part of it that was not derived from source."""
+    repo, index_path = _indexed(tmp_path, capsys)
+    _admit(index_path, repo, "core.frobnicate_widgets", "frobnicates widgets")
+    refuted = _admit(index_path, repo, "core._plumbing", "returns the answer")
+    expired = _admit(index_path, repo, "core", "the module")
+    conn = db.connect(index_path)
+    store.record_verdict(conn, refuted, "judge/v1", "refuted", "it does not")
+    store.mark_stale(conn, expired, store.REASON_HASH_MISMATCH)
+    conn.close()
+
+    assert main(["stats", "--repo", str(repo), "--json"], embedder_factory=fake_factory) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["counts"]["assertions"] == 3
+    # Explicit zeros are part of the contract: `rejected` must be visible rather than
+    # merely absent, because the rejected set is the only evidence the gate does
+    # anything at all.
+    assert payload["assertions_by_status"] == {"active": 1, "rejected": 1, "stale": 1}
+
+    assert main(["stats", "--repo", str(repo)], embedder_factory=fake_factory) == 0
+    out = capsys.readouterr().out
+    assert "assertions" in out
+    assert "rejected" in out
+    # The sentence that was false the moment Phase 9 landed.
+    assert "the inference layer is not built yet" not in out
 
 
 def test_stats_on_a_missing_index_exits_nonzero(tmp_path, capsys):
@@ -968,24 +1236,47 @@ def test_learn_admits_claims_and_reports_what_it_refused(tmp_path, capsys, monke
 def test_learn_json_carries_every_counter(tmp_path, capsys, monkeypatch):
     """`--json` is the machine surface, so a counter missing from it is a counter that
     silently stops being auditable. The refusal breakdown is the point of the document,
-    not an appendix to it."""
+    not an appendix to it.
+
+    The key set is derived from `LearnReport` rather than listed, and that is the
+    whole test. A hand-written list is what let waves 1-2 add five `refused_*`
+    counters -- `invalid_span`, `unverifiable`, `unknown_subject`, `stale_evidence`,
+    `escaping_span` -- while the CLI kept emitting a fixed dict that omitted all of
+    them, so a run refused entirely by the gate serialised as a run that admitted
+    nothing for no stated reason. Listing them here would rebuild exactly that trap
+    one layer up."""
+    from dataclasses import fields as dataclass_fields
+
+    from codelearner.generate.pipeline import LearnReport
+
     _patch_generator(monkeypatch, FakeClaimGenerator)
-    repo, _ = _indexed(tmp_path, capsys)
+    repo, index_path = _indexed(tmp_path, capsys)
 
     assert main(["learn", "--repo", str(repo), "--json"], embedder_factory=fake_factory) == 0
     doc = json.loads(capsys.readouterr().out)
-    for key in (
-        "generator",
-        "considered",
-        "drafts_requested",
-        "admitted",
-        "refused_empty_claim",
-        "refused_no_citation",
-        "invalid_refs",
-        "generator_errors",
+
+    expected = {f.name for f in dataclass_fields(LearnReport)} - {"results"}
+    assert expected <= set(doc), sorted(expected - set(doc))
+    # And nothing beyond the report's own fields plus the derived rates and the two
+    # locations, so a key that stops being a counter cannot linger as a lie.
+    assert set(doc) - expected == {
+        "repo",
+        "index",
+        "admission_rate",
+        "refused_by_the_gate",
+        "drift",
+    }
+    for name in (
+        "refused_invalid_span",
+        "refused_unverifiable",
+        "refused_unknown_subject",
+        "refused_stale_evidence",
+        "refused_escaping_span",
+        "offers_dropped_oversize",
     ):
-        assert key in doc, key
+        assert name in doc, name
     assert doc["generator"] == "fake/claims"
+    assert doc["index"] == str(index_path)
 
 
 def test_learn_without_an_index_says_so_instead_of_creating_one(tmp_path, monkeypatch, capsys):

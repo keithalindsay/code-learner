@@ -12,9 +12,11 @@ tens of seconds and ~1.2GB of VRAM to prove wiring that three floats prove.
 """
 from __future__ import annotations
 
+import ast
 import asyncio
 import json
 import os
+import sqlite3
 import subprocess
 import threading
 import tomllib
@@ -254,6 +256,248 @@ def test_an_index_deleted_underneath_a_live_server_is_reported(served):
         if candidate.exists():
             candidate.unlink()
     assert call(server, "index_stats")["error"]["code"] == "no_index"
+
+
+# ---------------------------------------------------------------------------
+# the index replaced underneath a live server
+#
+# The second morning: an agent session open in the editor, a human running
+# `codelearner index --force` in a terminal. That command DELETES the index and
+# builds a new one, so an existence check sees nothing happen -- the path is
+# occupied again before the next tool call arrives -- while the cached connection
+# still points at the unlinked inode. Reads answered from the previous build; a
+# write was accepted, reported `servable: true`, and left zero rows on disk.
+# ---------------------------------------------------------------------------
+
+def _rebuild(repo: Path, index_path: Path) -> None:
+    """What `codelearner index --force` does to the file: delete it, build again.
+
+    By inode replacement rather than by writing into the file already there, because
+    the replacement is the whole bug. Asserts the inode actually moved: a filesystem
+    that handed the rebuild the same number would leave every test below passing
+    while testing nothing, and the guarantee that it cannot is that somebody still
+    holds the old file open.
+    """
+    before = index_path.stat().st_ino if index_path.exists() else None
+    for suffix in ("", "-wal", "-shm"):
+        candidate = Path(str(index_path) + suffix)
+        if candidate.exists():
+            candidate.unlink()
+    conn, _ = index_repo(repo, index_path=index_path)
+    conn.close()
+    if before is not None:
+        assert index_path.stat().st_ino != before, (
+            "the rebuild reused the inode, so nothing here is testing what it claims "
+            "to -- an open connection to the old file should make that impossible"
+        )
+
+
+def _assertions_on_disk(index_path: Path) -> int:
+    """How many assertions are in the file that is AT this path, opened fresh.
+
+    Fresh is the entire point. The server's own report of what it stored is exactly
+    the thing under test, and the failure being measured is a `write_assertion` that
+    commits, returns an id, verifies as servable, and lands in a file nobody can
+    open again.
+    """
+    conn = db.connect(index_path)
+    try:
+        return int(conn.execute("SELECT count(*) FROM assertions").fetchone()[0])
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize(
+    ("tool", "arguments"),
+    [
+        ("index_stats", {}),
+        ("search_code", {"query": QUERY}),
+        ("get_symbol", {"qualname": "core.frobnicate_widgets"}),
+        ("reading_path", {}),
+    ],
+)
+def test_a_rebuilt_index_is_refused_once_instead_of_served_from_the_old_inode(
+    served, tool, arguments
+):
+    """Existence is not identity, and `--force` is the difference. Drop the
+    `(st_dev, st_ino)` check from `IndexSource.connect` and every one of these answers
+    `ok: true` out of a deleted database -- correct-looking results about a build that
+    no longer exists, which is the one failure with nothing downstream to catch it.
+
+    The refusal is one-shot by design: the cached connection is dropped on the way
+    out, so the retry opens the file that is there now."""
+    repo, index_path, server = served
+    assert call(server, "index_stats")["ok"] is True  # opens and caches the handle
+
+    _rebuild(repo, index_path)
+
+    payload = call(server, tool, **arguments)
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "index_replaced"
+
+    assert call(server, tool, **arguments)["ok"] is True
+
+
+def test_the_index_replaced_refusal_names_something_the_agent_can_act_on(served):
+    """A refusal an agent cannot act on teaches it that the server is flaky. This one
+    has to say more than "try again", because trying again with the same hashes is
+    precisely the wrong move: they were published by the previous build."""
+    repo, index_path, server = served
+    _hash_of(server, "core.frobnicate_widgets")  # the agent now holds a stale hash
+
+    _rebuild(repo, index_path)
+
+    error = call(server, "index_stats")["error"]
+    assert error["code"] == "index_replaced"
+    assert error["index"] == str(index_path)
+    assert "content_hash" in error["message"]
+    assert "retrieval" in error["message"]
+
+
+def test_a_submission_after_a_rebuild_is_refused_before_it_reaches_the_deleted_file(
+    served,
+):
+    """The auditor's sequence, exactly: submit through a live server after a rebuild
+    and be told `ok: true, accepted: true, servable: true` with zero assertions
+    surviving on disk. Every check inside `submit_assertion` passed -- the subject
+    resolved, the spans re-hashed off disk and matched -- because all of them ran
+    against a database that had been unlinked."""
+    repo, index_path, server = served
+    good_hash, line_start, line_end = _hash_of(server, "core.frobnicate_widgets")
+    submission = {
+        "subject_qualname": "core.frobnicate_widgets",
+        "claim": "frobnicates every widget on the tray",
+        "evidence_spans": [
+            {
+                "path": "core.py",
+                "line_start": line_start,
+                "line_end": line_end,
+                "content_hash": good_hash,
+            }
+        ],
+    }
+
+    _rebuild(repo, index_path)
+
+    refused = call(server, "submit_assertion", **submission)
+    assert refused["ok"] is False
+    assert refused["error"]["code"] == "index_replaced"
+    assert _assertions_on_disk(index_path) == 0
+
+    # And the retry the refusal asks for lands in the index that is actually there.
+    accepted = call(server, "submit_assertion", **submission)
+    assert accepted["ok"] is True
+    assert _assertions_on_disk(index_path) == 1
+
+
+def test_a_rebuild_landing_mid_submission_is_not_reported_as_success(served, monkeypatch):
+    """The window `connect` cannot see. Identity is checked once, before the tool body
+    runs; a rebuild that lands between that check and the commit passes it, and the
+    row goes into the deleted file regardless. Nothing available to this process
+    closes that window -- sqlite will not say whether the file under an open handle
+    has been unlinked, and there is no lock shared with the indexing process.
+
+    What is closable is the report. The claim is lost either way; only `index_replaced`
+    makes the agent submit it again."""
+    repo, index_path, server = served
+    good_hash, line_start, line_end = _hash_of(server, "core.frobnicate_widgets")
+    real_write = store.write_assertion
+
+    def rebuild_then_write(conn, **kwargs):
+        _rebuild(repo, index_path)
+        return real_write(conn, **kwargs)
+
+    monkeypatch.setattr(server_app.store, "write_assertion", rebuild_then_write)
+
+    payload = call(
+        server,
+        "submit_assertion",
+        subject_qualname="core.frobnicate_widgets",
+        claim="frobnicates every widget on the tray",
+        evidence_spans=[
+            {
+                "path": "core.py",
+                "line_start": line_start,
+                "line_end": line_end,
+                "content_hash": good_hash,
+            }
+        ],
+    )
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "index_replaced"
+    # It has to admit the write is gone rather than imply a clean rejection.
+    assert "submit again" in payload["error"]["message"]
+    assert _assertions_on_disk(index_path) == 0
+
+
+def test_a_vanished_index_closes_its_connection_instead_of_leaking_it(served):
+    """`self._conn = None` drops the reference, not the descriptor. sqlite goes on
+    holding the file open, which also pins the unlinked inode, so a server watching a
+    repository that is re-indexed nightly leaks one handle and one deleted database
+    per rebuild -- and neither shows up anywhere a human looks."""
+    _, index_path, _ = served
+    source = server_app.IndexSource(path=index_path, embedder_factory=FakeEmbedder)
+    conn = source.connect()
+    assert conn.execute("SELECT count(*) FROM symbols").fetchone()[0] >= 1
+
+    for suffix in ("", "-wal", "-shm"):
+        candidate = Path(str(index_path) + suffix)
+        if candidate.exists():
+            candidate.unlink()
+
+    with pytest.raises(server_app.ToolError) as caught:
+        source.connect()
+    assert caught.value.code == "no_index"
+    with pytest.raises(sqlite3.ProgrammingError):
+        conn.execute("SELECT 1")
+
+
+def test_a_swap_closes_the_old_connection_and_reopens_the_embedder_question(served):
+    """Two things were cached off the file that is now gone, and both go. The
+    connection is the loud one. The embedder CHECK is the quiet one: `_embed_checked`
+    records an answer read out of the old index's `meta`, so a rebuild that finally
+    ran `--embed` would be told "this index has no embeddings" by a server that
+    decided that before they existed and never looked again."""
+    repo, index_path, _ = served
+    source = server_app.IndexSource(path=index_path, embedder_factory=FakeEmbedder)
+    conn = source.connect()
+    source.embedder(conn)
+    assert source._embed_checked is True
+
+    _rebuild(repo, index_path)
+
+    with pytest.raises(server_app.ToolError) as caught:
+        source.connect()
+    assert caught.value.code == "index_replaced"
+    with pytest.raises(sqlite3.ProgrammingError):
+        conn.execute("SELECT 1")
+    assert source._embed_checked is False
+
+
+def test_every_refusal_code_the_server_can_raise_is_in_the_documented_table():
+    """The codes are the branchable half of the agent-facing contract, and a code that
+    exists in the code and in no table is one an agent meets for the first time at
+    runtime with nothing to match it against. Several arrived that way -- `bad_path`,
+    `file_too_large`, `too_many_spans`, `claim_too_long`, `bad_confidence`,
+    `schema_mismatch`, `span_escapes_repo`, `index_replaced` -- and `unknown_subject`
+    was undocumented before any of them. Reading the raises out of the source is what
+    makes this fail on the next one instead of drifting again."""
+    source = (PROJECT_ROOT / "codelearner" / "server" / "app.py").read_text()
+    raised = {
+        node.args[0].value
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "ToolError"
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and isinstance(node.args[0].value, str)
+    }
+    # The store's refusals reach `ToolError` through a lookup rather than a literal,
+    # so they are invisible to the scan above and are exactly the family most likely
+    # to grow.
+    raised |= set(server_app._STORE_REFUSAL_CODES.values())
+    assert raised == set(server_app.ERROR_CODES)
 
 
 @pytest.mark.parametrize(

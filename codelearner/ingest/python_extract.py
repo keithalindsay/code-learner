@@ -79,6 +79,38 @@ def _docstring(src: bytes, body: Node | None) -> str | None:
     return None
 
 
+def _span_origin(node: Node) -> Node:
+    """Return the node whose START a citation of `node` must be taken from.
+
+    The failure this defends against is the only fail-open one in the design. In
+    tree-sitter-python a decorated definition is wrapped: `decorated_definition` holds
+    the `decorator` children (and any comment between them) followed by the
+    `function_definition`/`class_definition` itself, and the inner node begins at
+    `def`/`class` -- NOT at the `@`. Taking the span from the inner node stored, for
+    every decorated symbol, bytes that exclude its own decorators.
+
+    Nothing downstream could notice. Rewrite `@cache(ttl=60)` to `@cache(ttl=5)` and
+    the cited bytes are genuinely unchanged, so both verifiers report `fresh`,
+    `force_hash=True` finds nothing, `staleness_log` stays empty, the faithfulness
+    judge is shown the same truncated span and correctly rules "responses are cached
+    for 60 seconds" supported, and a human following the citation sees exactly those
+    bytes. A claim about routing, auth, caching, transactions, `@property` or
+    `@staticmethod` could go silently false with no signal anywhere.
+
+    Only the start moves. The wrapper ends where the inner definition ends, and
+    `name`, `signature` and `docstring` are still read from the inner node -- a symbol
+    named after its decorator would be a worse bug than the one being fixed. The
+    immediate parent is the right node to ask: for stacked decorators there is one
+    wrapper holding all of them, so this reaches the outermost `@` in one step, and
+    for a decorated method inside a decorated class each definition has its own
+    wrapper, so the two spans stay distinct.
+    """
+    parent = node.parent
+    if parent is not None and parent.type == "decorated_definition":
+        return parent
+    return node
+
+
 def _signature(src: bytes, node: Node) -> str | None:
     """Reconstruct `name(params) -> ret` without dragging in the body."""
     name = node.child_by_field_name("name")
@@ -150,16 +182,20 @@ def extract(source: bytes, rel_path: str, mtime_ns: int = 0) -> FileExtract:
                 kind = KIND_METHOD if parent_kind == KIND_CLASS else KIND_FUNCTION
 
             body = node.child_by_field_name("body")
+            # The span starts at the `@` when there is one; everything else about the
+            # symbol is read from the definition itself. See `_span_origin`.
+            origin = _span_origin(node)
+            byte_start = origin.start_byte
             result.symbols.append(
                 Symbol(
                     kind=kind,
                     name=name,
                     qualname=qual,
-                    line_start=node.start_point[0] + 1,
+                    line_start=origin.start_point[0] + 1,
                     line_end=node.end_point[0] + 1,
-                    byte_start=node.start_byte,
+                    byte_start=byte_start,
                     byte_end=node.end_byte,
-                    content_hash=content_hash(source[node.start_byte : node.end_byte]),
+                    content_hash=content_hash(source[byte_start : node.end_byte]),
                     parent_qualname=parent_qual or None,
                     docstring=_docstring(source, body),
                     signature=_signature(source, node) if kind != KIND_CLASS else None,
