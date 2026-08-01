@@ -83,9 +83,15 @@ __all__ = [
     "OUTCOME_ADMITTED",
     "OUTCOME_EMPTY_CLAIM",
     "OUTCOME_ERROR",
+    "OUTCOME_INVALID_SPAN",
     "OUTCOME_NO_CITATION",
     "OUTCOME_NO_OFFERS",
     "OUTCOME_SKIPPED_EXISTING",
+    "OUTCOME_ESCAPING_SPAN",
+    "OUTCOME_STALE_EVIDENCE",
+    "OUTCOME_UNKNOWN_SUBJECT",
+    "OUTCOME_UNVERIFIABLE",
+    "REFUSAL_OUTCOMES",
     "PHASE_DONE",
     "PHASE_START",
     "ROLE_CALLEE",
@@ -153,9 +159,53 @@ ROLE_CALLER = "caller"
 OUTCOME_ADMITTED = "admitted"
 OUTCOME_EMPTY_CLAIM = "refused_empty_claim"
 OUTCOME_NO_CITATION = "refused_no_citation"
+OUTCOME_INVALID_SPAN = "refused_invalid_span"
+OUTCOME_UNVERIFIABLE = "refused_unverifiable"
+OUTCOME_UNKNOWN_SUBJECT = "refused_unknown_subject"
+OUTCOME_STALE_EVIDENCE = "refused_stale_evidence"
+OUTCOME_ESCAPING_SPAN = "refused_escaping_span"
 OUTCOME_NO_OFFERS = "no_offers"
 OUTCOME_SKIPPED_EXISTING = "skipped_existing"
 OUTCOME_ERROR = "generator_error"
+
+# Which store refusal becomes which outcome. One entry per exception class, and NOT a
+# shared `refused_by_the_store`, for the reason the whole outcome vocabulary exists:
+# these four have four different repairs. `invalid_span` means the INDEX published a
+# degenerate byte range and needs rebuilding; `unknown_subject` means the candidate set
+# names something this index never parsed, which only a caller-supplied list can do;
+# `stale_evidence` means the working tree moved during the run and the answer is to
+# re-index and re-run; `unverifiable` means a cited span carried no hash at all.
+#
+# None of them is a `generator_error`, and that is the point of the mapping rather than
+# a broad `except`. Until this existed, five of the six store refusals had no handler
+# here at all: WP4 moved the rules to `write_assertion` and they came out of `_admit`
+# as unhandled exceptions -- three of the four reproducible ones ENDED THE RUN, losing
+# every symbol after the first bad one and returning no report at all. The reflex fix,
+# widening the generator's `except Exception`, would have been worse than the crash: it
+# would have counted a moving repository and a corrupt index as evidence about the
+# model, in the one counter whose whole job is to be evidence about the model.
+REFUSAL_OUTCOMES: dict[type[BaseException], str] = {
+    store.EvidenceRequired: OUTCOME_NO_CITATION,
+    store.EmptyClaim: OUTCOME_EMPTY_CLAIM,
+    store.InvalidSpan: OUTCOME_INVALID_SPAN,
+    store.EvidenceUnverifiable: OUTCOME_UNVERIFIABLE,
+    store.UnknownSubject: OUTCOME_UNKNOWN_SUBJECT,
+    store.EvidenceStale: OUTCOME_STALE_EVIDENCE,
+    store.SpanEscapesRepo: OUTCOME_ESCAPING_SPAN,
+}
+
+# Spelled out rather than `tuple(REFUSAL_OUTCOMES)` for the reason `server/app.py`
+# gives about its own copy: a class added to the mapping and forgotten here fails
+# loudly as an unhandled exception rather than being caught and looked up as a KeyError.
+_REFUSALS = (
+    store.EvidenceRequired,
+    store.EmptyClaim,
+    store.InvalidSpan,
+    store.EvidenceUnverifiable,
+    store.UnknownSubject,
+    store.EvidenceStale,
+    store.SpanEscapesRepo,
+)
 
 # Why a candidate span never reached the menu. Split for the same reason as the
 # outcomes above, and for a measured one: these were a single counter until a real run
@@ -264,11 +314,30 @@ class LearnReport:
 
         considered = skipped_existing + symbols_without_offers + drafts_requested
         drafts_requested = admitted + refused_empty_claim + refused_no_citation
-                           + generator_errors
+                           + refused_invalid_span + refused_unverifiable
+                           + refused_unknown_subject + refused_stale_evidence
+                           + refused_escaping_span + generator_errors
 
     so a run whose numbers do not add up has lost drafts somewhere, which is exactly
     the shape of the bug a pipeline like this gets: a swallowed exception that turns
     into a symbol nobody notices was never asked about.
+
+    The five `refused_*` counters after `refused_no_citation` are the rules that live
+    at the chokepoint, and each has its own column rather than a share of
+    `generator_errors` because each names something different about the RUN rather than
+    about the model: a degenerate index, a caller-supplied subject the index never
+    parsed, a repository that moved mid-run, a citation with nothing to check it
+    against, and an index whose recorded path leaves the repository. Folding any of
+    them into the generator's error count would put a fact about the environment into
+    the one number a reader uses to judge a model, and it would do it silently -- the
+    total would still add up.
+
+    A counter with no entry in `_OUTCOME_COUNTERS` is worse than a missing counter: the
+    field reads zero forever while the draft disappears out of `drafts_requested`, so
+    the identity above stops holding on the first refusal of that kind and on no run
+    before it. `refused_escaping_span` shipped in that state for exactly as long as it
+    took the partition test to run, which is the argument for the test rather than for
+    the discipline.
 
     `invalid_refs` is the one to watch. It counts off-menu references, which is the
     direct measure of whether numbered citation is working -- a generator that cites
@@ -284,6 +353,11 @@ class LearnReport:
     admitted: int = 0
     refused_empty_claim: int = 0
     refused_no_citation: int = 0
+    refused_invalid_span: int = 0
+    refused_unverifiable: int = 0
+    refused_unknown_subject: int = 0
+    refused_stale_evidence: int = 0
+    refused_escaping_span: int = 0
     invalid_refs: int = 0
     drafts_citing_off_menu: int = 0
     offers_dropped_unreadable: int = 0
@@ -301,9 +375,32 @@ class LearnReport:
 
         `skipped_existing` and `no_offers` are excluded: neither reached a generator,
         so neither is evidence about one.
+
+        Derived from `REFUSAL_OUTCOMES` rather than listed, so a store rule that gains
+        an outcome cannot gain it without also appearing here. A refusal missing from
+        this list is a draft that vanishes out of `format_report` -- counted, and then
+        never explained to the person reading the run.
         """
-        refusals = (OUTCOME_EMPTY_CLAIM, OUTCOME_NO_CITATION, OUTCOME_ERROR)
+        refusals = {*REFUSAL_OUTCOMES.values(), OUTCOME_ERROR}
         return [r for r in self.results if r.outcome in refusals]
+
+    @property
+    def refused_by_the_gate(self) -> int:
+        """Every draft the store would not admit. The sum of the `refused_*` columns.
+
+        A convenience for the partition identity and nothing more. It is a property
+        rather than a counter because a thirteenth field that had to be incremented in
+        step with the others is a field that will one day not be.
+        """
+        return (
+            self.refused_empty_claim
+            + self.refused_no_citation
+            + self.refused_invalid_span
+            + self.refused_unverifiable
+            + self.refused_unknown_subject
+            + self.refused_stale_evidence
+            + self.refused_escaping_span
+        )
 
     @property
     def admission_rate(self) -> float | None:
@@ -331,6 +428,15 @@ class LearnReport:
             f"  refused: empty_claim={self.refused_empty_claim} "
             f"no_valid_citation={self.refused_no_citation} "
             f"generator_errors={self.generator_errors}\n"
+            # The second refusal line is the environment, not the model. Printed even
+            # when every count is zero: these are the numbers a reader would not think
+            # to ask for, and a line that appears only when something is wrong is a
+            # line nobody learns to read.
+            f"  refused by the gate: invalid_span={self.refused_invalid_span} "
+            f"unverifiable={self.refused_unverifiable} "
+            f"unknown_subject={self.refused_unknown_subject} "
+            f"stale_evidence={self.refused_stale_evidence} "
+            f"escaping_span={self.refused_escaping_span}\n"
             f"  off-menu refs={self.invalid_refs} "
             f"across {self.drafts_citing_off_menu} draft(s); "
             f"offers dropped: oversize={self.offers_dropped_oversize} "
@@ -789,6 +895,21 @@ def _tick(
     )
 
 
+# Outcome name -> the `LearnReport` field that counts it. Every refusal `_admit` can
+# return has to appear here or the partition identity in `LearnReport` breaks, which is
+# the point: the identity is a test, so a new outcome without a counter is caught by
+# arithmetic rather than by review.
+_OUTCOME_COUNTERS: dict[str, str] = {
+    OUTCOME_EMPTY_CLAIM: "refused_empty_claim",
+    OUTCOME_NO_CITATION: "refused_no_citation",
+    OUTCOME_INVALID_SPAN: "refused_invalid_span",
+    OUTCOME_UNVERIFIABLE: "refused_unverifiable",
+    OUTCOME_UNKNOWN_SUBJECT: "refused_unknown_subject",
+    OUTCOME_STALE_EVIDENCE: "refused_stale_evidence",
+    OUTCOME_ESCAPING_SPAN: "refused_escaping_span",
+}
+
+
 def _admit(
     conn: sqlite3.Connection,
     candidate: Candidate,
@@ -804,6 +925,19 @@ def _admit(
     other reason -- it is a fact about the generator either way), then an empty claim,
     then the gate.
 
+    **The empty-claim check stays here even though `write_assertion` now makes the same
+    decision, and the reason is not defence in depth.** The store's rules run cheapest
+    first, so it refuses a draft with no claim AND no resolved references as
+    `EvidenceRequired` -- the spans are checked before the text is. That is the right
+    order for a gate, whose job is to say no. It is the wrong order for a report, whose
+    job is to say WHY: a model that returned nothing at all would be counted under
+    `refused_no_citation`, pointing its reader at the reference-numbering design, when
+    what actually happened is that the generator emitted an empty response. The store
+    decides admissibility and this decides what to call it, and those are different
+    questions that happen to share a predicate. Deleting this line does not change
+    which drafts are stored; it changes which counter moves, which is the whole content
+    of `LearnReport`.
+
     Nothing here inspects `spans` before calling `write_assertion`. That is on purpose:
     `EvidenceRequired` is the store's decision and this catches it, so there is exactly
     one place in the codebase that decides an uncited claim is inadmissible. A
@@ -816,7 +950,7 @@ def _admit(
 
     def outcome(
         name: str, *, assertion_id: int | None = None, text: str = "",
-        citations: tuple[str, ...] = (),
+        citations: tuple[str, ...] = (), error: str = "",
     ) -> LearnResult:
         return LearnResult(
             symbol_id=candidate.symbol_id,
@@ -830,6 +964,7 @@ def _admit(
             # it was going to land.
             invalid_refs=tuple(invalid),
             offered=len(offers),
+            error=error,
         )
 
     if not claim:
@@ -848,13 +983,25 @@ def _admit(
             generator=generator_name,
             confidence=draft.confidence,
         )
-    except store.EvidenceRequired:
-        # Counted, and that is ALL that happens. The temptation at this exact line is
-        # to fall back to the subject's span, which is sitting in `offers[0]` and is
-        # known-good; doing so would attribute a pipeline-authored citation to the
+    except _REFUSALS as exc:
+        # Counted under the rule that refused it, and that is ALL that happens. The
+        # temptation at this exact line -- on the `EvidenceRequired` branch especially
+        # -- is to fall back to the subject's span, which is sitting in `offers[0]` and
+        # is known-good; doing so would attribute a pipeline-authored citation to the
         # generator and there would be no way to find them again. See the module
         # docstring.
-        return outcome(OUTCOME_NO_CITATION, text=claim)
+        #
+        # The message is kept because five of these six say something the counter
+        # cannot: WHICH citation moved, WHICH span was degenerate. A count of
+        # `refused_stale_evidence` tells a reader to re-index; the message tells them
+        # what changed under the run.
+        name = REFUSAL_OUTCOMES.get(type(exc))
+        if name is None:
+            # A subclass of a named refusal that nothing has given an outcome to.
+            # Re-raised rather than filed under its parent, because a new rule
+            # inheriting an old one's counter is a rule that never appears in a report.
+            raise
+        return outcome(name, text=claim, error=f"{type(exc).__name__}: {exc}")
     return outcome(
         OUTCOME_ADMITTED,
         assertion_id=assertion_id,
@@ -906,11 +1053,36 @@ def learn(
     them -- the same choice `eval.faithfulness.adjudicate` makes about verdicts. A
     caller that genuinely needs all-or-nothing can wrap this in `db.transaction`.
 
+    **A root the writes cannot verify against is not a result either.** Every
+    `write_assertion` below re-reads its citations from the root this index is BOUND
+    to, while the menus above are built from the root this function was handed. If the
+    index has no binding, every write in the run will raise `EvidenceUnverifiable`; if
+    the two roots disagree, the model is shown one tree and its citations are checked
+    against another, and every claim expires on its first read blaming an edit nobody
+    made. Both are run-wide conditions with no honest partial reading, so both are
+    settled here, before the first model call, by exactly the same argument that leaves
+    `GeneratorUnavailable` uncaught. The alternative -- discovering it once per symbol
+    -- spends the whole run to learn one fact about the configuration, and reports it
+    as four hundred refusals.
+
     `candidates` overrides selection entirely, which is how the eval scores the exact
     set a run used rather than re-deriving a set that might differ. `limit` applies
     after ordering either way.
     """
     root = store._repo_root(conn, repo_root)
+    # `None`, deliberately: `_admit` passes no root, so this asks the store the same
+    # question every write below will ask it, rather than a question about the argument
+    # this function happened to receive.
+    verifies_against = store._verification_root(conn, None)
+    if verifies_against.resolve() != Path(str(root)).resolve():
+        raise store.EvidenceUnverifiable(
+            f"menus would be built from {str(root)!r} but every citation is verified "
+            f"against {str(verifies_against)!r}, which is what this index is bound to. "
+            "A run across two trees drafts claims about code the store never checks "
+            "and stores citations nobody read -- and it surfaces later as claims that "
+            "expire on their first serve, blaming an edit nobody made. Re-index "
+            "against the tree you mean to learn from, or pass that tree here."
+        )
     walk = list(candidate_symbols(conn) if candidates is None else candidates)
     if limit is not None:
         walk = walk[:limit]
@@ -995,10 +1167,15 @@ def learn(
             )
         if result.outcome == OUTCOME_ADMITTED:
             report.admitted += 1
-        elif result.outcome == OUTCOME_EMPTY_CLAIM:
-            report.refused_empty_claim += 1
-        elif result.outcome == OUTCOME_NO_CITATION:
-            report.refused_no_citation += 1
+        else:
+            # One counter per outcome, by name, so that adding an outcome without
+            # adding its counter fails the partition identity rather than silently
+            # dropping the draft out of every total. The lookup is on the outcome name
+            # and not on the exception, because `_admit` has already made that decision
+            # and two places deciding it is how the two disagree.
+            counter = _OUTCOME_COUNTERS.get(result.outcome)
+            if counter is not None:
+                setattr(report, counter, getattr(report, counter) + 1)
         report.results.append(result)
         logger.debug("%s -> %s", candidate.qualname, result.outcome)
         _tick(on_progress, PHASE_DONE, position, total, candidate, result)

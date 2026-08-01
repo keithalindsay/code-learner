@@ -30,6 +30,31 @@ The working tree is never edited: mutating an installed package in place leaves 
 in which every other process importing it sees the hole, and a crash mid-run leaves the
 hole behind for good.
 
+**Two surfaces, because there are two doors.** This corpus used to import
+`server.app` and nothing else, so every rate it published described the MCP path
+alone -- and `codelearner learn`, the eval harness, and every other library caller
+reach the store without passing through it. The same corpus now runs against
+`store.write_assertion` directly as well, and the report has two columns. The columns
+are not expected to agree, and where they differ the difference is the finding:
+
+* the same attack is often refused by a DIFFERENT rule at each door (a citation of a
+  file the index never parsed is `file_missing` at the server and `evidence_stale` at
+  the store), so acceptable codes and mutations are declared per gate rather than per
+  family -- collapsing them into a union would let a refusal for the wrong reason
+  score as attribution, which is the one thing the codes exist to prevent;
+* one attack is expressible only at the store (`zero_length_span`: the server is given
+  line numbers and derives the bytes itself, so no caller can ask it for an empty
+  range); and
+* one attack the server refused was **not refused at the store at all**. Running the
+  corpus at the second door found `escaping_path` admitted, stored `active`, and
+  reported servable on every one of 12,803 generated instances. It was recorded as an
+  `Unenforced` gate entry -- controls still generated, still submitted, still scored as
+  the failures they were -- because a corpus that declines to generate a control
+  reports a hole as an absence. `store.SpanEscapesRepo` closed it, and closing it
+  FAILED the test that pinned the gap set exactly, which is what that entry is for: a
+  declared gap is a liability the suite makes you settle, not a footnote it lets you
+  keep. `Unenforced` stays in the vocabulary for the next one.
+
 The attacks are the ways a confident model gets a citation wrong, not arbitrary
 malformed input -- content it remembers from the wrong file, a range that runs one line
 past the end, the hash of the symbol next door, and, the one that matters most, a hash
@@ -59,6 +84,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .. import db
 from ..ingest import index_repo
 from ..ingest.types import content_hash
 
@@ -74,6 +100,47 @@ RAISED = "raised"
 # `codelearner` package root.
 GATE_MODULE = "server/app.py"
 STORE_MODULE = "assertions/store.py"
+
+# The two gates, and the three ways of reaching them.
+#
+# A GATE is a body of rules: `server.app` (`_verify_span` plus `_submit_body`) and
+# `assertions.store` (`write_assertion`). A SURFACE is a way in. `direct` calls the
+# tool body under `_guard`; `tool` goes through the registered MCP tool as a client
+# would; `store` calls `write_assertion` with `EvidenceSpan`s, which is what
+# `codelearner learn` and every other library caller does. The first two share a gate
+# and must agree control for control -- that is a test. The third does not share it,
+# and the whole reason this module now has a surface axis is that until WP4 the third
+# door had one lock on it.
+GATE_SERVER = "server"
+GATE_STORE = "store"
+
+SURFACE_DIRECT = "direct"
+SURFACE_TOOL = "tool"
+SURFACE_STORE = "store"
+
+SURFACES: tuple[str, ...] = (SURFACE_DIRECT, SURFACE_TOOL, SURFACE_STORE)
+
+# Which body of rules each surface actually reaches. `tool` maps to `server` rather
+# than getting an entry of its own on purpose: an attack refused by a different code
+# depending on whether the call arrived over the transport would be a contract bug,
+# not a second gate, and giving it its own code set is exactly how such a bug would
+# stop being visible.
+SURFACE_GATES: dict[str, str] = {
+    SURFACE_DIRECT: GATE_SERVER,
+    SURFACE_TOOL: GATE_SERVER,
+    SURFACE_STORE: GATE_STORE,
+}
+
+
+def gate_of(surface: str) -> str:
+    """Which gate a surface reaches. Raises on a surface nobody declared.
+
+    A `KeyError` here is better than a default, because the default would be
+    `GATE_SERVER` and a mistyped surface would then be silently scored against the
+    wrong rule set -- reporting attribution for codes the door it actually used could
+    never produce.
+    """
+    return SURFACE_GATES[surface]
 
 
 class VacuousCorpus(Exception):
@@ -112,6 +179,41 @@ def gate_module() -> Any:
     from ..server import app
 
     return app
+
+
+def store_module() -> Any:
+    """The store, which is the gate the `store` surface measures.
+
+    Imported at call time for the second of `gate_module`'s two reasons only -- the
+    mutation runner must not find this module already bound to the installed package
+    when the child process is meant to import a copied one. The first reason does not
+    apply: `assertions.store` has no optional dependency, which is the entire point of
+    measuring it separately. A gate reachable without `mcp` installed is a gate whose
+    rate cannot be reported by a corpus that needs `mcp` to run.
+    """
+    from ..assertions import store
+
+    return store
+
+
+# Every way the store can refuse an admission, and the code the corpus scores it by.
+# Deliberately a SECOND copy of `server.app._STORE_REFUSAL_CODES` rather than an import
+# of it: the store surface exists to be measurable without the MCP extra installed, and
+# importing the server to name the store's refusals would make the measurement depend on
+# the very thing it is measuring around. Two copies can drift, so `test_gate_controls`
+# asserts they are identical -- which is a cheaper coupling than the import, and a
+# louder one than a shared constant, because it fails by name rather than by absence.
+def store_refusal_codes() -> dict[type[BaseException], str]:
+    store = store_module()
+    return {
+        store.EvidenceRequired: "evidence_required",
+        store.EmptyClaim: "empty_claim",
+        store.InvalidSpan: "invalid_span",
+        store.EvidenceUnverifiable: "evidence_unverifiable",
+        store.UnknownSubject: "unknown_subject",
+        store.EvidenceStale: "evidence_stale",
+        store.SpanEscapesRepo: "span_escapes_repo",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -308,18 +410,198 @@ class Mutation:
 
 
 @dataclass(frozen=True)
-class Family:
-    """One attack (or one legitimate submission), the rule it targets, and its verdict."""
+class Rule:
+    """What ONE gate refuses this attack with, and the edit(s) that delete it there.
 
-    name: str
-    expect: str
-    attack: str
+    Codes and mutation travel together because they are the same claim stated twice:
+    "this door says no, by this name, because of this code". Splitting them would
+    allow a family to name a code it has no mutation for, which is a control that
+    asserts an outcome without establishing that anything produces it.
+    """
+
     codes: frozenset[str]
     mutation: Mutation
 
 
+@dataclass(frozen=True)
+class Unenforced:
+    """This gate does NOT refuse this attack. A measured hole, named on purpose.
+
+    The controls are still generated and still submitted, and they still score as
+    failures -- because they are failures. The alternative, declining to generate them
+    for this surface, is how a corpus reports a gap as absent: the family would simply
+    not appear in that column, and a reader comparing the two columns would see a
+    shorter list rather than a hole. `detail` says what gets through and where the rule
+    it needs would have to live.
+    """
+
+    detail: str
+
+
+@dataclass(frozen=True)
+class Inexpressible:
+    """This attack cannot be PUT to this gate at all, and here is why.
+
+    Distinct from `Unenforced` in the direction that matters. Unenforced means the
+    submission arrives and is admitted; inexpressible means there is no submission to
+    make, because the surface's vocabulary cannot state the attack -- the MCP tool
+    takes line numbers and derives the byte range itself, so no caller can hand it an
+    empty range. Recording the reason is the whole point: amendment #2 of the
+    remediation plan is that this corpus can only test itself against situations it
+    already knows how to generate, so the situations it CANNOT generate have to be
+    written down rather than inferred from an absence.
+    """
+
+    reason: str
+
+
+GateEntry = Rule | Unenforced | Inexpressible
+
+
+@dataclass(frozen=True)
+class Family:
+    """One attack (or one legitimate submission), and what each gate does with it.
+
+    `gates` must name every gate, with no default. A family that simply omitted a gate
+    would be scored against nothing there and would vanish from that column -- the
+    exact failure `Unenforced` and `Inexpressible` exist to make loud. The
+    completeness check is a test, because a dataclass cannot enforce it.
+    """
+
+    name: str
+    expect: str
+    attack: str
+    gates: dict[str, GateEntry]
+
+    def at(self, surface: str) -> GateEntry:
+        """What the gate behind `surface` does with this attack."""
+        return self.gates[gate_of(surface)]
+
+    def rule(self, surface: str) -> Rule:
+        """The rule this attack meets at `surface`, or a refusal to pretend there is one."""
+        entry = self.at(surface)
+        if not isinstance(entry, Rule):
+            raise MutationFailed(
+                f"{self.name!r} has no rule at the {gate_of(surface)!r} gate "
+                f"({type(entry).__name__}: {getattr(entry, 'detail', None) or entry.reason}). "  # type: ignore[union-attr]
+                "There is nothing to delete, so there is nothing to detect."
+            )
+        return entry
+
+    def codes(self, surface: str) -> frozenset[str]:
+        """The refusal codes this family accepts at `surface`. Empty where nothing refuses."""
+        entry = self.at(surface)
+        return entry.codes if isinstance(entry, Rule) else frozenset()
+
+
 def _mut(rule: str, *edits: Edit) -> Mutation:
     return Mutation(rule=rule, edits=edits)
+
+
+# ---------------------------------------------------------------------------
+# the edits, named once and shared
+# ---------------------------------------------------------------------------
+#
+# Hoisted out of the family table because after WP4 several rules have TWO homes and
+# several families target ONE rule, so the table would otherwise repeat the same
+# snippet four times and a drift fix would have to find every copy. Each is a rule, not
+# a line: `E_STORE_VERIFY` deletes the store's whole re-verification step, which is the
+# single rule that catches four different attacks at that door.
+
+E_STORE_EVIDENCE_REQUIRED = Edit(
+    target=STORE_MODULE,
+    old=(
+        "    spans = tuple(spans)\n"
+        "    if not spans:\n"
+        "        raise EvidenceRequired(\n"
+        "            f\"assertion about {subject_qualname!r} cites no evidence spans and was \"\n"
+        "            \"not written. An uncited claim cannot be adjudicated, cannot expire, \"\n"
+        "            \"and cannot be checked by a reader -- it is indistinguishable from a \"\n"
+        "            \"good one at every stage after this.\"\n"
+        "        )\n"
+    ),
+    new="    spans = tuple(spans)\n",
+)
+
+E_STORE_EMPTY_CLAIM = Edit(
+    target=STORE_MODULE,
+    old=(
+        "    if not claim.strip():\n"
+        "        raise EmptyClaim(\n"
+        "            f\"assertion about {subject_qualname!r} carries no claim text and was not \"\n"
+        "            \"written. Its citations may be perfect; there is still no proposition \"\n"
+        "            \"here for a judge to adjudicate or a reader to disagree with, and every \"\n"
+        "            \"check after this one would pass.\"\n"
+        "        )\n"
+    ),
+    new="",
+)
+
+E_STORE_EMPTY_RANGE = Edit(
+    target=STORE_MODULE,
+    old="        if not 0 <= span.byte_start < span.byte_end:",
+    new="        if False:  # mutated: the write gate's empty-span rule is gone",
+)
+
+E_STORE_SPAN_FOR_RANGE = Edit(
+    target=STORE_MODULE,
+    old="    if not 0 <= byte_start < byte_end <= len(source):",
+    new="    if not 0 <= byte_start <= byte_end <= len(source):",
+)
+
+E_STORE_NO_HASH = Edit(
+    target=STORE_MODULE,
+    old="        if not span.content_hash.strip():",
+    new="        if False:  # mutated: the store's unverifiable-span rule is gone",
+)
+
+E_STORE_ESCAPES_REPO = Edit(
+    target=STORE_MODULE,
+    old="        if _escapes_repo(span.path):",
+    new="        if False:  # mutated: the store's containment rule is gone",
+)
+
+E_STORE_UNKNOWN_SUBJECT = Edit(
+    target=STORE_MODULE,
+    old="    if not allow_unindexed_subject:",
+    new="    if False:  # mutated: the store's subject-existence rule is gone",
+)
+
+E_STORE_VERIFY = Edit(
+    target=STORE_MODULE,
+    old="    if verify:",
+    new="    if False:  # mutated: the store no longer re-reads the cited bytes",
+)
+
+E_STORE_CITED_BYTES = Edit(
+    target=STORE_MODULE,
+    old="        observed = content_hash(source[span.byte_start:span.byte_end])",
+    new="        observed = content_hash(source)  # mutated: the whole file, not the span",
+)
+
+E_STORE_EVERY_SPAN = Edit(
+    target=STORE_MODULE,
+    old="                for s in spans\n",
+    new="                for s in spans[:1]  # mutated: only the first span is stored\n",
+)
+
+E_SERVER_UNVERIFIABLE = Edit(
+    target=GATE_MODULE,
+    old=(
+        "    else:\n"
+        "        raise ToolError(\n"
+        "            \"evidence_unverifiable\",\n"
+        "            f\"the span {candidates[-1].citation} carries neither content_hash nor \"\n"
+        "            \"text, so there is nothing to check it against. Pass the content_hash \"\n"
+        "            \"that search_code or get_symbol returned for this symbol, or the exact \"\n"
+        "            \"source text you read at those lines.\",\n"
+        "            path=raw.path,\n"
+        "            line_start=raw.line_start,\n"
+        "            line_end=raw.line_end,\n"
+        "        )\n"
+    ),
+    new="    else:\n        cited = candidates[-1].content_hash  # mutated: nothing to check is fine\n",
+)
 
 
 # Every `old` below is checked for EXACTLY ONE occurrence before it is applied, and a
@@ -332,330 +614,650 @@ FAMILIES: dict[str, Family] = {
         name="zero_evidence",
         expect=REFUSED,
         attack="a claim with no citations at all -- the plausible-sounding summary",
-        codes=frozenset({"evidence_required"}),
-        mutation=_mut(
-            "store.write_assertion refuses an empty span list before opening a "
-            "transaction",
-            Edit(
-                target=STORE_MODULE,
-                old=(
-                    "    spans = tuple(spans)\n"
-                    "    if not spans:\n"
-                    "        raise EvidenceRequired(\n"
-                    "            f\"assertion about {subject_qualname!r} cites no evidence spans and was \"\n"
-                    "            \"not written. An uncited claim cannot be adjudicated, cannot expire, \"\n"
-                    "            \"and cannot be checked by a reader -- it is indistinguishable from a \"\n"
-                    "            \"good one at every stage after this.\"\n"
-                    "        )\n"
+        gates={
+            # One rule, one home, and it was already at the chokepoint before WP4 --
+            # which is why both doors refuse it identically. The family is the
+            # baseline the other columns are read against: where the two gates
+            # disagree below, the disagreement is about where a rule lives, not about
+            # what the corpus submitted.
+            gate: Rule(
+                codes=frozenset({"evidence_required"}),
+                mutation=_mut(
+                    "store.write_assertion refuses an empty span list before opening "
+                    "a transaction",
+                    E_STORE_EVIDENCE_REQUIRED,
                 ),
-                new="    spans = tuple(spans)\n",
+            )
+            for gate in (GATE_SERVER, GATE_STORE)
+        },
+    ),
+    "empty_claim": Family(
+        name="empty_claim",
+        expect=REFUSED,
+        attack="perfect citations carrying no statement -- whitespace where the claim goes",
+        gates={
+            # Added by WP5 against a rule WP4 created. Every arithmetic check the gate
+            # makes passes on this submission: the span exists, it hash-matches, the
+            # subject is real. Before WP4 it stored `active`, reported servable, and
+            # was handed back next to the code it was allegedly about, saying nothing.
+            # One home, in the store, so the server column measures the store's rule
+            # reached through the tool -- and that is worth stating rather than hiding,
+            # because it means `_submit_body` contributes nothing here and a reader
+            # comparing the columns should not conclude the server has a rule of its own.
+            gate: Rule(
+                codes=frozenset({"empty_claim"}),
+                mutation=_mut(
+                    "store.write_assertion refuses a claim that says nothing, however "
+                    "good its citations",
+                    E_STORE_EMPTY_CLAIM,
+                ),
+            )
+            for gate in (GATE_SERVER, GATE_STORE)
+        },
+    ),
+    "unverifiable_span": Family(
+        name="unverifiable_span",
+        expect=REFUSED,
+        attack="a citation with nothing to check it against -- no hash, no quoted text",
+        gates={
+            # The vacuous-truth failure one level down from `servable_assertions`'s
+            # `no_evidence` guard: a span that asserts nothing about what is at those
+            # bytes can never be found to be wrong, so it reports fresh evidence
+            # forever. TWO homes, and this is the family amendment #3 predicts: the
+            # server refuses it in `_verify_span` and the store refuses it again in
+            # `write_assertion`, so the server-gate mutation deletes both. Deleting
+            # only the server's leaves the store refusing the same attack -- though
+            # not, as it happens, with the same code, because by then the server has
+            # substituted the observed hash and the store's rule cannot fire at all.
+            # That is a worse trap than the identical-code case WP4 hit: the rule is
+            # bypassed by construction rather than duplicated, so the single-edit
+            # mutation WOULD flip and the second home would go unmeasured.
+            GATE_SERVER: Rule(
+                codes=frozenset({"evidence_unverifiable"}),
+                mutation=_mut(
+                    "_verify_span refuses a span carrying neither content_hash nor "
+                    "text, and write_assertion refuses one carrying no hash",
+                    E_SERVER_UNVERIFIABLE,
+                    E_STORE_NO_HASH,
+                ),
             ),
-        ),
+            GATE_STORE: Rule(
+                codes=frozenset({"evidence_unverifiable"}),
+                mutation=_mut(
+                    "write_assertion refuses a span with no content hash to check it "
+                    "against",
+                    # Deleting this does NOT admit the attack: the empty hash then
+                    # falls through to the re-verification step and is refused as
+                    # `evidence_stale`. The control still flips -- a code outside this
+                    # family's set is not a hold -- and the flip is what the mutation
+                    # measures. Recorded here because "detected" and "admitted" are
+                    # not the same outcome, and a reader of the mutation table is
+                    # entitled to know which one this row is.
+                    E_STORE_NO_HASH,
+                ),
+            ),
+        },
     ),
     "absent_file": Family(
         name="absent_file",
         expect=REFUSED,
         attack="the right content cited in a file that does not exist",
-        # Still exactly one code, and that is now load-bearing rather than incidental.
-        # WP2 put an index-membership check ahead of the read, so this control is
-        # refused before anything is stat'd -- and it is refused with the SAME code and
-        # the same shape as a path that is present on disk but unindexed. A second code
-        # would have made the refusal answer "does this file exist", which is the
-        # oracle WP2 exists to close. If this set ever grows, check that the new code
-        # is not distinguishing two paths a caller is not entitled to tell apart.
-        codes=frozenset({"file_missing"}),
-        mutation=_mut(
-            "_verify_span refuses a citation it cannot, or will not, read off disk",
-            # Three edits, one rule. Defence in depth means no single deletion admits
-            # the attack, so a mutation that removed only one guard would report this
-            # control as undetectable when it is in fact over-defended. Each `old` is
-            # a single line and each is unique in the module, so drift in the
-            # surrounding comments cannot silently turn this into a no-op -- the
-            # harness raises on a snippet that no longer matches exactly once.
-            Edit(
-                target=GATE_MODULE,
-                old='    if conn.execute("SELECT 1 FROM files WHERE path = ?", (raw.path,)).fetchone() is None:',
-                new="    if False:  # mutated: the index-membership guard is gone",
-            ),
-            Edit(
-                target=GATE_MODULE,
-                old="    if not target.is_file():",
-                new="    if False:  # mutated: the regular-file guard is gone",
-            ),
-            Edit(
-                target=GATE_MODULE,
-                old="        size = target.stat().st_size",
-                new="        size = 0  # mutated: the size ceiling is gone",
-            ),
-            Edit(
-                target=GATE_MODULE,
-                old=(
-                    "    except OSError as exc:\n"
-                    "        raise ToolError(\n"
-                    "            \"file_missing\",\n"
-                    "            f\"cannot read {raw.path!r} ({exc}). Cite a file that exists in the \"\n"
-                    "            \"indexed repository.\",\n"
-                    "            path=raw.path,\n"
-                    "        ) from exc"
+        gates={
+            # Still exactly one code, and that is now load-bearing rather than
+            # incidental. WP2 put an index-membership check ahead of the read, so this
+            # control is refused before anything is stat'd -- and it is refused with
+            # the SAME code and the same shape as a path that is present on disk but
+            # unindexed. A second code would have made the refusal answer "does this
+            # file exist", which is the oracle WP2 exists to close. If this set ever
+            # grows, check that the new code is not distinguishing two paths a caller
+            # is not entitled to tell apart.
+            GATE_SERVER: Rule(
+                codes=frozenset({"file_missing"}),
+                mutation=_mut(
+                    "_verify_span refuses a citation it cannot, or will not, read off "
+                    "disk",
+                    # Four edits, one rule. Defence in depth means no single deletion
+                    # admits the attack, so a mutation that removed only one guard
+                    # would report this control as undetectable when it is in fact
+                    # over-defended. Each `old` is unique in the module, so drift in
+                    # the surrounding comments cannot silently turn this into a no-op
+                    # -- the harness raises on a snippet that no longer matches
+                    # exactly once.
+                    Edit(
+                        target=GATE_MODULE,
+                        old='    if conn.execute("SELECT 1 FROM files WHERE path = ?", (raw.path,)).fetchone() is None:',
+                        new="    if False:  # mutated: the index-membership guard is gone",
+                    ),
+                    Edit(
+                        target=GATE_MODULE,
+                        old="    if not target.is_file():",
+                        new="    if False:  # mutated: the regular-file guard is gone",
+                    ),
+                    Edit(
+                        target=GATE_MODULE,
+                        old="        size = target.stat().st_size",
+                        new="        size = 0  # mutated: the size ceiling is gone",
+                    ),
+                    Edit(
+                        target=GATE_MODULE,
+                        old=(
+                            "    except OSError as exc:\n"
+                            "        raise ToolError(\n"
+                            "            \"file_missing\",\n"
+                            "            f\"cannot read {raw.path!r} ({exc}). Cite a file that exists in the \"\n"
+                            "            \"indexed repository.\",\n"
+                            "            path=raw.path,\n"
+                            "        ) from exc"
+                        ),
+                        new=(
+                            "    except OSError:\n"
+                            "        return store.EvidenceSpan(\n"
+                            "            path=raw.path,\n"
+                            "            line_start=raw.line_start,\n"
+                            "            line_end=raw.line_end,\n"
+                            "            byte_start=0,\n"
+                            "            byte_end=1,\n"
+                            "            content_hash=raw.content_hash\n"
+                            "            or content_hash((raw.text or \"\").encode()),\n"
+                            "        )"
+                        ),
+                    ),
+                    # The store's own copy of the refusal, without which the four
+                    # edits above leave `write_assertion` refusing the fabricated span
+                    # as `evidence_stale` -- a flip, but of a rule this family does not
+                    # name at this gate.
+                    E_STORE_VERIFY,
                 ),
-                new=(
-                    "    except OSError:\n"
-                    "        return store.EvidenceSpan(\n"
-                    "            path=raw.path,\n"
-                    "            line_start=raw.line_start,\n"
-                    "            line_end=raw.line_end,\n"
-                    "            byte_start=0,\n"
-                    "            byte_end=1,\n"
-                    "            content_hash=raw.content_hash\n"
-                    "            or content_hash((raw.text or \"\").encode()),\n"
-                    "        )"
+            ),
+            # A DIFFERENT rule and a different code at the other door, and the gap is
+            # the interesting part. The store has no notion of "a file this index
+            # parsed" -- it has never seen the `files` table -- so an unreadable
+            # citation is caught only by the re-read, as `evidence_stale`. That is
+            # weaker than `file_missing` in one specific way worth writing down: it
+            # cannot distinguish "this path was never indexed" from "these bytes
+            # moved", so a library caller gets a message blaming an edit for a path
+            # that never existed.
+            GATE_STORE: Rule(
+                codes=frozenset({"evidence_stale"}),
+                mutation=_mut(
+                    "write_assertion re-reads every cited span off disk before "
+                    "admitting it, and a file it cannot read is a span that does not "
+                    "verify",
+                    E_STORE_VERIFY,
                 ),
             ),
-        ),
+        },
     ),
     "escaping_path": Family(
         name="escaping_path",
         expect=REFUSED,
         attack="a real file, really hashed, from outside the indexed repository",
-        codes=frozenset({"path_escapes_repo"}),
-        mutation=_mut(
-            "_verify_span refuses a path that resolves outside the repo root",
-            Edit(
-                target=GATE_MODULE,
-                old=(
-                    "    if not target.is_relative_to(root.resolve()):\n"
-                    "        raise ToolError(\n"
-                    "            \"path_escapes_repo\",\n"
-                    "            f\"{raw.path!r} resolves outside the indexed repository. Citations must \"\n"
-                    "            \"be repo-root-relative paths.\",\n"
-                    "            path=raw.path,\n"
-                    "        )\n"
+        gates={
+            GATE_SERVER: Rule(
+                codes=frozenset({"path_escapes_repo"}),
+                mutation=_mut(
+                    "the gate refuses a path that leaves the indexed repository -- in "
+                    "_verify_span, which resolves it against the root, and again in "
+                    "store.write_assertion, which reads it lexically at the door",
+                    # THREE edits, one rule, and the third bite of amendment #3. This
+                    # one is not a duplicated rule, like `unknown_subject`, nor a
+                    # bypassed one, like `unverifiable_span`. It is STACKED: deleting
+                    # the containment check alone leaves the attack refused as
+                    # `file_missing` by WP2's index-membership guard -- measured, not
+                    # assumed, at 8 of 8 -- so the family would report "detected" on
+                    # the strength of a rule it does not name. The two cannot be
+                    # separated by any submission, because every path that escapes the
+                    # repository is by construction a path the index did not parse.
+                    #
+                    # So the mutation removes both server guards and the store's copy,
+                    # and the attack is then genuinely ADMITTED. That is a weaker claim
+                    # than "containment did the work" and it is the strongest claim
+                    # available here: what it establishes is that the rule doing the
+                    # work is inside this set, and that nothing outside it catches the
+                    # attack. `absent_file` makes the same trade for the same reason.
+                    Edit(
+                        target=GATE_MODULE,
+                        old=(
+                            "    if not target.is_relative_to(root.resolve()):\n"
+                            "        raise ToolError(\n"
+                            "            \"path_escapes_repo\",\n"
+                            "            f\"{raw.path!r} resolves outside the indexed repository. Citations must \"\n"
+                            "            \"be repo-root-relative paths.\",\n"
+                            "            path=raw.path,\n"
+                            "        )\n"
+                        ),
+                        new="",
+                    ),
+                    Edit(
+                        target=GATE_MODULE,
+                        old='    if conn.execute("SELECT 1 FROM files WHERE path = ?", (raw.path,)).fetchone() is None:',
+                        new="    if False:  # mutated: the index-membership guard is gone",
+                    ),
+                    E_STORE_ESCAPES_REPO,
                 ),
-                new="",
             ),
-        ),
+            # THE hole this work package existed to find, and it was not a hypothesis:
+            # submitted directly to `write_assertion`, a claim citing
+            # `../outside_the_repo.py` with that file's real hash was ADMITTED, stored
+            # `active`, and reported servable. WP4 moved five rules to the chokepoint
+            # and repo containment was not among them, so it was a rule the MCP caller
+            # met and `codelearner learn` did not.
+            #
+            # It was recorded here as an `Unenforced` entry first -- controls generated,
+            # submitted, and scored as the failures they were, because a corpus that
+            # declines to generate a control reports a hole as an absence. Closing it
+            # then failed the test asserting `STORE_GAPS` exactly, which is the
+            # behaviour that entry was built for: a declared gap is a liability the
+            # suite makes you settle, not a footnote it lets you keep.
+            #
+            # The store's rule is deliberately LEXICAL where the server's resolves. It
+            # runs at the door, and `verify=False` is a supported call, so a containment
+            # check that needed the disk would be a rule only the re-reading caller met
+            # -- which is the shape of the bug being fixed. A symlink out of the tree
+            # still passes it and is caught downstream at verification; that residue is
+            # stated rather than papered over.
+            GATE_STORE: Rule(
+                codes=frozenset({"span_escapes_repo"}),
+                mutation=_mut(
+                    "write_assertion refuses a citation that leaves the repository",
+                    # One edit here, and the asymmetry with the server's three is the
+                    # measurement: nothing else at this door catches the attack. Delete
+                    # this line and the claim is admitted, stored `active`, and
+                    # reported servable -- which is the state the corpus found and
+                    # which this mutation now re-creates on demand.
+                    E_STORE_ESCAPES_REPO,
+                ),
+            ),
+        },
     ),
     "past_eof": Family(
         name="past_eof",
         expect=REFUSED,
         attack="a range running one line past the end, quoting the last line that exists",
-        codes=frozenset({"bad_range"}),
-        mutation=_mut(
-            "_line_bytes refuses a line range the file does not have (rather than "
-            "clamping it)",
-            Edit(
-                target=GATE_MODULE,
-                old=(
-                    "    if line_start < 1 or line_end < line_start or line_end > line_count:\n"
-                    "        raise ToolError(\n"
-                    "            \"bad_range\",\n"
-                    "            f\"lines {line_start}-{line_end} are not a valid range in a \"\n"
-                    "            f\"{line_count}-line file.\",\n"
-                    "            line_count=line_count,\n"
-                    "        )"
+        gates={
+            GATE_SERVER: Rule(
+                codes=frozenset({"bad_range"}),
+                mutation=_mut(
+                    "_line_bytes refuses a line range the file does not have (rather "
+                    "than clamping it)",
+                    Edit(
+                        target=GATE_MODULE,
+                        old=(
+                            "    if line_start < 1 or line_end < line_start or line_end > line_count:\n"
+                            "        raise ToolError(\n"
+                            "            \"bad_range\",\n"
+                            "            f\"lines {line_start}-{line_end} are not a valid range in a \"\n"
+                            "            f\"{line_count}-line file.\",\n"
+                            "            line_count=line_count,\n"
+                            "        )"
+                        ),
+                        new="    line_end = min(line_end, line_count)",
+                    ),
                 ),
-                new="    line_end = min(line_end, line_count)",
             ),
-        ),
+            # The store is handed bytes, not lines, so "one line past the end" reaches
+            # it as a byte range whose end is past the end of the file. There is no
+            # line-range rule to fire; the truncation branch inside `_first_failure`
+            # catches it, which is why the code is `evidence_stale` and why the
+            # mutation is the whole re-verification step rather than that one branch:
+            # deleting the branch alone leaves the short slice hashing to something
+            # that is simply not the cited hash, and the attack is refused anyway.
+            GATE_STORE: Rule(
+                codes=frozenset({"evidence_stale"}),
+                mutation=_mut(
+                    "write_assertion re-reads the cited bytes, and a range that runs "
+                    "off the end of the file does not verify",
+                    E_STORE_VERIFY,
+                ),
+            ),
+        },
     ),
     "blank_range": Family(
         name="blank_range",
         expect=REFUSED,
         attack="a blank line cited as evidence, with the hash of nothing",
-        codes=frozenset({"bad_range"}),
-        mutation=_mut(
-            "the store refuses an empty byte range -- in span_for, which builds the "
-            "citation, and again at the write gate, which admits it",
-            # Two edits, one rule, for the reason `absent_file` gives at length: after
-            # WP4 the empty-span rule lives in two places, and a mutation that deleted
-            # only `span_for`'s copy would leave `write_assertion` refusing the attack
-            # with `invalid_span`. That still flips the control -- a code outside this
-            # family's set is not a hold -- but it would be measuring the wrong rule,
-            # and the family would quietly become a test of the write gate under the
-            # name of a test of the constructor.
-            Edit(
-                target=STORE_MODULE,
-                old="    if not 0 <= byte_start < byte_end <= len(source):",
-                new="    if not 0 <= byte_start <= byte_end <= len(source):",
+        gates={
+            GATE_SERVER: Rule(
+                codes=frozenset({"bad_range"}),
+                mutation=_mut(
+                    "the store refuses an empty byte range -- in span_for, which "
+                    "builds the citation, and again at the write gate, which admits it",
+                    # Two edits, one rule, for the reason `absent_file` gives at
+                    # length: after WP4 the empty-span rule lives in two places, and a
+                    # mutation that deleted only `span_for`'s copy would leave
+                    # `write_assertion` refusing the attack with `invalid_span`. That
+                    # still flips the control -- a code outside this family's set is
+                    # not a hold -- but it would be measuring the wrong rule, and the
+                    # family would quietly become a test of the write gate under the
+                    # name of a test of the constructor.
+                    E_STORE_SPAN_FOR_RANGE,
+                    E_STORE_EMPTY_RANGE,
+                ),
             ),
-            Edit(
-                target=STORE_MODULE,
-                old="        if not 0 <= span.byte_start < span.byte_end:",
-                new="        if False:  # mutated: the write gate's empty-span rule is gone",
+            # `span_for` never runs on this path -- the corpus hands the store the
+            # byte range directly -- so only the write gate's copy is in play, and it
+            # answers with its own code rather than the server's `bad_range`.
+            GATE_STORE: Rule(
+                codes=frozenset({"invalid_span"}),
+                mutation=_mut(
+                    "write_assertion refuses a span that covers no bytes",
+                    E_STORE_EMPTY_RANGE,
+                ),
             ),
-        ),
+        },
+    ),
+    "zero_length_span": Family(
+        name="zero_length_span",
+        expect=REFUSED,
+        attack="an empty byte range at a line that is NOT blank -- sha256 of nothing, "
+               "cited as evidence for a symbol that really is there",
+        gates={
+            # Reproduced before WP4 as admitted, servable, and permanently fresh: an
+            # empty range hashes to a stable value, so it re-verifies against the file
+            # as it is, as it becomes, and as it would be after the symbol it points
+            # at is deleted. Not merely unfalsifiable -- it positively reports `fresh`
+            # on every read, which is the strongest evidence the store can express.
+            #
+            # Distinct from `blank_range`, which cites a line that HAS no bytes. This
+            # one cites a line full of code and asks for none of it, which is what a
+            # caller computing offsets wrongly actually produces.
+            GATE_SERVER: Inexpressible(
+                reason=(
+                    "the MCP surface is given line numbers and derives the byte range "
+                    "itself, so no caller can ask it for an empty range at a non-blank "
+                    "line -- the only empty range expressible there is a blank line, "
+                    "which is the `blank_range` family. This attack reaches the store "
+                    "only from a caller that constructs EvidenceSpan directly, which "
+                    "is how it was reproduced and is why the rule had to move."
+                ),
+            ),
+            GATE_STORE: Rule(
+                codes=frozenset({"invalid_span"}),
+                mutation=_mut(
+                    "write_assertion refuses a span that covers no bytes, whatever is "
+                    "at the line it names",
+                    E_STORE_EMPTY_RANGE,
+                ),
+            ),
+        },
     ),
     "decoy_content_hash": Family(
         name="decoy_content_hash",
         expect=REFUSED,
         attack="the right lines cited with the hash of other content in the same file",
-        codes=frozenset({"hash_mismatch"}),
-        mutation=_mut(
-            "_verify_span compares the cited hash to the bytes that are there",
-            Edit(
-                target=GATE_MODULE,
-                old=(
-                    "    for span in candidates:\n"
-                    "        if cited == span.content_hash:\n"
-                    "            return span\n"
+        gates={
+            GATE_SERVER: Rule(
+                codes=frozenset({"hash_mismatch"}),
+                mutation=_mut(
+                    "_verify_span compares the cited hash to the bytes that are there",
+                    Edit(
+                        target=GATE_MODULE,
+                        old=(
+                            "    for span in candidates:\n"
+                            "        if cited == span.content_hash:\n"
+                            "            return span\n"
+                        ),
+                        new="    if candidates:\n        return candidates[-1]\n",
+                    ),
+                    # Without this the server hands `write_assertion` a span carrying
+                    # the bytes' real hash, so the store's re-read agrees and the
+                    # attack is admitted anyway -- the mutation would flip, but the
+                    # store's copy of the rule would never have been exercised.
+                    E_STORE_VERIFY,
                 ),
-                new="    if candidates:\n        return candidates[-1]\n",
             ),
-        ),
+            GATE_STORE: Rule(
+                codes=frozenset({"evidence_stale"}),
+                mutation=_mut(
+                    "write_assertion hashes the bytes on disk and compares them to "
+                    "what was cited",
+                    E_STORE_VERIFY,
+                ),
+            ),
+        },
     ),
     "stale_but_once_valid": Family(
         name="stale_but_once_valid",
         expect=REFUSED,
         attack="a hash that was correct before the file changed under it",
-        codes=frozenset({"hash_mismatch"}),
-        mutation=_mut(
-            "_verify_span hashes the bytes on disk NOW, never the index's stored hash",
-            Edit(
-                target=GATE_MODULE,
-                old=(
-                    "    for span in candidates:\n"
-                    "        if cited == span.content_hash:\n"
-                    "            return span\n"
-                ),
-                new=(
-                    "    stored = {\n"
-                    "        r[\"content_hash\"]\n"
-                    "        for r in conn.execute(\n"
-                    "            \"SELECT s.content_hash FROM symbols s \"\n"
-                    "            \"JOIN files f ON f.id = s.file_id WHERE f.path = ?\",\n"
-                    "            (raw.path,),\n"
-                    "        )\n"
-                    "    }\n"
-                    "    for span in candidates:\n"
-                    "        if cited == span.content_hash or cited in stored:\n"
-                    "            return span\n"
+        gates={
+            GATE_SERVER: Rule(
+                codes=frozenset({"hash_mismatch"}),
+                mutation=_mut(
+                    "_verify_span hashes the bytes on disk NOW, never the index's "
+                    "stored hash",
+                    Edit(
+                        target=GATE_MODULE,
+                        old=(
+                            "    for span in candidates:\n"
+                            "        if cited == span.content_hash:\n"
+                            "            return span\n"
+                        ),
+                        new=(
+                            "    stored = {\n"
+                            "        r[\"content_hash\"]\n"
+                            "        for r in conn.execute(\n"
+                            "            \"SELECT s.content_hash FROM symbols s \"\n"
+                            "            \"JOIN files f ON f.id = s.file_id WHERE f.path = ?\",\n"
+                            "            (raw.path,),\n"
+                            "        )\n"
+                            "    }\n"
+                            "    for span in candidates:\n"
+                            "        if cited == span.content_hash or cited in stored:\n"
+                            "            return span\n"
+                        ),
+                    ),
+                    E_STORE_VERIFY,
                 ),
             ),
-        ),
+            # The attack that matters most, and the only one whose evidence was ever
+            # real -- so it is also the only one the store could not possibly catch by
+            # inspecting the submission. Both doors refuse it by re-reading, which is
+            # the property being measured; they differ only in what they call it.
+            GATE_STORE: Rule(
+                codes=frozenset({"evidence_stale"}),
+                mutation=_mut(
+                    "write_assertion re-reads the bytes at admission time, so a "
+                    "citation that was correct yesterday is refused today",
+                    E_STORE_VERIFY,
+                ),
+            ),
+        },
     ),
     "foreign_symbol_hash": Family(
         name="foreign_symbol_hash",
         expect=REFUSED,
         attack="the hash of a DIFFERENT indexed symbol in the same file",
-        codes=frozenset({"hash_mismatch"}),
-        mutation=_mut(
-            "_symbol_bytes_at admits only symbols occupying EXACTLY the cited lines",
-            Edit(
-                target=GATE_MODULE,
-                old=(
-                    "            \"WHERE f.path = ? AND s.line_start = ? AND s.line_end = ? ORDER BY s.id\",\n"
-                    "            (path, line_start, line_end),"
-                ),
-                new=(
-                    "            \"WHERE f.path = ? ORDER BY s.id\",\n"
-                    "            (path,),"
+        gates={
+            GATE_SERVER: Rule(
+                codes=frozenset({"hash_mismatch"}),
+                mutation=_mut(
+                    "_symbol_bytes_at admits only symbols occupying EXACTLY the cited "
+                    "lines",
+                    Edit(
+                        target=GATE_MODULE,
+                        old=(
+                            "            \"WHERE f.path = ? AND s.line_start = ? AND s.line_end = ? ORDER BY s.id\",\n"
+                            "            (path, line_start, line_end),"
+                        ),
+                        new=(
+                            "            \"WHERE f.path = ? ORDER BY s.id\",\n"
+                            "            (path,),"
+                        ),
+                    ),
                 ),
             ),
-        ),
+            # The store never looks a symbol up, so there is no widened lookup to
+            # exploit and nothing here for `_symbol_bytes_at`'s rule to do. What
+            # catches it is the same re-read that catches every other wrong hash --
+            # which is worth stating plainly, because it means this family measures a
+            # distinct rule at one door and a shared one at the other.
+            GATE_STORE: Rule(
+                codes=frozenset({"evidence_stale"}),
+                mutation=_mut(
+                    "write_assertion hashes the cited byte range, so a sibling "
+                    "symbol's hash does not verify against it",
+                    E_STORE_VERIFY,
+                ),
+            ),
+        },
     ),
     "unknown_subject": Family(
         name="unknown_subject",
         expect=REFUSED,
         attack="a perfectly cited claim about a symbol that does not exist",
-        codes=frozenset({"unknown_subject"}),
-        mutation=_mut(
-            "the gate refuses a subject_qualname that names no indexed symbol -- in "
-            "_submit_body, which can say what to search for, and again in "
-            "store.write_assertion, which is the door every caller comes through",
-            # Four edits, one rule, and the fourth is the one WP4 made necessary.
-            # Before it, deleting the server's check left `write_assertion`'s copy
-            # refusing the attack with the SAME code, so this family reported its own
-            # rule as undeletable while the rule it was actually measuring had moved
-            # underneath it. That is precisely the failure the mutation harness exists
-            # to catch, arriving as a false negative in the harness itself.
-            Edit(
-                target=STORE_MODULE,
-                old="    if not allow_unindexed_subject:",
-                new="    if False:  # mutated: the store's subject-existence rule is gone",
-            ),
-            Edit(
-                target=GATE_MODULE,
-                old=(
-                    "    if subject is None:\n"
-                    "        raise ToolError(\n"
-                    "            \"unknown_subject\",\n"
-                    "            f\"no symbol named {subject_qualname!r} in this index, so there is nothing \"\n"
-                    "            \"for this claim to be about. Qualnames are dotted paths from the module \"\n"
-                    "            \"root -- use search_code or get_symbol to find the exact one. Only what \"\n"
-                    "            \"this index parsed can be the subject of a stored claim.\",\n"
-                    "            subject_qualname=subject_qualname,\n"
-                    "        )\n"
+        gates={
+            GATE_SERVER: Rule(
+                codes=frozenset({"unknown_subject"}),
+                mutation=_mut(
+                    "the gate refuses a subject_qualname that names no indexed symbol "
+                    "-- in _submit_body, which can say what to search for, and again "
+                    "in store.write_assertion, which is the door every caller comes "
+                    "through",
+                    # Four edits, one rule, and the first is the one WP4 made
+                    # necessary. Before it, deleting the server's check left
+                    # `write_assertion`'s copy refusing the attack with the SAME code,
+                    # so this family reported its own rule as undeletable while the
+                    # rule it was actually measuring had moved underneath it. That is
+                    # precisely the failure the mutation harness exists to catch,
+                    # arriving as a false negative in the harness itself.
+                    E_STORE_UNKNOWN_SUBJECT,
+                    Edit(
+                        target=GATE_MODULE,
+                        old=(
+                            "    if subject is None:\n"
+                            "        raise ToolError(\n"
+                            "            \"unknown_subject\",\n"
+                            "            f\"no symbol named {subject_qualname!r} in this index, so there is nothing \"\n"
+                            "            \"for this claim to be about. Qualnames are dotted paths from the module \"\n"
+                            "            \"root -- use search_code or get_symbol to find the exact one. Only what \"\n"
+                            "            \"this index parsed can be the subject of a stored claim.\",\n"
+                            "            subject_qualname=subject_qualname,\n"
+                            "        )\n"
+                        ),
+                        new="",
+                    ),
+                    Edit(
+                        target=GATE_MODULE,
+                        old="            subject_symbol_id=int(subject[\"id\"]),",
+                        new="            subject_symbol_id=None if subject is None else int(subject[\"id\"]),",
+                    ),
+                    Edit(
+                        target=GATE_MODULE,
+                        old="        \"subject_symbol_id\": int(subject[\"id\"]),",
+                        new="        \"subject_symbol_id\": None if subject is None else int(subject[\"id\"]),",
+                    ),
                 ),
-                new="",
             ),
-            Edit(
-                target=GATE_MODULE,
-                old="            subject_symbol_id=int(subject[\"id\"]),",
-                new="            subject_symbol_id=None if subject is None else int(subject[\"id\"]),",
+            GATE_STORE: Rule(
+                codes=frozenset({"unknown_subject"}),
+                mutation=_mut(
+                    "store.write_assertion refuses a subject this index has never "
+                    "parsed",
+                    E_STORE_UNKNOWN_SUBJECT,
+                ),
             ),
-            Edit(
-                target=GATE_MODULE,
-                old="        \"subject_symbol_id\": int(subject[\"id\"]),",
-                new="        \"subject_symbol_id\": None if subject is None else int(subject[\"id\"]),",
-            ),
-        ),
+        },
     ),
     # --- positive controls ------------------------------------------------
     "published_hash": Family(
         name="published_hash",
         expect=ACCEPTED,
         attack="the loop the design rests on: cite the hash retrieval handed you",
-        codes=frozenset(),
-        mutation=_mut(
-            "_verify_span checks the cited hash against the SYMBOL's bytes as well as "
-            "the lines' bytes",
-            Edit(
-                target=GATE_MODULE,
-                old=(
-                    "    return [\n"
-                    "        (int(r[\"byte_start\"]), int(r[\"byte_end\"]))\n"
-                    "        for r in conn.execute(\n"
-                    "            \"SELECT s.byte_start, s.byte_end FROM symbols s JOIN files f ON f.id = s.file_id \"\n"
-                    "            \"WHERE f.path = ? AND s.line_start = ? AND s.line_end = ? ORDER BY s.id\",\n"
-                    "            (path, line_start, line_end),\n"
-                    "        )\n"
-                    "    ]"
+        gates={
+            GATE_SERVER: Rule(
+                codes=frozenset(),
+                mutation=_mut(
+                    "_verify_span checks the cited hash against the SYMBOL's bytes as "
+                    "well as the lines' bytes",
+                    Edit(
+                        target=GATE_MODULE,
+                        old=(
+                            "    return [\n"
+                            "        (int(r[\"byte_start\"]), int(r[\"byte_end\"]))\n"
+                            "        for r in conn.execute(\n"
+                            "            \"SELECT s.byte_start, s.byte_end FROM symbols s JOIN files f ON f.id = s.file_id \"\n"
+                            "            \"WHERE f.path = ? AND s.line_start = ? AND s.line_end = ? ORDER BY s.id\",\n"
+                            "            (path, line_start, line_end),\n"
+                            "        )\n"
+                            "    ]"
+                        ),
+                        new="    return []",
+                    ),
                 ),
-                new="    return []",
             ),
-        ),
+            # A positive control detects over-strictness, and the store has a
+            # different way to be over-strict than the server does. The two readings
+            # of a line range do not exist here -- the caller supplies the bytes -- so
+            # what this family pins at this door is that verification is scoped to the
+            # CITED range and not to the file containing it. Widening it to the whole
+            # file refuses every correct citation in a module that has more than one
+            # symbol in it, which is every module.
+            GATE_STORE: Rule(
+                codes=frozenset(),
+                mutation=_mut(
+                    "write_assertion verifies the cited byte range, not the file it "
+                    "sits in",
+                    E_STORE_CITED_BYTES,
+                ),
+            ),
+        },
     ),
     "quoted_lines": Family(
         name="quoted_lines",
         expect=ACCEPTED,
         attack="the other honest reading: the exact lines, copied out of the file",
-        codes=frozenset(),
-        mutation=_mut(
-            "_verify_span checks the cited hash against the whole lines' bytes as well "
-            "as the symbol's",
-            Edit(
-                target=GATE_MODULE,
-                old=(
-                    "    if line_range is not None and line_range not in ranges:\n"
-                    "        ranges.append(line_range)"
+        gates={
+            GATE_SERVER: Rule(
+                codes=frozenset(),
+                mutation=_mut(
+                    "_verify_span checks the cited hash against the whole lines' bytes "
+                    "as well as the symbol's",
+                    Edit(
+                        target=GATE_MODULE,
+                        old=(
+                            "    if line_range is not None and line_range not in ranges:\n"
+                            "        ranges.append(line_range)"
+                        ),
+                        new="    pass",
+                    ),
                 ),
-                new="    pass",
             ),
-        ),
+            GATE_STORE: Rule(
+                codes=frozenset(),
+                mutation=_mut(
+                    "write_assertion verifies the cited byte range, not the file it "
+                    "sits in",
+                    E_STORE_CITED_BYTES,
+                ),
+            ),
+        },
     ),
     "multi_span": Family(
         name="multi_span",
         expect=ACCEPTED,
         attack="two good citations on one claim, both of which must be stored",
-        codes=frozenset(),
-        mutation=_mut(
-            "_submit_body verifies and stores EVERY submitted span, not the first one",
-            Edit(
-                target=GATE_MODULE,
-                old="    spans = [_verify_span(conn, root, raw) for raw in evidence_spans]",
-                new="    spans = [_verify_span(conn, root, raw) for raw in evidence_spans[:1]]",
+        gates={
+            GATE_SERVER: Rule(
+                codes=frozenset(),
+                mutation=_mut(
+                    "_submit_body verifies and stores EVERY submitted span, not the "
+                    "first one",
+                    Edit(
+                        target=GATE_MODULE,
+                        old="    spans = [_verify_span(conn, root, raw) for raw in evidence_spans]",
+                        new="    spans = [_verify_span(conn, root, raw) for raw in evidence_spans[:1]]",
+                    ),
+                ),
             ),
-        ),
+            GATE_STORE: Rule(
+                codes=frozenset(),
+                mutation=_mut(
+                    "write_assertion inserts a row for every span it was given",
+                    E_STORE_EVERY_SPAN,
+                ),
+            ),
+        },
     ),
 }
 
@@ -668,6 +1270,64 @@ POSITIVE_FAMILIES = tuple(f for f, spec in FAMILIES.items() if spec.expect == AC
 # ---------------------------------------------------------------------------
 
 @dataclass(frozen=True)
+class Cite:
+    """One citation stated in BOTH vocabularies the two gates speak.
+
+    The MCP surface is given line numbers and derives the byte range itself; the store
+    is given the byte range and told the lines. A corpus holding only one of the two
+    would have to reconstruct the other at submission time, and that reconstruction
+    would be a third implementation of the gate's own arithmetic sitting between the
+    corpus and the thing it measures -- inheriting whatever the gate got wrong, which
+    is the mistake `FileFact.line_bytes` already exists to avoid.
+
+    So both readings are computed once, in `build_corpus`, where the attack's MEANING
+    is known and only there. "One line past the end of the file" is a line range the
+    file does not have and a byte range that runs off the end of it; nothing but the
+    generator of that control knows those are the same attack.
+
+    `content_hash` and `text` are both optional and both may be absent -- that is the
+    `unverifiable_span` attack, and it is why neither can be required here.
+    """
+
+    path: str
+    line_start: int
+    line_end: int
+    byte_start: int
+    byte_end: int
+    content_hash: str | None = None
+    text: str | None = None
+
+    def cited_hash(self) -> str:
+        """What the submission asserts is at those bytes. Empty when it asserts nothing.
+
+        The empty string is not a sentinel for "unset" here; it is the citation's
+        actual content, and `write_assertion` is entitled to refuse it as such.
+        `EvidenceSpan.content_hash` is typed `str`, so an absent hash has to arrive as
+        something, and anything other than the empty string would be a value the corpus
+        invented on the caller's behalf.
+        """
+        if self.content_hash is not None:
+            return self.content_hash
+        if self.text is not None:
+            return content_hash(self.text.encode())
+        return ""
+
+    def as_input(self) -> dict[str, Any]:
+        """The kwargs for `server.app.EvidenceSpanInput`. Byte offsets are dropped.
+
+        Dropped rather than passed, because the server derives them and a corpus that
+        supplied them would be measuring its own arithmetic on that surface.
+        """
+        return {
+            "path": self.path,
+            "line_start": self.line_start,
+            "line_end": self.line_end,
+            "content_hash": self.content_hash,
+            "text": self.text,
+        }
+
+
+@dataclass(frozen=True)
 class Control:
     """One submission the gate must refuse (or admit), and what makes it adversarial."""
 
@@ -675,7 +1335,7 @@ class Control:
     family: str
     subject_qualname: str
     claim: str
-    spans: tuple[dict[str, Any], ...]
+    spans: tuple[Cite, ...]
     # (repo-relative path, replacement bytes) written before submitting and restored
     # after. Only the stale attack needs it: its evidence was real when it was read.
     edit: tuple[str, bytes] | None = None
@@ -700,10 +1360,30 @@ def _flip_a_letter(source: bytes, byte_start: int, byte_end: int) -> bytes | Non
     return None
 
 
+def _cite(symbol: SymbolFact, **overrides: Any) -> Cite:
+    """The citation retrieval would hand an agent for `symbol`, before any tampering.
+
+    Both vocabularies come from the same index row, so an attack built by overriding
+    one field of this differs from a correct citation in exactly that field. A control
+    that also drifted in some second field would be refused for a reason nobody asked
+    about, and a whole family can pass that way.
+    """
+    return Cite(**{
+        "path": symbol.path,
+        "line_start": symbol.line_start,
+        "line_end": symbol.line_end,
+        "byte_start": symbol.byte_start,
+        "byte_end": symbol.byte_end,
+        "content_hash": symbol.content_hash,
+        **overrides,
+    })
+
+
 def build_corpus(
     files: dict[str, FileFact],
     *,
     limit: int | None = None,
+    surface: str = SURFACE_DIRECT,
 ) -> tuple[list[Control], list[tuple[str, str, str]]]:
     """Generate the corpus from what the index actually holds.
 
@@ -713,14 +1393,30 @@ def build_corpus(
     family quietly becomes empty, and an empty family is how a rejection rate becomes
     a statement about nothing.
 
+    `surface` drops the families the surface cannot state at all, and each one leaves a
+    skip carrying the reason from its `Inexpressible` entry. A family that is merely
+    UNENFORCED at a surface is still generated and still submitted: not being refused
+    is the measurement.
+
     `limit` caps instances per family, for a fast run. It is applied per family rather
     than by truncating the symbol list, so no family can be emptied by it.
     """
     controls: list[Control] = []
     skips: list[tuple[str, str, str]] = []
     per_family: dict[str, int] = dict.fromkeys(FAMILIES, 0)
+    gate = gate_of(surface)
+
+    unstatable = {
+        name: entry.reason
+        for name, spec in FAMILIES.items()
+        if isinstance(entry := spec.gates[gate], Inexpressible)
+    }
+    for name, reason in unstatable.items():
+        skips.append((name, f"surface={surface}", reason))
 
     def add(control: Control) -> None:
+        if control.family in unstatable:
+            return
         if limit is not None and per_family[control.family] >= limit:
             return
         per_family[control.family] += 1
@@ -733,12 +1429,6 @@ def build_corpus(
         symbols = fact.symbols
         for symbol in symbols:
             qual = symbol.qualname
-            published = {
-                "path": symbol.path,
-                "line_start": symbol.line_start,
-                "line_end": symbol.line_end,
-                "content_hash": symbol.content_hash,
-            }
             accepted = fact.accepted_hashes(symbol.line_start, symbol.line_end)
 
             add(Control(
@@ -749,30 +1439,61 @@ def build_corpus(
                 spans=(),
             ))
             add(Control(
+                name=f"empty_claim/{qual}",
+                family="empty_claim",
+                subject_qualname=qual,
+                # Whitespace rather than "": a caller that sends the empty string has
+                # obviously sent nothing, and a rule that only caught that one would
+                # pass every generator whose template emitted a newline.
+                claim="   \n\t ",
+                spans=(_cite(symbol),),
+            ))
+            add(Control(
+                name=f"unverifiable_span/{qual}",
+                family="unverifiable_span",
+                subject_qualname=qual,
+                claim=f"{qual} is described by these lines, take my word for what is in them",
+                spans=(_cite(symbol, content_hash=None),),
+            ))
+            add(Control(
+                name=f"zero_length_span/{qual}",
+                family="zero_length_span",
+                subject_qualname=qual,
+                claim=f"{qual} is proved by nothing at all, cited where its code begins",
+                # The line range is the symbol's own and is perfectly valid; only the
+                # byte range is empty. That is what separates this from `blank_range`
+                # and what made it survive every check the store had before WP4.
+                spans=(_cite(
+                    symbol, byte_end=symbol.byte_start, content_hash=EMPTY_SHA
+                ),),
+            ))
+            add(Control(
                 name=f"absent_file/{qual}",
                 family="absent_file",
                 subject_qualname=qual,
                 claim=f"{qual} is defined in a file this index has never seen",
-                spans=({**published, "path": f"{symbol.path}.absent"},),
+                spans=(_cite(symbol, path=f"{symbol.path}.absent"),),
             ))
             add(Control(
                 name=f"escaping_path/{qual}",
                 family="escaping_path",
                 subject_qualname=qual,
                 claim=f"{qual} reads a secret from outside the repository",
-                spans=({
-                    "path": f"../{OUTSIDE_NAME}",
-                    "line_start": 1,
-                    "line_end": 1,
-                    "content_hash": content_hash(outside_line.encode()),
-                },),
+                spans=(Cite(
+                    path=f"../{OUTSIDE_NAME}",
+                    line_start=1,
+                    line_end=1,
+                    byte_start=0,
+                    byte_end=len(outside_line),
+                    content_hash=content_hash(outside_line.encode()),
+                ),),
             ))
             add(Control(
                 name=f"unknown_subject/{qual}",
                 family="unknown_subject",
                 subject_qualname=f"{qual}_that_does_not_exist",
                 claim=f"{qual}_that_does_not_exist does the work {qual} is credited with",
-                spans=(dict(published),),
+                spans=(_cite(symbol),),
             ))
 
             # --- the hash attacks, each guarded against being accidentally correct ---
@@ -785,7 +1506,7 @@ def build_corpus(
                     family="decoy_content_hash",
                     subject_qualname=qual,
                     claim=f"{qual} contains the code that is actually elsewhere in this file",
-                    spans=({**published, "content_hash": decoy},),
+                    spans=(_cite(symbol, content_hash=decoy),),
                 ))
 
             foreign = next(
@@ -804,7 +1525,7 @@ def build_corpus(
                     family="foreign_symbol_hash",
                     subject_qualname=qual,
                     claim=f"{qual} is the symbol whose body the sibling hash describes",
-                    spans=({**published, "content_hash": foreign},),
+                    spans=(_cite(symbol, content_hash=foreign),),
                 ))
 
             edited = _flip_a_letter(fact.source, symbol.byte_start, symbol.byte_end)
@@ -818,7 +1539,7 @@ def build_corpus(
                     family="stale_but_once_valid",
                     subject_qualname=qual,
                     claim=f"{qual} still does what it did when this hash was taken",
-                    spans=(dict(published),),
+                    spans=(_cite(symbol),),
                     edit=(fact.path, edited),
                 ))
 
@@ -828,10 +1549,11 @@ def build_corpus(
                 family="published_hash",
                 subject_qualname=qual,
                 claim=f"{qual} is cited by the hash this index published for it",
-                spans=(dict(published),),
+                spans=(_cite(symbol),),
             ))
             quoted = fact.text_at(symbol.line_start, symbol.line_end)
-            if quoted is None:
+            line_span = fact.line_bytes(symbol.line_start, symbol.line_end)
+            if quoted is None or line_span is None:
                 skips.append((
                     "quoted_lines",
                     qual,
@@ -846,12 +1568,17 @@ def build_corpus(
                     family="quoted_lines",
                     subject_qualname=qual,
                     claim=f"{qual} is cited by the exact lines quoted off disk",
-                    spans=({
-                        "path": symbol.path,
-                        "line_start": symbol.line_start,
-                        "line_end": symbol.line_end,
-                        "text": quoted,
-                    },),
+                    # The WHOLE-LINES reading, not the symbol's: that is the point of
+                    # this family, and for the 25.5% of symbols where the two differ
+                    # the byte range here is deliberately not `symbol.byte_start`.
+                    spans=(Cite(
+                        path=symbol.path,
+                        line_start=symbol.line_start,
+                        line_end=symbol.line_end,
+                        byte_start=line_span[0],
+                        byte_end=line_span[1],
+                        text=quoted,
+                    ),),
                 ))
 
         # --- per-file attacks ---------------------------------------------
@@ -860,7 +1587,8 @@ def build_corpus(
             continue
         subject = symbols[0].qualname
         last_line = fact.text_at(fact.line_count, fact.line_count)
-        if last_line is None:
+        last_span = fact.line_bytes(fact.line_count, fact.line_count)
+        if last_line is None or last_span is None:
             skips.append(("past_eof", fact.path, "the file has no last line"))
         else:
             add(Control(
@@ -868,35 +1596,45 @@ def build_corpus(
                 family="past_eof",
                 subject_qualname=subject,
                 claim=f"{subject} continues past the end of {fact.path}",
-                spans=({
-                    "path": fact.path,
-                    "line_start": fact.line_count,
-                    "line_end": fact.line_count + 1,
-                    "text": last_line,
-                },),
+                # "One line past the end" in bytes is one byte past the end. Not a
+                # clamp and not the last valid offset: the attack is a range the file
+                # does not contain, and encoding it as one it does contain would turn
+                # the control into a correct citation with an attack's name on it.
+                spans=(Cite(
+                    path=fact.path,
+                    line_start=fact.line_count,
+                    line_end=fact.line_count + 1,
+                    byte_start=last_span[0],
+                    byte_end=len(fact.source) + 1,
+                    text=last_line,
+                ),),
             ))
         if not blanks:
             skips.append(("blank_range", fact.path, "the file has no blank line"))
         else:
             blank = blanks[0]
+            blank_span = fact.line_bytes(blank, blank)
+            assert blank_span is not None  # noqa: S101 - blank_lines() only yields real lines
             add(Control(
                 name=f"blank_range/{fact.path}#text",
                 family="blank_range",
                 subject_qualname=subject,
                 claim=f"{subject} is documented on line {blank} of {fact.path}",
-                spans=({"path": fact.path, "line_start": blank, "line_end": blank, "text": ""},),
+                spans=(Cite(
+                    path=fact.path, line_start=blank, line_end=blank,
+                    byte_start=blank_span[0], byte_end=blank_span[1], text="",
+                ),),
             ))
             add(Control(
                 name=f"blank_range/{fact.path}#hash",
                 family="blank_range",
                 subject_qualname=subject,
                 claim=f"{subject} is documented on line {blank} of {fact.path}",
-                spans=({
-                    "path": fact.path,
-                    "line_start": blank,
-                    "line_end": blank,
-                    "content_hash": EMPTY_SHA,
-                },),
+                spans=(Cite(
+                    path=fact.path, line_start=blank, line_end=blank,
+                    byte_start=blank_span[0], byte_end=blank_span[1],
+                    content_hash=EMPTY_SHA,
+                ),),
             ))
         if len(symbols) < 2:
             skips.append(("multi_span", fact.path, "only one symbol in the file"))
@@ -907,20 +1645,7 @@ def build_corpus(
                 family="multi_span",
                 subject_qualname=first.qualname,
                 claim=f"{first.qualname} and {second.qualname} are cited together",
-                spans=(
-                    {
-                        "path": first.path,
-                        "line_start": first.line_start,
-                        "line_end": first.line_end,
-                        "content_hash": first.content_hash,
-                    },
-                    {
-                        "path": second.path,
-                        "line_start": second.line_start,
-                        "line_end": second.line_end,
-                        "content_hash": second.content_hash,
-                    },
-                ),
+                spans=(_cite(first), _cite(second)),
             ))
     return controls, skips
 
@@ -976,12 +1701,17 @@ class Harness:
     repo: Path
     index_path: Path
     files: dict[str, FileFact]
-    surface: str = "direct"
+    surface: str = SURFACE_DIRECT
     corpus_name: str = ""
     pristine: dict[str, bytes] = field(default_factory=dict)
     dirty: set[str] = field(default_factory=set)
     _source: Any = None
     _server: Any = None
+    _conn: Any = None
+
+    @property
+    def gate(self) -> str:
+        return gate_of(self.surface)
 
     @property
     def source(self) -> Any:
@@ -991,8 +1721,27 @@ class Harness:
 
     @property
     def conn(self) -> sqlite3.Connection:
-        conn: sqlite3.Connection = self.source.connect()
-        return conn
+        """The connection the submission will be made through.
+
+        The store surface opens its own with `db.connect` rather than borrowing
+        `IndexSource`, and that is not tidiness. `codelearner learn` reaches
+        `write_assertion` over a plain connection with no MCP anywhere in the process,
+        and this surface exists to measure that path -- a harness that imported
+        `server.app` to get a cursor would make the store's rate unreportable on a
+        machine without the optional extra, which is exactly the population whose gate
+        was one lock short until WP4.
+        """
+        if self.gate == GATE_STORE:
+            if self._conn is None:
+                self._conn = db.connect(self.index_path)
+            conn: sqlite3.Connection = self._conn
+            return conn
+        return self.source.connect()  # type: ignore[no-any-return]
+
+    def gate_path(self) -> str:
+        """The file that holds the rules this surface is being measured against."""
+        module = store_module() if self.gate == GATE_STORE else gate_module()
+        return str(Path(module.__file__ or "?").resolve())
 
     def rows(self) -> int:
         return int(self.conn.execute("SELECT count(*) FROM assertions").fetchone()[0])
@@ -1020,6 +1769,9 @@ class Harness:
         if self._source is not None and self._source._conn is not None:
             self._source._conn.close()
             self._source._conn = None
+        if self._conn is not None:
+            self._conn.close()
+            self._conn = None
 
     def submit(self, control: Control) -> dict[str, Any]:
         """Put one control through the gate, on the surface an agent would reach.
@@ -1029,10 +1781,17 @@ class Harness:
         would, so the same corpus can prove that a refusal arrives as data rather than
         as a traceback -- the module's other rule, and one that a direct call cannot
         check. Both must return the same verdict for every control; that is a test.
+
+        `store` calls `write_assertion` with the byte ranges the corpus already holds,
+        which is what every library caller does. It is the surface the README's
+        headline rate did NOT cover, and the one where an attack that the other two
+        refuse is currently admitted.
         """
+        if self.surface == SURFACE_STORE:
+            return self._via_store(control)
         app = gate_module()
-        spans = [app.EvidenceSpanInput(**span) for span in control.spans]
-        if self.surface == "tool":
+        spans = [app.EvidenceSpanInput(**span.as_input()) for span in control.spans]
+        if self.surface == SURFACE_TOOL:
             return self._via_tool(control, spans)
         payload = app._guard(
             self.source,
@@ -1045,6 +1804,67 @@ class Harness:
             confidence=None,
         )
         return dict(payload)
+
+    def _via_store(self, control: Control) -> dict[str, Any]:
+        """`store.write_assertion`, called the way a library caller calls it.
+
+        Nothing here checks anything. The adapter's only job is to turn the corpus's
+        byte ranges into `EvidenceSpan`s and turn the store's exceptions into the same
+        payload shape the server surface produces -- because an adapter that declined
+        to submit a citation it thought was bad would be a third gate, sitting between
+        the corpus and the gate under test and quietly answering for it. That is the
+        failure `Harness` is otherwise built to avoid, and it is the easiest one to
+        introduce here: every one of these submissions looks obviously wrong.
+
+        `evidence` is read back out of `evidence_spans` rather than echoed from the
+        argument. Echoing it would make the positive controls' "every submitted span
+        was stored" conjunct trivially true, which is the same conjunct the server
+        surface checks against a response the server built from what it verified.
+        """
+        store = store_module()
+        refusals = store_refusal_codes()
+        spans = [
+            store.EvidenceSpan(
+                path=cite.path,
+                line_start=cite.line_start,
+                line_end=cite.line_end,
+                byte_start=cite.byte_start,
+                byte_end=cite.byte_end,
+                content_hash=cite.cited_hash(),
+            )
+            for cite in control.spans
+        ]
+        conn = self.conn
+        try:
+            assertion_id = store.write_assertion(
+                conn,
+                subject_qualname=control.subject_qualname,
+                kind="purpose",
+                claim=control.claim,
+                spans=spans,
+                generator="gate-controls/v1",
+            )
+        except tuple(refusals) as exc:
+            code = refusals.get(type(exc))
+            if code is None:
+                # A SUBCLASS of a named refusal, which nothing declares a code for.
+                # Re-raised so it lands as RAISED rather than being scored under its
+                # parent's code -- a new rule inheriting an old one's name is the
+                # quietest way for a refusal to stop being attributable.
+                raise
+            return {"ok": False, "error": {"code": code, "message": str(exc)}}
+        stored = int(
+            conn.execute(
+                "SELECT count(*) FROM evidence_spans WHERE assertion_id = ?",
+                (assertion_id,),
+            ).fetchone()[0]
+        )
+        return {
+            "ok": True,
+            "assertion_id": assertion_id,
+            "servable": store.is_servable(conn, assertion_id),
+            "evidence": [None] * stored,
+        }
 
     def _via_tool(self, control: Control, spans: list[Any]) -> dict[str, Any]:
         import asyncio
@@ -1086,10 +1906,28 @@ class Outcome:
     expected_evidence: int
     servable: bool | None
     detail: str = ""
+    # Which door this control went through. Defaulted so that every existing
+    # construction still means what it meant, and load-bearing rather than
+    # informational: `held` reads the acceptable codes out of the family's entry FOR
+    # THIS GATE, and the two gates refuse the same attack under different names. An
+    # outcome that lost its surface would be scored against whichever code set the
+    # default named, which for a store-surface refusal is a set it can never produce.
+    surface: str = SURFACE_DIRECT
 
     @property
     def expect(self) -> str:
         return FAMILIES[self.family].expect
+
+    @property
+    def known_gap(self) -> bool:
+        """Whether the gate this control went through has no rule for it at all.
+
+        Never a pass. It is here so a reader of the failure list can tell the two
+        apart: a control failing because a declared rule stopped working is a
+        regression, and one failing because nothing was ever there is the measurement
+        this corpus exists to publish.
+        """
+        return isinstance(FAMILIES[self.family].at(self.surface), Unenforced)
 
     @property
     def held(self) -> bool:
@@ -1100,10 +1938,18 @@ class Outcome:
         exactly one row, and every submitted span stored -- an accepted claim carrying
         half its evidence stands on less than its author thought it did, and nothing
         downstream would record that the rest was dropped.
+
+        A gate with no rule for this attack can never hold, whatever it returns. The
+        alternative -- scoring an `Unenforced` entry as "held, as declared" -- would
+        let a hole raise the rate that is supposed to expose it, which is the
+        rejection-rate-of-an-empty-corpus failure wearing a different hat.
         """
         spec = FAMILIES[self.family]
+        entry = spec.at(self.surface)
         if spec.expect == REFUSED:
-            return self.verdict == REFUSED and self.code in spec.codes and self.rows_added == 0
+            if not isinstance(entry, Rule):
+                return False
+            return self.verdict == REFUSED and self.code in entry.codes and self.rows_added == 0
         return (
             self.verdict == ACCEPTED
             and self.servable is True
@@ -1125,7 +1971,29 @@ class GateReport:
     outcomes: list[Outcome]
     skips: list[tuple[str, str, str]]
     gate_path: str
-    surface: str = "direct"
+    surface: str = SURFACE_DIRECT
+
+    @property
+    def gate(self) -> str:
+        return gate_of(self.surface)
+
+    @property
+    def known_gaps(self) -> list[Outcome]:
+        """Controls whose gate has no rule for them. Failures with a documented cause.
+
+        Reported apart from the rest of `failures` for one reason: a run against the
+        store surface is red today and will stay red until repo containment moves to
+        the chokepoint, and a permanently red run is a run nobody reads. Splitting them
+        keeps the regression signal usable without letting the hole out of the rate --
+        `rejection_rate` and `attributed_rate` still count these as the refusals that
+        did not happen.
+        """
+        return [o for o in self.outcomes if o.known_gap]
+
+    @property
+    def unexpected_failures(self) -> list[Outcome]:
+        """Failures that are NOT already declared. The number that should be zero."""
+        return [o for o in self.failures if not o.known_gap]
 
     @property
     def negatives(self) -> list[Outcome]:
@@ -1209,6 +2077,7 @@ class GateReport:
         return {
             "corpus": self.corpus,
             "surface": self.surface,
+            "gate": self.gate,
             "symbols": self.symbols,
             "gate_path": self.gate_path,
             "negatives": len(self.negatives),
@@ -1223,17 +2092,36 @@ class GateReport:
                     "held": sum(1 for o in self.family(name) if o.held),
                     "hold_rate": self.hold_rate(name) if self.family(name) else None,
                     "codes": self.codes(name),
+                    "enforced": isinstance(FAMILIES[name].gates[self.gate], Rule),
                 }
                 for name in FAMILIES
                 if self.family(name)
             },
             "failures": [
                 {"control": o.control, "family": o.family, "verdict": o.verdict,
-                 "code": o.code, "rows_added": o.rows_added, "detail": o.detail}
+                 "code": o.code, "rows_added": o.rows_added, "detail": o.detail,
+                 "known_gap": o.known_gap}
                 for o in self.failures
             ],
+            "known_gaps": sorted({o.family for o in self.known_gaps}),
             "skips": [{"family": f, "subject": s, "reason": r} for f, s, r in self.skips],
         }
+
+    def _family_row(self, name: str) -> str:
+        """One family's cells for this surface: n, held, rate, and what it was scored by."""
+        group = self.family(name)
+        entry = FAMILIES[name].gates[self.gate]
+        if not group:
+            note = "(not expressible here)" if isinstance(entry, Inexpressible) else "(no instances)"
+            return f"{0:>5} {'-':>5} {'-':>7}  {note}"
+        held = sum(1 for o in group if o.held)
+        if isinstance(entry, Unenforced):
+            codes = "NO RULE AT THIS GATE -- " + ", ".join(
+                f"{k}={v}" for k, v in sorted(self.codes(name).items())
+            )
+        else:
+            codes = ", ".join(f"{k}={v}" for k, v in sorted(self.codes(name).items()))
+        return f"{len(group):>5} {held:>5} {self.hold_rate(name):>7.3f}  {codes}"
 
     def format_table(self) -> str:
         lines = [
@@ -1243,15 +2131,8 @@ class GateReport:
             f"{'family':<24} {'expect':<9} {'n':>5} {'held':>5} {'rate':>7}  codes",
         ]
         for name in FAMILIES:
-            group = self.family(name)
-            if not group:
-                lines.append(f"{name:<24} {FAMILIES[name].expect:<9} {0:>5} {'-':>5} {'-':>7}  (no instances)")
-                continue
-            held = sum(1 for o in group if o.held)
-            codes = ", ".join(f"{k}={v}" for k, v in sorted(self.codes(name).items()))
             lines.append(
-                f"{name:<24} {FAMILIES[name].expect:<9} {len(group):>5} {held:>5} "
-                f"{self.hold_rate(name):>7.3f}  {codes}"
+                f"{name:<24} {FAMILIES[name].expect:<9} {self._family_row(name)}"
             )
         def show(name: str) -> str:
             rate = self._rate(name)
@@ -1265,12 +2146,25 @@ class GateReport:
             f"positive pass rate  {show('positive_pass_rate')}  ({len(self.positives)} "
             "legitimate submissions)",
         ]
-        if self.failures:
+        gaps = self.known_gaps
+        if gaps:
+            lines += [
+                "",
+                f"KNOWN GAPS ({len(gaps)} controls): this gate has no rule for "
+                + ", ".join(sorted({o.family for o in gaps}))
+                + ".",
+            ]
+            lines += [
+                f"  {name}: {FAMILIES[name].gates[self.gate].detail}"  # type: ignore[union-attr]
+                for name in sorted({o.family for o in gaps})
+            ]
+        unexpected = self.unexpected_failures
+        if unexpected:
             lines.append("")
             lines.append("FAILURES:")
             lines += [
                 f"  {o.control} -> {o.verdict} {o.code or ''} rows={o.rows_added} {o.detail}"
-                for o in self.failures[:40]
+                for o in unexpected[:40]
             ]
         return "\n".join(lines)
 
@@ -1280,7 +2174,7 @@ def build_harness(
     *,
     files: dict[str, str] | None = None,
     repo: Path | None = None,
-    surface: str = "direct",
+    surface: str = SURFACE_DIRECT,
 ) -> Harness:
     """Index a throwaway copy of a repository and bind the gate to it.
 
@@ -1328,12 +2222,11 @@ def run_controls(
     limit: int | None = None,
 ) -> GateReport:
     """Submit every control and score it. The measurement, in one pass."""
-    controls, skips = build_corpus(harness.files, limit=limit)
+    controls, skips = build_corpus(harness.files, limit=limit, surface=harness.surface)
     if only:
         wanted = set(only)
         controls = [c for c in controls if c.family in wanted]
         skips = [s for s in skips if s[0] in wanted]
-    app = gate_module()
     outcomes: list[Outcome] = []
     for control in controls:
         harness.restore()
@@ -1347,6 +2240,7 @@ def run_controls(
                 code=type(exc).__name__, rows_added=harness.rows() - before,
                 evidence=0, expected_evidence=len(control.spans), servable=None,
                 detail=f"{type(exc).__name__}: {exc}"[:200],
+                surface=harness.surface,
             ))
             continue
         rows_added = harness.rows() - before
@@ -1360,6 +2254,7 @@ def run_controls(
             evidence=len(payload.get("evidence", ())),
             expected_evidence=len(control.spans),
             servable=payload.get("servable") if accepted else None,
+            surface=harness.surface,
         ))
     harness.restore()
     return GateReport(
@@ -1367,9 +2262,159 @@ def run_controls(
         symbols=sum(len(f.symbols) for f in harness.files.values()),
         outcomes=outcomes,
         skips=skips,
-        gate_path=str(Path(app.__file__ or "?").resolve()),
+        gate_path=harness.gate_path(),
         surface=harness.surface,
     )
+
+
+# ---------------------------------------------------------------------------
+# both doors at once
+# ---------------------------------------------------------------------------
+
+@dataclass
+class SurfaceComparison:
+    """The same corpus, scored at every door, side by side.
+
+    The point of the shape is that the columns are compared rather than concatenated.
+    Two rates printed in two separate runs are two facts nobody puts next to each
+    other; one table with a family per row makes "refused here, admitted there" the
+    thing a reader sees first, and it is the only thing in this module that could have
+    told anyone the README's headline described one of two doors.
+    """
+
+    reports: dict[str, GateReport]
+
+    @property
+    def surfaces(self) -> tuple[str, ...]:
+        return tuple(self.reports)
+
+    def divergent(self) -> list[str]:
+        """Families whose HOLD RATE is not the same at every surface.
+
+        The number that should be empty, and was not: `escaping_path` sat here at
+        1.000 against 0.000 until the store gained a containment rule. Every entry is a
+        place where a single headline rate would have been a lie about at least one
+        door.
+
+        An empty list is the goal state and is not the same as the doors agreeing --
+        see `differently_named`, which stays non-empty by design.
+        """
+        names = []
+        for name in FAMILIES:
+            rates = {
+                report.hold_rate(name)
+                for report in self.reports.values()
+                if report.family(name)
+            }
+            if len(rates) > 1:
+                names.append(name)
+        return names
+
+    def differently_named(self) -> dict[str, dict[str, list[str]]]:
+        """Families every door refuses, under different names.
+
+        Not a defect and deliberately not folded into `divergent`: `past_eof` is
+        `bad_range` at the server and `evidence_stale` at the store, and both are
+        correct. It is reported because it is the thing a reader of two columns most
+        needs and least expects -- the store's vocabulary is coarser, so four distinct
+        attacks arrive there as one code, and a library caller gets a message blaming
+        an edit for a path that was never in the index. Keeping this visible is also
+        what stops `divergent()` returning to zero from reading as "the two doors are
+        the same gate now".
+        """
+        differing: dict[str, dict[str, list[str]]] = {}
+        for name in FAMILIES:
+            by_surface = {
+                surface: sorted(report.codes(name))
+                for surface, report in self.reports.items()
+                if report.family(name)
+            }
+            if len({tuple(codes) for codes in by_surface.values()}) > 1:
+                differing[name] = by_surface
+        return differing
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "surfaces": {name: report.to_json() for name, report in self.reports.items()},
+            "divergent_families": self.divergent(),
+            "differently_named_families": self.differently_named(),
+        }
+
+    def format_table(self) -> str:
+        width = 24
+        head = f"{'family':<{width}} {'expect':<9}"
+        sub = f"{'':<{width}} {'':<9}"
+        for surface in self.surfaces:
+            head += f"  {surface:^21}"
+            sub += f"  {'n':>5} {'held':>5} {'rate':>7}"
+        lines = ["the same corpus, at each door it can be reached through", "", head, sub]
+        for name in FAMILIES:
+            row = f"{name:<{width}} {FAMILIES[name].expect:<9}"
+            for surface in self.surfaces:
+                report = self.reports[surface]
+                group = report.family(name)
+                entry = FAMILIES[name].gates[report.gate]
+                if not group:
+                    mark = "n/a" if isinstance(entry, Inexpressible) else "-"
+                    row += f"  {0:>5} {mark:>5} {'-':>7}"
+                else:
+                    held = sum(1 for o in group if o.held)
+                    row += f"  {len(group):>5} {held:>5} {report.hold_rate(name):>7.3f}"
+            lines.append(row)
+        lines.append("")
+        for surface, report in self.reports.items():
+            def show(report: GateReport, name: str) -> str:
+                rate = report._rate(name)
+                return "     -" if rate is None else f"{rate:.4f}"
+
+            lines.append(
+                f"{surface:<8} rejection {show(report, 'rejection_rate')}  "
+                f"attributed {show(report, 'attributed_rate')}  "
+                f"positive {show(report, 'positive_pass_rate')}  "
+                f"gate={Path(report.gate_path).name}"
+            )
+            for name in sorted({o.family for o in report.known_gaps}):
+                lines.append(f"{'':<8}   KNOWN GAP: {name} is not refused here at all")
+        divergent = self.divergent()
+        lines.append("")
+        if divergent:
+            lines.append(
+                f"families that do not score the same at every door: {', '.join(divergent)}"
+            )
+        else:
+            lines.append("every family scores the same at every door.")
+        differing = self.differently_named()
+        if differing:
+            lines.append("refused at every door, under different names:")
+            lines += [
+                "  " + name + ": " + ", ".join(
+                    f"{surface}={'/'.join(codes)}" for surface, codes in by_surface.items()
+                )
+                for name, by_surface in differing.items()
+            ]
+        return "\n".join(lines)
+
+
+def compare_surfaces(
+    workdir: Path,
+    *,
+    surfaces: Sequence[str] = (SURFACE_DIRECT, SURFACE_STORE),
+    repo: Path | None = None,
+    limit: int | None = None,
+    only: Sequence[str] | None = None,
+) -> SurfaceComparison:
+    """Run the corpus once per surface, each against its OWN index.
+
+    Its own index, not a shared one, because the surfaces write. A control admitted at
+    one door would be a row the next door's `rows_added` arithmetic had to know about,
+    and the stale family rewrites files under the repo; sharing either would make the
+    second column a measurement of the first column's leftovers.
+    """
+    reports: dict[str, GateReport] = {}
+    for surface in surfaces:
+        with _temp_harness(workdir / f"surface-{surface}", repo=repo, surface=surface) as harness:
+            reports[surface] = run_controls(harness, only=only, limit=limit)
+    return SurfaceComparison(reports=reports)
 
 
 # ---------------------------------------------------------------------------
@@ -1388,6 +2433,10 @@ class MutationResult:
     mutant_n: int
     gate_path: str
     flipped: tuple[str, ...]
+    # Which door was measured. A family whose rule has two homes has two mutations and
+    # two results, and a table that did not say which was which would report the same
+    # family twice with no way to tell a detected server rule from a detected store one.
+    surface: str = SURFACE_DIRECT
 
     @property
     def detected(self) -> bool:
@@ -1401,8 +2450,8 @@ class MutationResult:
     def row(self) -> str:
         mark = "detected" if self.detected else "NOT DETECTED"
         return (
-            f"{self.family:<24} {self.baseline_rate:>8.3f} -> {self.mutant_rate:<8.3f} "
-            f"{self.mutant_n:>4}  {mark}"
+            f"{self.family:<24} {self.surface:<7} {self.baseline_rate:>8.3f} -> "
+            f"{self.mutant_rate:<8.3f} {self.mutant_n:>4}  {mark}"
         )
 
 
@@ -1466,16 +2515,38 @@ def _run_child(tree_parent: Path, args: list[str]) -> dict[str, Any]:
         ) from exc
 
 
-def run_mutation(family: str, workdir: Path, *, baseline: GateReport | None = None) -> MutationResult:
-    """Delete the rule this family targets, in a copy, and re-measure the family."""
+def run_mutation(
+    family: str,
+    workdir: Path,
+    *,
+    baseline: GateReport | None = None,
+    surface: str = SURFACE_DIRECT,
+) -> MutationResult:
+    """Delete the rule this family targets AT THIS DOOR, in a copy, and re-measure it.
+
+    `surface` is not a display detail. After WP4 several rules have two homes, and the
+    edit that removes one of them changes nothing at the other door -- so a mutation
+    run only at the default surface would report a rule as controlled on the strength
+    of a control that never went near it. Every family with a `Rule` at both gates has
+    to be run twice, and `baseline` must be a report measured at the SAME surface or
+    the comparison is between two different columns.
+    """
     spec = FAMILIES[family]
+    rule = spec.rule(surface)
     if baseline is None:
-        with _temp_harness(workdir / f"base-{family}") as harness:
+        with _temp_harness(workdir / f"base-{family}", surface=surface) as harness:
             baseline = run_controls(harness, only=[family])
-    tree_parent = workdir / f"mutant-{family}"
+    if baseline.surface != surface:
+        raise MutationFailed(
+            f"the baseline for {family!r} was measured at surface "
+            f"{baseline.surface!r} and the mutant at {surface!r}. The two doors refuse "
+            "the same attack under different codes, so this would compare a rate to a "
+            "rate about something else."
+        )
+    tree_parent = workdir / f"mutant-{family}-{surface}"
     tree_parent.mkdir(parents=True, exist_ok=True)
-    mutate_tree(tree_parent, spec.mutation)
-    payload = _run_child(tree_parent, ["--family", family])
+    mutate_tree(tree_parent, rule.mutation)
+    payload = _run_child(tree_parent, ["--family", family, "--surface", surface])
 
     gate_path = str(payload["gate_path"])
     if not gate_path.startswith(str(tree_parent.resolve())):
@@ -1492,7 +2563,7 @@ def run_mutation(family: str, workdir: Path, *, baseline: GateReport | None = No
     mutant = families[family]
     return MutationResult(
         family=family,
-        rule=spec.mutation.rule,
+        rule=rule.mutation.rule,
         baseline_rate=baseline.hold_rate(family),
         mutant_rate=float(mutant["hold_rate"]),
         baseline_n=len(baseline.family(family)),
@@ -1501,10 +2572,11 @@ def run_mutation(family: str, workdir: Path, *, baseline: GateReport | None = No
         flipped=tuple(
             f["control"] for f in payload["failures"] if f["family"] == family
         ),
+        surface=surface,
     )
 
 
-def run_unmutated_copy(workdir: Path) -> dict[str, Any]:
+def run_unmutated_copy(workdir: Path, *, surface: str = SURFACE_DIRECT) -> dict[str, Any]:
     """Run the whole corpus in a copied, UNmutated tree.
 
     The control on the mutation method itself. If a copied tree scores differently from
@@ -1514,14 +2586,32 @@ def run_unmutated_copy(workdir: Path) -> dict[str, Any]:
     tree_parent = workdir / "unmutated"
     tree_parent.mkdir(parents=True, exist_ok=True)
     mutate_tree(tree_parent, Mutation(rule="none", edits=()))
-    return _run_child(tree_parent, [])
+    return _run_child(tree_parent, ["--surface", surface])
 
 
-def run_mutations(workdir: Path, *, families: Sequence[str] | None = None) -> list[MutationResult]:
-    names = list(families or FAMILIES)
+def mutable_families(surface: str) -> tuple[str, ...]:
+    """The families that HAVE a rule to delete at this door.
+
+    The rest are named rather than filtered silently: `escaping_path` at the store has
+    nothing to delete because nothing is there, and `zero_length_span` at the server
+    has nothing to delete because nothing can be submitted. Both are findings, and a
+    runner that quietly skipped them would report a shorter, greener table.
+    """
+    return tuple(
+        name for name, spec in FAMILIES.items() if isinstance(spec.at(surface), Rule)
+    )
+
+
+def run_mutations(
+    workdir: Path,
+    *,
+    families: Sequence[str] | None = None,
+    surface: str = SURFACE_DIRECT,
+) -> list[MutationResult]:
+    names = [n for n in (families or FAMILIES) if n in mutable_families(surface)]
     results = []
     for name in names:
-        results.append(run_mutation(name, workdir))
+        results.append(run_mutation(name, workdir, surface=surface))
     return results
 
 
@@ -1557,12 +2647,28 @@ def main(argv: list[str] | None = None) -> int:
                         help="restrict to one attack family (repeatable)")
     parser.add_argument("--limit", type=int, default=None,
                         help="cap instances per family")
-    parser.add_argument("--surface", choices=("direct", "tool"), default="direct",
-                        help="call the tool body, or the registered MCP tool")
+    parser.add_argument("--surface", choices=SURFACES, default=SURFACE_DIRECT,
+                        help="the tool body, the registered MCP tool, or "
+                             "store.write_assertion as a library caller reaches it")
+    parser.add_argument("--compare", action="store_true",
+                        help="run the corpus at BOTH doors and print two columns")
     parser.add_argument("--json", action="store_true", help="machine-readable output")
     parser.add_argument("--mutations", action="store_true",
                         help="also delete each rule in a copied tree and re-measure")
     args = parser.parse_args(argv)
+
+    if args.compare:
+        tmp = Path(tempfile.mkdtemp(prefix="gate-surfaces-"))
+        try:
+            comparison = compare_surfaces(
+                tmp, repo=args.repo, limit=args.limit, only=args.family
+            )
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+        print(json.dumps(comparison.to_json()) if args.json else comparison.format_table())
+        return 0 if not any(
+            r.unexpected_failures for r in comparison.reports.values()
+        ) else 1
 
     with _temp_harness(repo=args.repo, surface=args.surface) as harness:
         report = run_controls(harness, only=args.family, limit=args.limit)
@@ -1574,19 +2680,30 @@ def main(argv: list[str] | None = None) -> int:
     if args.mutations:
         tmp = Path(tempfile.mkdtemp(prefix="gate-mutations-"))
         try:
-            results = run_mutations(tmp, families=args.family)
+            results = run_mutations(tmp, families=args.family, surface=args.surface)
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
         if args.json:
             print(json.dumps([r.__dict__ for r in results]))
         else:
             print("")
-            print(f"{'family':<24} {'baseline':>8}    {'mutant':<8} {'n':>4}  verdict")
+            print(f"{'family':<24} {'surface':<7} {'baseline':>8}    {'mutant':<8} "
+                  f"{'n':>4}  verdict")
             for result in results:
                 print(result.row())
+            for name in FAMILIES:
+                if name not in mutable_families(args.surface):
+                    entry = FAMILIES[name].at(args.surface)
+                    why = getattr(entry, "detail", None) or entry.reason  # type: ignore[union-attr]
+                    print(f"{name:<24} {args.surface:<7} NO MUTATION -- {why}")
         if any(not r.detected for r in results):
             return 1
-    return 0 if not report.failures else 1
+    # A known gap is a measurement, not a regression, and a command that exits non-zero
+    # every single time it is run is a command whose exit code stops being read. The
+    # gap is still printed, still counted in the rate, and still a failure in the
+    # report -- it is only the process's verdict that distinguishes "a declared hole is
+    # still open" from "something that used to hold has stopped".
+    return 0 if not report.unexpected_failures else 1
 
 
 if __name__ == "__main__":  # pragma: no cover - exercised via subprocess

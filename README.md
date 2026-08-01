@@ -118,9 +118,23 @@ is, and it has no window — but it reaches the claims nothing ever queries agai
 is most of them, and its `spans_hashed` vs `spans_fast_pathed` split is the only
 evidence anyone gets that the fast path is working at all.
 
-The four failure modes stay apart (`hash_mismatch`, `file_missing`, `span_truncated`,
-`no_evidence`) because they call for different repairs. Serving withholds stale claims
-by default and returns them only under `include_stale=True`, always labelled.
+The four terminal failure modes stay apart (`hash_mismatch`, `file_missing`,
+`span_truncated`, `no_evidence`) because they call for different repairs. Serving
+withholds stale claims by default and returns them only under `include_stale=True`,
+always labelled.
+
+A fifth reason, `unreadable`, is deliberately **not** terminal. A cited file that is
+present but cannot be opened — a permission bit, `EMFILE`, `EIO`, an NFS blip, a FIFO —
+proves nothing about the bytes, so the claim is withheld for that call and its status is
+left alone; it returns by itself on the next healthy read. Only real absence
+(`FileNotFoundError`, `NotADirectoryError`) expires a claim. Before this split a
+`chmod 000` expired every claim citing the file, logged `file_missing` for a file that
+was sitting there, and `chmod 644` brought nothing back. `reinstate(conn, id)` is the
+way back for claims already expired: it re-hashes every citation and promotes `stale` to
+`active` only on an exact match of all of them. It refuses a `rejected` claim — a
+refuted claim is not an expired one, and a re-hash has nothing to say about a verdict —
+and it has no override flag, because a promotion that skipped the re-read would be a
+cached freshness verdict entered by hand.
 
 #### The number that did not go the way it was supposed to
 
@@ -148,8 +162,14 @@ re-hash column grows because it is `O(bytes)`. So the two-stage check is the one
 holds up as cited volume grows, and the only one whose cost does not depend on how the
 filesystem feels that day — a page-cache miss, an NFS mount or an encrypted volume
 moves the re-hash column and leaves this one alone. Both verifiers ship, a test asserts
-they reach identical verdicts across every failure mode, and on a small warm repo the
-unconditional one is genuinely the better choice.
+they reach identical verdicts across an enumerated list of repo states — untouched,
+edited, deleted, truncated, touched, unreadable, and not-a-regular-file — and on a small
+warm repo the unconditional one is genuinely the better choice. "Every failure mode" is
+what that test used to claim; the list was five states, and `unreadable` — the sixth —
+was the one on which the two verifiers were in fact disagreeing, the fast path serving a
+`chmod 000` file as `fresh, method='stat'` off an unchanged mtime while the reference
+verifier could not open it at all. Stage one now tests readability so it cannot reach a
+conclusion stage two would refuse.
 
 ## Measured, on real repositories
 

@@ -12,6 +12,7 @@ test that PASSES without them, and both get an explicit one:
 """
 from __future__ import annotations
 
+import contextlib
 import os
 import time
 
@@ -88,6 +89,38 @@ def _served_ids(results):
 
 def _reasons(conn):
     return [row["reason"] for row in store.staleness_events(conn)]
+
+
+# `chmod 000` denies nobody when the reader is root, so every test that leans on it
+# would pass for the wrong reason as uid 0 -- and would go on passing after the
+# behaviour it names was deleted. Skipped rather than xfailed: a property of the test
+# environment, not a known defect.
+skip_if_root = pytest.mark.skipif(
+    os.geteuid() == 0, reason="chmod 000 does not deny the superuser, so this proves nothing"
+)
+
+
+@contextlib.contextmanager
+def _mode(path, mode):
+    """Set a file's mode for the block, and put it back even if the block raises.
+
+    A test that leaves a repo file at 000 breaks pytest's own tmp_path cleanup and
+    poisons everything after it in ways that look like unrelated failures.
+    """
+    original = path.stat().st_mode
+    path.chmod(mode)
+    try:
+        yield
+    finally:
+        path.chmod(original)
+
+
+def _statuses(conn):
+    return [
+        (a.id, a.status)
+        for status in (store.STATUS_ACTIVE, store.STATUS_STALE, store.STATUS_REJECTED)
+        for a in store.assertions_with_status(conn, status)
+    ]
 
 
 class _ReadSpy:
@@ -603,16 +636,33 @@ def test_refresh_staleness_reaches_claims_nothing_ever_queries(repo):
 # The two verifiers must not disagree.
 # --------------------------------------------------------------------------------
 
-@pytest.mark.parametrize(
-    ("name", "mutate"),
-    [
-        ("untouched", lambda p: None),
-        ("edited", lambda p: p.write_text(EDIT_LONGER)),
-        ("deleted", lambda p: p.unlink()),
-        ("truncated", lambda p: p.write_text(SOURCE[:2])),
-        ("touched", lambda p: os.utime(p, ns=(p.stat().st_mtime_ns + 5_000_000_000,) * 2)),
-    ],
-)
+def _become_a_directory(p):
+    p.unlink()
+    p.mkdir()
+
+
+# The enumerated list, which is what "every failure mode" was standing in for. It was
+# five states; `unreadable` is the sixth and it was the one the two verifiers were
+# actually disagreeing on -- the stat fast path served a `chmod 000` file as
+# `fresh, method='stat'` off an unchanged mtime and size, while the reference verifier,
+# which has to open the file, reported `file_missing` and expired the claim. Same index,
+# same second, opposite answers. `not_a_regular_file` is the seventh and is the same
+# hole reached without permissions, which is why it is listed separately: it holds under
+# a root test runner, where the `chmod` cases prove nothing and skip.
+_AGREEMENT_STATES = [
+    ("untouched", lambda p: None),
+    ("edited", lambda p: p.write_text(EDIT_LONGER)),
+    ("deleted", lambda p: p.unlink()),
+    ("truncated", lambda p: p.write_text(SOURCE[:2])),
+    ("touched", lambda p: os.utime(p, ns=(p.stat().st_mtime_ns + 5_000_000_000,) * 2)),
+    pytest.param(
+        "unreadable", lambda p: p.chmod(0o000), marks=skip_if_root,
+    ),
+    ("not_a_regular_file", _become_a_directory),
+]
+
+
+@pytest.mark.parametrize(("name", "mutate"), _AGREEMENT_STATES)
 def test_fast_path_agrees_with_the_unconditional_verifier(tmp_path, name, mutate):
     """The two-stage check and `store.servable_assertions` reach the same verdict.
 
@@ -620,6 +670,14 @@ def test_fast_path_agrees_with_the_unconditional_verifier(tmp_path, name, mutate
     every call. The fast path is an optimisation, so any repo state where they differ
     is a bug in this module by definition -- and "we made it fast and it started
     disagreeing" is the failure that would otherwise be found in production.
+
+    Both halves are asserted, and the second is the sharper one. Equal SERVED SETS can
+    be reached for opposite reasons -- one verifier withholding a claim and the other
+    expiring it both return nothing -- so the served sets agreeing is necessary and not
+    sufficient. `_reasons` reads `staleness_log`, which only an EXPIRY writes, so
+    comparing it asserts the two verifiers also agree about whether anything happened
+    to the store at all. On the `unreadable` and `not_a_regular_file` rows both lists
+    are empty, and that emptiness is the assertion: neither verifier may write a status.
     """
     root = tmp_path / "repo"
     root.mkdir()
@@ -632,13 +690,226 @@ def test_fast_path_agrees_with_the_unconditional_verifier(tmp_path, name, mutate
         _admit(conn, root)
         _admit(conn, root, start=RELEASE_START, end=len(SOURCE), qualname="leases.release")
 
-    # Both establish a baseline before the repo moves under them.
+    # Both establish a baseline before the repo moves under them. This is what makes
+    # the `unreadable` row bite: with a valid stat baseline in hand the fast path has
+    # every excuse not to open the file, which is exactly when it used to be wrong.
     stale.serve_assertions(fast)
     store.servable_assertions(slow)
 
-    mutate(root / "leases.py")
+    try:
+        mutate(root / "leases.py")
 
-    fast_ids = _served_ids(stale.serve_assertions(fast))
-    slow_ids = [a.id for a in store.servable_assertions(slow)]
-    assert fast_ids == slow_ids, f"verifiers disagree on a {name} repo"
-    assert _reasons(fast) == _reasons(slow), f"reasons differ on a {name} repo"
+        fast_ids = _served_ids(stale.serve_assertions(fast))
+        slow_ids = [a.id for a in store.servable_assertions(slow)]
+        assert fast_ids == slow_ids, f"verifiers disagree on a {name} repo"
+        assert _reasons(fast) == _reasons(slow), f"reasons differ on a {name} repo"
+        assert _statuses(fast) == _statuses(slow), f"statuses differ on a {name} repo"
+    finally:
+        # `chmod 000` on a file inside tmp_path breaks pytest's own cleanup, and a
+        # failing assertion above must not turn into a confusing teardown error on top.
+        if (root / "leases.py").exists() and (root / "leases.py").is_file():
+            (root / "leases.py").chmod(0o644)
+
+
+# --------------------------------------------------------------------------------
+# WP10: unreadable is withheld, never expired, and never counted as fresh.
+# --------------------------------------------------------------------------------
+
+@skip_if_root
+def test_the_fast_path_will_not_serve_a_file_it_could_not_open(repo):
+    """The disagreement the auditor found, as its own test.
+
+    `stat()` succeeds on a `chmod 000` file and reports the mtime and size it always
+    did, so the baseline matched and stage one served the claim as `fresh,
+    method='stat'` -- a freshness verdict reached from metadata about bytes this
+    process was not allowed to read. Worse than the cross-module disagreement:
+    `serve_assertions()` and `serve_assertions(force_hash=True)` contradicted each
+    other on the same index in the same second. Stage one may only reach conclusions
+    stage two would also reach; deleting the `os.access` test in `_stat_file` turns
+    this red."""
+    root, conn = repo
+    aid = _admit(conn, root)
+    (served,) = stale.serve_assertions(conn)  # establishes the stat baseline
+    assert served.method == stale.METHOD_STAT or served.method == stale.METHOD_HASH
+
+    with _mode(root / "leases.py", 0o000):
+        assert stale.serve_assertions(conn) == []
+        assert stale.serve_assertions(conn, force_hash=True) == []
+        assert store.assertions_with_status(conn, store.STATUS_STALE) == []
+
+    assert _served_ids(stale.serve_assertions(conn)) == [aid]
+
+
+@skip_if_root
+def test_an_unreadable_claim_is_withheld_from_include_stale_too(repo):
+    """`include_stale=True` promises expired claims, and an unchecked one is not that.
+
+    The reasonable shape for a caller of that flag is `if r.stale: ... else: <fresh>`,
+    so a record arriving with `stale=False` and nothing verified lands in the `else`
+    and is presented as verified -- the cached-freshness-verdict failure delivered
+    through the very flag added to prevent it. There is a second opt-in instead, and
+    a caller cannot receive one of these without having typed its name."""
+    root, conn = repo
+    aid = _admit(conn, root)
+    stale.serve_assertions(conn)
+
+    with _mode(root / "leases.py", 0o000):
+        assert stale.serve_assertions(conn) == []
+        assert stale.serve_assertions(conn, include_stale=True) == []
+
+        (withheld,) = stale.serve_assertions(conn, include_unverifiable=True)
+        assert withheld.assertion.id == aid
+        assert withheld.unreadable is True
+        assert withheld.stale is False
+        assert withheld.reason == stale.REASON_UNREADABLE
+        # No stage confirmed anything, so no stage may be named. `method='stat'` is
+        # the exact string a fast-path CONFIRMATION carries, and putting it on a claim
+        # nothing confirmed is the misreading the split exists to prevent.
+        assert withheld.method is None
+        # `verified_at` is kept, and is the useful half: when these bytes were last
+        # genuinely hashed. "Last confirmed at T, cannot look now" is a more actionable
+        # thing to hand a caller than a bare refusal, and it cannot be mistaken for a
+        # current check while `method` is None and the label says UNVERIFIED.
+        # Compared against the stored baseline rather than against `checked_at`: two
+        # SQLite clock reads a few microseconds apart can land in the same millisecond,
+        # and a test that is right about the rule and flaky about the clock is worse
+        # than no test.
+        (row,) = stale.verification_state(conn, aid)
+        assert withheld.verified_at == row["verified_at"]
+        # The label is the last line of defence for a caller that reads nothing else,
+        # and it must not read as either neighbour.
+        assert withheld.label.startswith("UNVERIFIED")
+        assert "fresh" not in withheld.label
+        assert "STALE" not in withheld.label
+
+
+@skip_if_root
+def test_a_stale_claim_and_an_unreadable_one_do_not_share_a_bucket(repo):
+    """Both opt-ins at once, on one index holding one of each. The two states have to
+    stay separable at the point a caller reads them, or the distinction the whole split
+    exists to preserve is lost on the way out of the door."""
+    root, conn = repo
+    (root / "other.py").write_text(SOURCE)
+    unreadable = _admit(conn, root)
+    expired = _admit(conn, root, path="other.py", qualname="other.acquire")
+    stale.serve_assertions(conn)
+
+    (root / "other.py").write_text(EDIT_LONGER)
+    with _mode(root / "leases.py", 0o000):
+        both = stale.serve_assertions(
+            conn, include_stale=True, include_unverifiable=True
+        )
+        by_id = {r.assertion.id: r for r in both}
+        assert set(by_id) == {unreadable, expired}
+        assert by_id[unreadable].unreadable is True and by_id[unreadable].stale is False
+        assert by_id[expired].stale is True and by_id[expired].unreadable is False
+        assert by_id[unreadable].assertion.status == store.STATUS_ACTIVE
+        assert by_id[expired].assertion.status == store.STATUS_STALE
+
+    assert _reasons(conn) == [stale.REASON_HASH_MISMATCH]
+
+
+@skip_if_root
+def test_the_sweep_counts_unreadable_claims_apart_from_fresh_and_expired(repo):
+    """The report is the only evidence the fast path works, so a number in it that
+    means something other than it says poisons the one measurement.
+
+    Counting an unreadable claim as `fresh` is a report asserting a check that did not
+    happen. Counting it as `expired` puts a reason in `by_reason` for a claim whose
+    status never moved and sends an operator hunting an edit nobody made. Reverting
+    `fresh` to the old `not r.stale` turns this red on the first assertion."""
+    root, conn = repo
+    (root / "other.py").write_text(SOURCE)
+    _admit(conn, root)
+    _admit(conn, root, path="other.py", qualname="other.acquire")
+    stale.serve_assertions(conn)
+
+    with _mode(root / "leases.py", 0o000):
+        report = stale.refresh_staleness(conn)
+
+    assert report.checked == 2
+    assert report.fresh == 1
+    assert report.expired == 0
+    assert report.unverifiable == 1
+    assert report.files_unreadable == 1
+    # `by_reason` continues to account for expiries alone, so it still sums to
+    # `expired` and the arithmetic a reader does on this report stays true.
+    assert report.by_reason == {}
+    assert report.checked == report.fresh + report.expired + report.unverifiable
+    # And it is impossible to miss in the one-line form an operator actually reads.
+    assert "1 withheld unread (1 unreadable files)" in report.summary()
+
+
+def test_the_sweep_says_nothing_about_unreadable_claims_when_there_are_none(repo):
+    """A permanent ", 0 withheld unread" is noise an operator learns to skip, and this
+    is the line it must not be possible to skip on the day it is not zero."""
+    root, conn = repo
+    _admit(conn, root)
+    report = stale.refresh_staleness(conn)
+    assert report.unverifiable == 0
+    assert "withheld" not in report.summary()
+
+
+def test_a_fifo_is_withheld_rather_than_expired(repo):
+    """A FIFO is not an absence. Something is there, this reader cannot safely open it
+    -- `read_bytes` on a pipe blocks until another process obliges -- and putting a
+    regular file back must be enough to restore the claim.
+
+    Both guards fire on it: `_stat_file` rejects it on `S_ISREG` before any open, and
+    `_read_file` repeats the test at the seam that actually opens the file, because a
+    guard that only holds because some other function ran first disappears the day the
+    call order changes."""
+    root, conn = repo
+    aid = _admit(conn, root)
+    stale.serve_assertions(conn)
+
+    (root / "leases.py").unlink()
+    os.mkfifo(root / "leases.py")
+    try:
+        assert stale.serve_assertions(conn) == []
+        assert store.assertions_with_status(conn, store.STATUS_STALE) == []
+        assert _reasons(conn) == []
+        assert stale._read_file(root, "leases.py") is stale._UNREADABLE
+    finally:
+        (root / "leases.py").unlink()
+
+    (root / "leases.py").write_text(SOURCE)
+    assert _served_ids(stale.serve_assertions(conn)) == [aid]
+
+
+def test_a_deleted_file_between_stat_and_read_is_still_a_real_expiry(repo):
+    """The split must not turn the terminal cases non-terminal. A file that vanishes
+    between stage one and stage two is genuinely gone, reports `file_missing`, and
+    expires -- reached here by making the read fail while the stat has already
+    succeeded, which is the only way to exercise that branch deterministically."""
+    root, conn = repo
+    aid = _admit(conn, root)
+    stale.serve_assertions(conn)
+    (root / "leases.py").write_text(EDIT_LONGER)  # forces stage two to run
+
+    real_read = stale._read_file
+    stale._read_file = lambda r, p: stale._ABSENT
+    try:
+        assert stale.serve_assertions(conn) == []
+    finally:
+        stale._read_file = real_read
+
+    assert [a.id for a in store.assertions_with_status(conn, store.STATUS_STALE)] == [aid]
+    assert _reasons(conn) == [stale.REASON_FILE_MISSING]
+
+
+@skip_if_root
+def test_reinstate_brings_back_a_claim_the_two_stage_engine_expired(repo):
+    """The two halves of WP10 meeting: the engine expires on real evidence, and the
+    only route back re-reads that same evidence. `reinstate` lives in `store` and uses
+    `store`'s verifier, so a claim expired by the fast path and a claim expired by the
+    reference verifier are restored by identical arithmetic."""
+    root, conn = repo
+    aid = _admit(conn, root)
+    stale.serve_assertions(conn)
+    (root / "leases.py").write_text(EDIT_LONGER)
+    assert stale.serve_assertions(conn) == []
+
+    (root / "leases.py").write_text(SOURCE)
+    assert store.reinstate(conn, aid) is True
+    assert _served_ids(stale.serve_assertions(conn)) == [aid]

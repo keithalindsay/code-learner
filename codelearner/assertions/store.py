@@ -41,20 +41,46 @@ that the gate does anything -- a pipeline that deletes what it rejected can repo
 any pass rate it likes, and cannot tell a generator that improved from a judge that
 got lazier.
 
+**4. "We could not look" is not "the evidence changed".** Verification has three
+outcomes, not two. A citation can hold, it can be contradicted by the bytes on disk,
+or it can be *unavailable for inspection* -- and only the second one is a fact about
+the repository. `_read_source` separates real absence (`FileNotFoundError`,
+`NotADirectoryError`) from every other way a read fails: a permission bit, `EMFILE`,
+`EIO`, an NFS blip, a repo on an unmounted volume, or a path that is no longer a
+regular file. Absence expires the claim. Everything else withholds it for this call
+and *leaves the stored status alone*.
+
+That split is the whole of WP10, and the reason is that the old behaviour was
+irreversible in one direction. `chmod 000 leases.py` expired every claim citing it,
+logged `file_missing` for a file that was sitting right there, and `chmod 644` did
+not bring any of them back, because nothing in this module ever moved an assertion
+towards `active`. One transient failure -- a lock on a mounted volume, a moved
+checkout, a file descriptor limit hit under load -- permanently converted "we could
+not look" into "the evidence changed", which is the exact distinction the whole tier
+exists to preserve. Failing closed is right. Failing closed *permanently*, on
+evidence that never moved, is data loss with a reassuring log line.
+
+`reinstate` is the way back, and it is evidence-driven rather than a flag: it
+re-hashes every cited span and promotes `stale` to `active` only if all of them match
+exactly. There is deliberately no override -- an operator who could assert freshness
+by hand would be the cached freshness verdict this project refuses to build.
+
 The one non-obvious guard is the empty evidence set. "Every cited span still
 matches" is *trivially true of no spans*, so an assertion that somehow lost all of
 its evidence would be promoted to servable by the exact same code path that verifies
 a well-cited one. Rule 1 should make that unreachable; `servable_assertions` checks
 for it anyway and logs it as `no_evidence`, because a vacuous truth reads as success
-everywhere it is not specifically looked for.
+everywhere it is not specifically looked for -- and `reinstate` refuses an
+evidence-free claim for the same reason, one door further on.
 """
 from __future__ import annotations
 
 import sqlite3
+import stat as stat_module
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from .. import db
 from ..ingest.types import content_hash
@@ -75,14 +101,38 @@ VERDICT_UNSUPPORTED = "unsupported"
 # Why a citation stopped verifying. Recorded rather than collapsed into one flag,
 # because "the function was edited" and "the file is gone" call for different
 # repairs and only one of them is routine.
+#
+# The first four are TERMINAL: they are findings about the repository, they expire the
+# claim, and they are written to `staleness_log`.
 REASON_HASH_MISMATCH = "hash_mismatch"
 REASON_FILE_MISSING = "file_missing"
 REASON_SPAN_TRUNCATED = "span_truncated"
 REASON_NO_EVIDENCE = "no_evidence"
 
+# The fifth is NOT terminal, and the difference is the point. `unreadable` is a fact
+# about this process at this instant -- a permission bit, `EMFILE`, `EIO`, an
+# unmounted volume, a FIFO where a module used to be -- and says nothing whatever
+# about whether the cited bytes still match. It withholds the claim for this call and
+# leaves `status` exactly as it found it, so the next call over a healthy filesystem
+# serves the claim again with no operator action at all.
+#
+# It is therefore never written to `staleness_log`: that table is one row per EXPIRY,
+# and its growth rate is documented as a real signal about how fast this repo
+# invalidates its own inferences. Logging non-expiries there would turn a measurement
+# into a count of how often the disk was busy. `unreadable` is reported in the return
+# value instead -- `stale.SpanCheck.reason`, `ServedAssertion.unreadable`, and the
+# `unverifiable` count in `RefreshReport` -- which is where a caller can act on it.
+REASON_UNREADABLE = "unreadable"
+
 # Status transitions are timestamped by SQLite, not by Python. `created_at` in the
 # schema already uses this expression, and two clocks stamping rows in one table is
 # a way for "created after it went stale" to happen in the data.
+#
+# The trailing `AND status = ?` is not decoration. It is the only thing that makes a
+# transition safe against a concurrent one: `reinstate` checks the evidence and then
+# promotes, and between those two steps another connection may have rejected the
+# claim. Naming the expected FROM-state in the WHERE clause means the promotion simply
+# does not fire, rather than overwriting an adjudication that landed first.
 _TOUCH_STATUS = (
     "UPDATE assertions "
     "SET status = ?, status_changed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') "
@@ -131,6 +181,33 @@ class InvalidSpan(ValueError):
     constructor is only a rule for callers who use it."""
 
 
+class SpanEscapesRepo(ValueError):
+    """A cited path leaves the indexed repository; nothing was written.
+
+    Found by running the adversarial corpus against `write_assertion` rather than only
+    against the MCP tool, which is the whole reason WP5 exists: `path_escapes_repo`
+    lived solely in `server.app._verify_span`, so the door the MCP server uses refused
+    this attack 100% of the time while `codelearner learn` and every library caller
+    admitted it. Reproduced before the fix -- a claim citing `../outside_secret.py`
+    with that file's real hash was stored `active` and reported `servable`.
+
+    It is the nastiest shape this store can hold, because nothing downstream looks
+    wrong. The bytes exist, the hash is correct, the claim re-verifies on every serve,
+    and `refresh_staleness` will report it fresh for as long as the file is untouched.
+    The only thing wrong with it is that a reader of THIS repository cannot open the
+    thing it cites -- and that is invisible to every check that runs after admission.
+    It also quietly breaks the isolation property the README calls structurally
+    impossible to violate: one repo's index ends up describing another's bytes.
+
+    The check here is lexical -- absolute paths and any `..` component -- and is
+    deliberately weaker than `_verify_span`'s, which resolves the path and compares it
+    to the root. Lexical is what can be enforced at the door: `verify=False` is a
+    supported call, and a rule that only holds when a caller opted into re-reading is
+    not a rule the gate enforces. A symlink pointing out of the tree still gets past
+    this and is caught downstream at verification time; that gap is stated rather than
+    papered over."""
+
+
 class EvidenceUnverifiable(ValueError):
     """A span carried nothing to check it against, or nothing to check it from.
 
@@ -163,6 +240,25 @@ class EvidenceStale(ValueError):
     record that as `stale` -- as though the repository had moved under a claim that
     was once good. The distinction is worth keeping: `stale` means the world changed,
     and a claim that never matched anything is a defect in whatever produced it."""
+
+
+class NotReinstatable(ValueError):
+    """`reinstate` was asked to revive a claim a judge refused; nothing was changed.
+
+    `rejected` and `stale` look adjacent -- both are "not being served" -- and they are
+    opposites. `stale` means the evidence moved out from under a claim, so re-reading
+    the evidence is exactly the right way to settle whether it should come back.
+    `rejected` means a judge read the claim against evidence that was correct at the
+    time and said it is not supported; the bytes were never the disputed part. A
+    re-hash has nothing to say about that verdict, so promoting on one would let a
+    `git checkout` overturn an adjudication -- and the promoted row would then be
+    indistinguishable from a claim that was never refuted, because `verdicts` is a
+    separate table nothing on the serve path reads.
+
+    Raised rather than returned as `False` deliberately. `False` is this function's
+    word for "the evidence still does not match", which is routine, expected, and
+    unalarming. Asking to reinstate a refuted claim is none of those things, and the
+    two must not arrive at the caller looking the same."""
 
 
 @dataclass(frozen=True)
@@ -245,6 +341,32 @@ def _repo_root(conn: sqlite3.Connection, repo_root: db.StrPath | None) -> Path:
             "citations is the one thing this store will not do."
         )
     return Path(stored)
+
+
+def _escapes_repo(path: str) -> bool:
+    """True if `path` cannot possibly name a file inside the repo, read lexically.
+
+    Deliberately does no filesystem work. It runs at the door, where `verify=False` is
+    a supported call and no root need have been resolved yet; a containment rule that
+    only fires when the caller opted into re-reading is not a rule the gate enforces.
+
+    Three shapes, and the third is the one that motivated it. An absolute path names
+    somewhere else outright. A NUL byte is not a path at all -- it truncates inside
+    the C library, so the name Python checked and the name the kernel opened differ.
+    And any `..` component walks out of the tree, which is how a claim about
+    `../outside_secret.py` came to be stored `active` and reported `servable`.
+
+    `..` is rejected wherever it appears, not just in the lead. `a/../../b` escapes
+    while never starting with one, and normalising first to find out would mean
+    resolving a path this function has deliberately not touched the disk to resolve.
+    A repo-relative citation has no legitimate reason to contain one in any position:
+    every span this package builds comes from `span_for_symbol`, whose paths are
+    already normalised relative to the root.
+    """
+    if not path or "\x00" in path:
+        return True
+    pure = PurePosixPath(path)
+    return pure.is_absolute() or ".." in pure.parts or Path(path).is_absolute()
 
 
 def _verification_root(conn: sqlite3.Connection, repo_root: db.StrPath | None) -> Path:
@@ -449,6 +571,14 @@ def write_assertion(
                 "disagree sends them to different places and looks wrong to "
                 "neither."
             )
+        if _escapes_repo(span.path):
+            raise SpanEscapesRepo(
+                f"span {span.citation} resolves outside the indexed repository, and "
+                "the assertion was not written. This claim would have verified "
+                "forever -- the bytes are real and their hash is correct -- while "
+                "citing a file this index does not describe and a reader of this "
+                "repository cannot open."
+            )
         if not span.content_hash.strip():
             raise EvidenceUnverifiable(
                 f"span {span.citation} carries no content hash, and the assertion "
@@ -477,6 +607,20 @@ def write_assertion(
         failure = _first_failure(_verification_root(conn, repo_root), spans, {})
         if failure is not None:
             reason, moved, observed = failure
+            if reason == REASON_UNREADABLE:
+                # Not `EvidenceStale`. Nothing was found to be wrong with this
+                # citation -- it could not be checked at all, and admitting a claim
+                # whose verification did not happen is the same lie as reporting a
+                # freshness check that did not run. The caller's repair is to fix the
+                # filesystem and submit again, not to re-derive the claim.
+                raise EvidenceUnverifiable(
+                    f"span {moved.citation} could not be read, so nothing verified "
+                    "it and the assertion was not written. The file is present but "
+                    "this process cannot open it -- a permission bit, a descriptor "
+                    "limit, a dead mount, or something that is not a regular file. "
+                    "This is not a finding about the citation: fix the read and "
+                    "submit the same claim again."
+                )
             raise EvidenceStale(
                 f"span {moved.citation} does not match the bytes on disk "
                 f"({reason}), and the assertion was not written. Cited "
@@ -589,45 +733,191 @@ def mark_stale(
     return True
 
 
-def _read_source(root: Path, path: str, cache: dict[str, bytes | None]) -> bytes | None:
-    """Read a cited file once per verification pass. None if it cannot be read.
+@dataclass(frozen=True, slots=True)
+class _Unread:
+    """A cited file yielded no bytes, carrying WHY -- and therefore what may be done.
+
+    A bare `None` was the defect. It collapsed "this file has been deleted" and "this
+    process could not open this file just now" into one value, and every caller
+    downstream then had to pick a single disposition for both; the one it picked was
+    expiry. Carrying the reason instead means the decision is made where the errno is
+    still in scope, and made once for both verifiers -- `stale` imports this type
+    rather than deciding again, because two verifiers each inventing their own
+    disposition for the same repo state is precisely the disagreement WP10 found.
+
+    `reason` is `REASON_FILE_MISSING` (terminal) or `REASON_UNREADABLE` (not).
+    """
+
+    reason: str
+
+
+# The two dispositions, as singletons, so a caller can compare reasons rather than
+# instances and nothing has to allocate on the hot path.
+_ABSENT = _Unread(REASON_FILE_MISSING)
+_UNREADABLE = _Unread(REASON_UNREADABLE)
+
+
+def reinstate(
+    conn: sqlite3.Connection, assertion_id: int, repo_root: db.StrPath | None = None
+) -> bool:
+    """Re-hash a stale claim's citations and return it to `active` if they ALL match.
+
+    The only route out of `stale` that is not hand-edited SQL, and the counterweight
+    to a store that had exactly one direction of travel. Before WP10 an assertion
+    could be expired by a transient read failure -- `chmod 000`, a descriptor limit, a
+    volume that was not mounted at the wrong moment -- and nothing anywhere could
+    bring it back, so a filesystem hiccup was permanent data loss dressed as a
+    staleness event. `_read_source` now stops most of those expiries from happening;
+    this exists for the ones already in the table, and for the honest case where a
+    revert really did restore the cited bytes.
+
+    **It is evidence-driven, and there is deliberately no override.** No `force`, no
+    `assume_fresh`, no way to say "trust me". A flag that promotes a claim without
+    re-reading its evidence is a cached freshness verdict entered by hand, which is
+    the single failure this whole tier is built to refuse -- and it would be a worse
+    one than a cache, because it would carry a human's authority and no timestamp.
+    The re-hash is the entire mechanism: the same `_first_failure` that expires claims
+    is the one that un-expires them, so the two can never disagree about what "the
+    evidence matches" means.
+
+    Four refusals, and each is a different kind of not-allowed:
+
+    * **`rejected` raises `NotReinstatable`.** A judge refused this claim on evidence
+      that was correct at the time. Re-reading the bytes cannot answer that, and a
+      promotion here would let a `git revert` overturn an adjudication -- see the
+      exception's own docstring.
+    * **`active` returns `False`.** Nothing to do; not an error. Same shape as
+      `mark_stale` returning `False` for a claim that was already stale.
+    * **No spans returns `False`.** "Every cited span matches" is trivially true of no
+      spans, so an evidence-free claim would otherwise be promoted by the very code
+      that verifies a well-cited one -- the vacuous truth guarded against on the serve
+      path, guarded against again here because this path *writes* `active`.
+    * **Any citation that does not match returns `False`.** Including one that could
+      not be READ: an unreadable file establishes nothing, and "we could not check" is
+      not grounds for promotion any more than it is grounds for expiry. Every span
+      must match; a claim is only as reinstated as its weakest citation.
+
+    Nothing is written to `staleness_log`. That table is one row per expiry, and its
+    growth rate is the measurement of how fast this repo invalidates its own
+    inferences; adding un-expiry rows would make the number mean nothing. The record
+    of a reinstatement is the log rows that stay exactly where they were plus a
+    `status_changed_at` later than the `detected_at` above them, which is readable and
+    does not corrupt the count.
+
+    Returns True only if this call performed the transition.
+    """
+    root = _repo_root(conn, repo_root)
+    found = _load_assertions(conn, "id = ?", (assertion_id,))
+    if not found:
+        raise KeyError(f"no assertion with id {assertion_id} in this index")
+    assertion = found[0]
+    if assertion.status == STATUS_REJECTED:
+        raise NotReinstatable(
+            f"assertion {assertion_id} is {STATUS_REJECTED!r}, not {STATUS_STALE!r}, "
+            "and was not changed. A refuted claim is not an expired one: its evidence "
+            "was correct when a judge read it and found the claim unsupported, so "
+            "re-hashing that evidence cannot overturn the verdict. Record a "
+            "supporting verdict if the adjudication was wrong."
+        )
+    if assertion.status != STATUS_STALE:
+        return False
+    if not assertion.spans:
+        return False
+    if _first_failure(root, assertion.spans, {}) is not None:
+        return False
+    with _atomic(conn):
+        cur = conn.execute(_TOUCH_STATUS, (STATUS_ACTIVE, assertion_id, STATUS_STALE))
+    # `rowcount == 0` means another connection moved this row between the load above
+    # and the write -- most likely a rejection. The WHERE clause declined to clobber
+    # it, and saying so honestly is the whole reason the FROM-state is in the SQL.
+    return bool(cur.rowcount)
+
+
+def _read_source(root: Path, path: str, cache: dict[str, bytes | _Unread]) -> bytes | _Unread:
+    """Read a cited file once per verification pass, distinguishing gone from unopenable.
 
     Cached because a batch of claims about one module would otherwise re-read that
     module once per claim, and verification runs on every serve.
 
-    The `is_file` test is not redundant with the `except OSError`. Catching OSError
+    Three outcomes, and the split between the last two is the whole of WP10:
+
+    * **bytes** -- the file is there and was read.
+    * **`_ABSENT`** -- `FileNotFoundError` or `NotADirectoryError`. Nothing is at this
+      path and nothing can be: the file was deleted, or renamed, or a parent component
+      of the path is a file rather than a directory. That is a finding about the
+      repository, it expires the claim, and it is logged as `file_missing`.
+    * **`_UNREADABLE`** -- every other `OSError`, plus anything that is not a regular
+      file. `EACCES` from a permission bit, `EMFILE` under load, `EIO` off a failing
+      disk, `ENOTCONN`/`ESTALE` off an NFS mount, a repo root that is not mounted right
+      now. None of these say anything about whether the cited bytes still match, so
+      the claim is withheld for this call and its status is left alone.
+
+    The old code caught every `OSError` and returned `None`, which the callers expired
+    as `file_missing`. `chmod 000` on a cited file therefore destroyed every claim
+    citing it, permanently, and told the operator the file was gone while it sat there
+    at 6 bytes; `chmod 644` brought nothing back, because no code path in this module
+    moved an assertion towards `active`. Failing closed is correct. Failing closed
+    with no way back, on evidence that never moved, is data loss.
+
+    The regular-file test is not redundant with the `except OSError`. Catching OSError
     handles every way a read can fail loudly; a FIFO fails quietly, by blocking in
     `read_bytes` until another process opens the write end. This function runs on the
     serve path, so a claim citing a FIFO would hang whoever asked for it -- and since
-    nothing raises, the caller sees a call that never returns rather than an
-    assertion that went stale. Treated as unreadable, which is what it is: a
-    `REASON_FILE_MISSING` expiry, the same outcome as a deleted file.
+    nothing raises, the caller sees a call that never returns rather than an assertion
+    that went stale. It is `_UNREADABLE` rather than `_ABSENT`, because a FIFO is not
+    an absence: something is there, this reader cannot safely open it, and putting a
+    regular file back must be enough to restore the claim.
+
+    `stat()` is called explicitly rather than via `Path.is_file()` so that the errno
+    survives. `is_file()` swallows the same `OSError`s into a bare `False`, which is
+    how the two cases got conflated in the first place.
     """
-    if path not in cache:
-        target = root / path
-        if not target.is_file():
-            cache[path] = None
-            return cache[path]
-        try:
-            cache[path] = target.read_bytes()
-        except OSError:
-            cache[path] = None
+    if path in cache:
+        return cache[path]
+    target = root / path
+    try:
+        st = target.stat()
+    except (FileNotFoundError, NotADirectoryError):
+        cache[path] = _ABSENT
+        return cache[path]
+    except OSError:
+        # EACCES on a parent directory, ELOOP, ENOTCONN off a dead mount. The path may
+        # be perfectly intact; this process simply cannot see it from here.
+        cache[path] = _UNREADABLE
+        return cache[path]
+    if not stat_module.S_ISREG(st.st_mode):
+        cache[path] = _UNREADABLE
+        return cache[path]
+    try:
+        cache[path] = target.read_bytes()
+    except (FileNotFoundError, NotADirectoryError):
+        # Deleted between the stat and the open. Genuinely gone, so genuinely terminal.
+        cache[path] = _ABSENT
+    except OSError:
+        cache[path] = _UNREADABLE
     return cache[path]
 
 
 def _first_failure(
-    root: Path, spans: Sequence[EvidenceSpan], cache: dict[str, bytes | None]
+    root: Path, spans: Sequence[EvidenceSpan], cache: dict[str, bytes | _Unread]
 ) -> tuple[str, EvidenceSpan, str | None] | None:
     """Return the first citation that no longer verifies, or None if all still do.
 
     First rather than all: one moved span is already enough to expire the claim, and
     the one that moved is the one worth recording. Which span failed is more useful
     than how many did.
+
+    The returned reason may be `REASON_UNREADABLE`, which is NOT a failure of the
+    citation and must not be treated as one. Every caller branches on it: the serve
+    paths withhold without touching `status`, and `write_assertion` raises
+    `EvidenceUnverifiable` rather than `EvidenceStale`. A caller that forgets the
+    branch reintroduces the exact defect this split exists to remove, which is why
+    each of the three call sites says so out loud.
     """
     for span in spans:
         source = _read_source(root, span.path, cache)
-        if source is None:
-            return (REASON_FILE_MISSING, span, None)
+        if isinstance(source, _Unread):
+            return (source.reason, span, None)
         if span.byte_end > len(source):
             # Slicing past the end of a bytes object silently returns a short
             # result, which would then hash to something that is simply "not the
@@ -715,6 +1005,13 @@ def servable_assertions(
     the failing citation written to `staleness_log`. Detection and demotion are the
     same operation on purpose. Splitting them would leave a window in which the
     store knows a claim is wrong and is still willing to hand it to the next caller.
+
+    A citation that could not be READ is withheld from the result and NOT expired --
+    see `_read_source`. Withheld rather than served-and-flagged, because this function
+    returns bare `Assertion` rows and has nowhere to put a flag: everything in the
+    returned list has, by this function's own contract, just been re-verified, and an
+    unchecked claim in that list is indistinguishable from a checked one. "We could
+    not look" must never leave here wearing the shape of "we looked and it is fine".
     """
     root = _repo_root(conn, repo_root)
     where = ["status = ?"]
@@ -726,7 +1023,7 @@ def servable_assertions(
         where.append("kind = ?")
         params.append(kind)
 
-    cache: dict[str, bytes | None] = {}
+    cache: dict[str, bytes | _Unread] = {}
     servable: list[Assertion] = []
     for assertion in _load_assertions(conn, " AND ".join(where), params):
         if not assertion.spans:
@@ -741,6 +1038,11 @@ def servable_assertions(
             servable.append(assertion)
             continue
         reason, span, observed = failure
+        if reason == REASON_UNREADABLE:
+            # Withheld, not expired, and no log row: nothing was established about
+            # this claim, so there is nothing to record and nothing to change. It
+            # returns of its own accord on the next call that can read the file.
+            continue
         mark_stale(
             conn,
             assertion.id,
@@ -756,7 +1058,11 @@ def is_servable(
     conn: sqlite3.Connection, assertion_id: int, repo_root: db.StrPath | None = None
 ) -> bool:
     """Whether one assertion may be served, with the same verification and the same
-    expiry side effect as `servable_assertions`."""
+    expiry side effect as `servable_assertions`.
+
+    A `False` here does not on its own mean the claim expired: an unreadable citation
+    is `False` too, and leaves the status untouched. The boolean answers "may this be
+    served right now", which is the question the caller asked."""
     root = _repo_root(conn, repo_root)
     found = _load_assertions(conn, "id = ?", (assertion_id,))
     if not found:
@@ -771,6 +1077,9 @@ def is_servable(
     if failure is None:
         return True
     reason, span, observed = failure
+    if reason == REASON_UNREADABLE:
+        # Not servable, and not expired. See `servable_assertions`.
+        return False
     mark_stale(
         conn,
         assertion.id,

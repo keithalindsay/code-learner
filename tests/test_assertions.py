@@ -6,7 +6,10 @@ that survives removing the behaviour it names is not a test.
 """
 from __future__ import annotations
 
+import contextlib
 import dataclasses
+import inspect
+import os
 import sqlite3
 
 import pytest
@@ -597,3 +600,384 @@ def test_the_assertion_tables_exist_in_a_fresh_index(tmp_path):
         r["name"] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
     }
     assert {"assertions", "evidence_spans", "verdicts", "staleness_log"} <= names
+
+
+# --------------------------------------------------------------------------------
+# WP10: "we could not look" is not "the evidence changed".
+#
+# Every test below is written so that reverting the disposition split -- catching
+# every OSError back into one `file_missing` expiry -- turns it red. The rule they
+# name is that a failure of THIS PROCESS must never be recorded as a finding about
+# the REPOSITORY, because the recording is irreversible and the failure is not.
+# --------------------------------------------------------------------------------
+
+# `chmod 000` denies nobody when the reader is root, so every test that leans on it
+# would pass for the wrong reason in a container that runs as uid 0 -- and would go on
+# passing after the behaviour it names was deleted. Skipped rather than xfailed: this
+# is a property of the test environment, not a known defect.
+skip_if_root = pytest.mark.skipif(
+    os.geteuid() == 0, reason="chmod 000 does not deny the superuser, so this proves nothing"
+)
+
+
+@contextlib.contextmanager
+def _mode(path, mode):
+    """Set a file's mode for the block, and put it back even if the block raises.
+
+    A test that leaves a repo file at 000 poisons every test after it in ways that
+    look like unrelated failures, and a bare try/finally per test is the kind of thing
+    that gets omitted on the fifth copy.
+    """
+    original = path.stat().st_mode
+    path.chmod(mode)
+    try:
+        yield
+    finally:
+        path.chmod(original)
+
+
+@skip_if_root
+def test_an_unreadable_file_withholds_the_claim_without_expiring_it(repo):
+    """The defect, end to end. `chmod 000` used to expire every claim citing the file,
+    log `file_missing` for a file that was sitting right there, and leave no way back:
+    nothing in the store ever moved an assertion towards `active`, so `chmod 644`
+    returned nothing. Withholding is right; withholding permanently, on evidence that
+    never moved, is data loss with a reassuring log line.
+
+    Deleting the `FileNotFoundError`/`OSError` split in `_read_source` turns this red
+    on the last assertion, which is the one that matters."""
+    root, conn = repo
+    aid = _admit(conn, [_acquire_span(root)])
+    assert [a.id for a in store.servable_assertions(conn)] == [aid]
+
+    with _mode(root / "leases.py", 0o000):
+        # Withheld: the store cannot check it, so it will not serve it.
+        assert store.servable_assertions(conn) == []
+        assert not store.is_servable(conn, aid)
+        # And NOT expired. The status is untouched and nothing was logged, because
+        # nothing was established.
+        row = conn.execute("SELECT status FROM assertions WHERE id=?", (aid,)).fetchone()
+        assert row["status"] == store.STATUS_ACTIVE
+        assert store.staleness_events(conn, aid) == []
+
+    # The whole point: no operator action, no reinstate call, no SQL. The next read
+    # that can open the file serves the claim again.
+    assert [a.id for a in store.servable_assertions(conn)] == [aid]
+    assert store.is_servable(conn, aid)
+
+
+@skip_if_root
+def test_an_unreadable_parent_directory_is_also_withheld_not_expired(repo):
+    """The same rule one level up, and the one a moved or unmounted checkout hits.
+
+    `stat()` on the file itself fails with EACCES when the directory above it is
+    unsearchable -- the file is untouched and the path is intact, and the old code
+    called that `file_missing` and expired on it."""
+    root, conn = repo
+    aid = _admit(conn, [_acquire_span(root)])
+    store.servable_assertions(conn)
+
+    with _mode(root, 0o000):
+        assert store.servable_assertions(conn) == []
+        assert store.assertions_with_status(conn, store.STATUS_STALE) == []
+
+    assert [a.id for a in store.servable_assertions(conn)] == [aid]
+
+
+def test_a_directory_where_a_cited_file_was_is_withheld_not_expired(repo):
+    """Not-a-regular-file is the other half of the split, and it needs no permissions.
+
+    A directory (or a FIFO, or a device node) at a cited path is not an absence:
+    something is there, this reader cannot take bytes from it, and putting the file
+    back must be enough. Expiring here would mean a mount point appearing over a
+    vendored package destroys every claim beneath it."""
+    root, conn = repo
+    aid = _admit(conn, [_acquire_span(root)])
+    store.servable_assertions(conn)
+
+    (root / "leases.py").unlink()
+    (root / "leases.py").mkdir()
+    assert store.servable_assertions(conn) == []
+    assert store.assertions_with_status(conn, store.STATUS_STALE) == []
+    assert store.staleness_events(conn, aid) == []
+
+    (root / "leases.py").rmdir()
+    (root / "leases.py").write_text(SOURCE)
+    assert [a.id for a in store.servable_assertions(conn)] == [aid]
+
+
+def test_a_genuinely_deleted_file_still_expires(repo):
+    """The control, and the reason the split is a split rather than a retreat.
+
+    Real absence is still terminal and still logged as `file_missing`. A change that
+    made everything non-terminal would pass every test above and would have removed
+    the store's only mechanism for noticing a rename nothing followed."""
+    root, conn = repo
+    aid = _admit(conn, [_acquire_span(root)])
+    (root / "leases.py").unlink()
+
+    assert store.servable_assertions(conn) == []
+    assert [a.id for a in store.assertions_with_status(conn, store.STATUS_STALE)] == [aid]
+    assert store.staleness_events(conn, aid)[0]["reason"] == store.REASON_FILE_MISSING
+
+
+def test_a_path_whose_parent_is_a_file_is_a_real_absence(repo):
+    """`NotADirectoryError`, the second terminal case. `pkg/mod.py/inner.py` cannot
+    ever name a file, so it is an absence rather than a read this process fumbled --
+    and it must not be parked in the recoverable bucket where nothing ever revisits
+    it."""
+    root, conn = repo
+    (root / "pkg.py").write_text(SOURCE)
+    span = store.span_for(root, "pkg.py", 0, ACQUIRE_END)
+    span = dataclasses.replace(span, path="pkg.py/inner.py")
+    aid = _admit(conn, [span], verify=False)
+
+    assert store.servable_assertions(conn) == []
+    assert store.staleness_events(conn, aid)[0]["reason"] == store.REASON_FILE_MISSING
+
+
+@skip_if_root
+def test_admission_refuses_an_unreadable_citation_as_unverifiable_not_stale(repo):
+    """The door tells the two apart too, and with the right word.
+
+    `EvidenceStale` means the bytes disagreed with the citation. Nothing disagreed
+    here: nothing was read. Raising `EvidenceStale` would tell a generator its claim
+    was wrong about the code and send it off to re-derive a claim that was fine, when
+    the repair is to fix the filesystem and submit the identical claim again."""
+    root, conn = repo
+    span = _acquire_span(root)
+
+    with _mode(root / "leases.py", 0o000):
+        with pytest.raises(store.EvidenceUnverifiable, match="could not be read"):
+            _admit(conn, [span])
+
+    assert conn.execute("SELECT count(*) c FROM assertions").fetchone()["c"] == 0
+
+
+# --------------------------------------------------------------------------------
+# reinstate: the only way back, and it is the evidence that decides.
+# --------------------------------------------------------------------------------
+
+def test_reinstate_restores_a_stale_claim_when_every_citation_matches_again(repo):
+    """The counterweight to a store with one direction of travel.
+
+    Claims expired before the disposition split -- and claims expired by a revert that
+    really did restore the bytes -- have to have a route back that is not hand-edited
+    SQL. Deleting the `_TOUCH_STATUS` call leaves this red."""
+    root, conn = repo
+    aid = _admit(conn, [_acquire_span(root), _release_span(root)])
+    (root / "leases.py").write_text(SOURCE.replace("return True", "return NotImplemented"))
+    assert store.servable_assertions(conn) == []
+
+    (root / "leases.py").write_text(SOURCE)
+    assert store.reinstate(conn, aid) is True
+    assert [a.id for a in store.servable_assertions(conn)] == [aid]
+    # The expiry stays in the log. It happened, and a record that is edited to match
+    # the present is not a record.
+    assert [e["reason"] for e in store.staleness_events(conn, aid)] == [
+        store.REASON_HASH_MISMATCH
+    ]
+
+
+def test_reinstate_refuses_unless_every_cited_span_matches_exactly(repo):
+    """Exact match of ALL of them, not the first, and not approximately.
+
+    A claim resting on two spans is a claim about both, so restoring one of them
+    restores nothing. This is the same first-failure verifier the serve path uses --
+    a second implementation of "does the evidence hold" is a second answer waiting to
+    differ from the first, and the direction it would differ in here is promotion."""
+    root, conn = repo
+    aid = _admit(conn, [_acquire_span(root), _release_span(root)])
+    (root / "leases.py").write_text(
+        SOURCE.replace("return True", "return NotImplemented").replace(
+            "return False", "return None"
+        )
+    )
+    assert store.servable_assertions(conn) == []
+
+    # Only the first cited span is back.
+    partial = SOURCE.replace("return False", "return None")
+    (root / "leases.py").write_text(partial)
+    assert store.reinstate(conn, aid) is False
+    assert [a.id for a in store.assertions_with_status(conn, store.STATUS_STALE)] == [aid]
+
+    (root / "leases.py").write_text(SOURCE)
+    assert store.reinstate(conn, aid) is True
+
+
+def test_reinstate_refuses_a_rejected_claim(repo):
+    """A refuted claim is not an expired one, and the bytes were never the dispute.
+
+    A judge read this claim against evidence that was correct at the time and found it
+    unsupported. Re-hashing that evidence cannot overturn the verdict -- and if it
+    could, a `git checkout` would be able to. The promoted row would then be
+    indistinguishable from one that was never refuted, because `verdicts` is a
+    separate table nothing on the serve path reads.
+
+    Raising rather than returning False, because False is this function's word for
+    "the evidence still does not match", which is routine and unalarming, and asking
+    to revive a refuted claim is neither."""
+    root, conn = repo
+    aid = _admit(conn, [_acquire_span(root)])
+    store.record_verdict(conn, aid, "judge/v1", store.VERDICT_REFUTED, "not supported")
+    assert conn.execute(
+        "SELECT status FROM assertions WHERE id=?", (aid,)
+    ).fetchone()["status"] == store.STATUS_REJECTED
+
+    # The evidence is untouched and hashes perfectly. That is exactly the situation in
+    # which a hash-driven promotion would be wrong.
+    with pytest.raises(store.NotReinstatable, match="refuted claim is not an expired one"):
+        store.reinstate(conn, aid)
+    assert conn.execute(
+        "SELECT status FROM assertions WHERE id=?", (aid,)
+    ).fetchone()["status"] == store.STATUS_REJECTED
+
+
+def test_reinstate_will_not_promote_a_claim_that_lost_its_evidence(repo):
+    """The vacuous-truth guard, on the path that WRITES `active`.
+
+    "Every cited span matches" is trivially true of no spans. The serve path already
+    refuses to be fooled by that; this path is worse if it is, because it does not
+    merely serve the claim, it restores it to the set everything else trusts."""
+    root, conn = repo
+    aid = _admit(conn, [_acquire_span(root)])
+    (root / "leases.py").unlink()
+    store.servable_assertions(conn)
+    conn.execute("DELETE FROM evidence_spans WHERE assertion_id=?", (aid,))
+
+    assert store.reinstate(conn, aid) is False
+    assert [a.id for a in store.assertions_with_status(conn, store.STATUS_STALE)] == [aid]
+
+
+@skip_if_root
+def test_reinstate_will_not_promote_a_claim_it_cannot_read(repo):
+    """"We could not check" is not grounds for promotion any more than for expiry.
+
+    The symmetry is the point. The same unreadable file that must not expire a claim
+    must not restore one either -- both would be a status written off a check that
+    did not happen, and this direction is the more dangerous of the two because it
+    ends with the claim being served."""
+    root, conn = repo
+    aid = _admit(conn, [_acquire_span(root)])
+    (root / "leases.py").write_text(SOURCE.replace("return True", "return NotImplemented"))
+    assert store.servable_assertions(conn) == []
+
+    (root / "leases.py").write_text(SOURCE)
+    with _mode(root / "leases.py", 0o000):
+        assert store.reinstate(conn, aid) is False
+        assert [a.id for a in store.assertions_with_status(conn, store.STATUS_STALE)] == [aid]
+
+    assert store.reinstate(conn, aid) is True
+
+
+def test_reinstate_is_a_no_op_on_a_claim_that_is_already_active(repo):
+    """Not an error. Idempotence in the same shape `mark_stale` already has: False
+    means this call performed no transition, and a caller sweeping a list of ids
+    should not have to know which of them somebody else already fixed."""
+    root, conn = repo
+    aid = _admit(conn, [_acquire_span(root)])
+    assert store.reinstate(conn, aid) is False
+    assert [a.id for a in store.servable_assertions(conn)] == [aid]
+
+
+def test_reinstate_has_no_way_to_promote_a_claim_without_re_reading_it(repo):
+    """The absence of an override is a feature, and this is the test that names it.
+
+    A `force=` or `assume_fresh=` parameter would be a cached freshness verdict
+    entered by hand -- the single failure the whole tier is built to refuse, and a
+    worse one than a cache, because it would carry a human's authority and no
+    timestamp. Adding such a parameter later must break this test on purpose."""
+    root, conn = repo
+    aid = _admit(conn, [_acquire_span(root)])
+    (root / "leases.py").unlink()
+    store.servable_assertions(conn)
+
+    accepted = set(inspect.signature(store.reinstate).parameters)
+    assert accepted == {"conn", "assertion_id", "repo_root"}
+    assert store.reinstate(conn, aid) is False
+
+
+def test_reinstate_on_an_unknown_id_is_a_caller_error(repo):
+    _root, conn = repo
+    with pytest.raises(KeyError):
+        store.reinstate(conn, 4242)
+
+
+def test_a_citation_that_leaves_the_repository_is_refused_at_the_door(repo, tmp_path):
+    """REGRESSION, found by running the adversarial corpus against BOTH doors.
+
+    `path_escapes_repo` lived only in `server.app._verify_span`. So the MCP tool
+    refused this attack on every one of 12,803 generated instances, and
+    `codelearner learn` -- plus every library caller -- admitted it. Reproduced before
+    the fix: a claim citing `../outside_secret.py` with that file's real hash was
+    stored `active` and reported `servable`.
+
+    It is the worst shape this store can hold precisely because nothing downstream
+    looks wrong. The bytes exist, the hash is correct, and it re-verifies on every
+    serve, so `refresh_staleness` reports it fresh for as long as the file is
+    untouched. The only thing wrong with it is that a reader of THIS repository
+    cannot open what it cites -- which no check after admission can see."""
+    root, conn = repo
+    outside = tmp_path / "outside_secret.py"
+    outside.write_text('SECRET = "hunter2"\n')
+    raw = outside.read_bytes()
+
+    escaping = store.EvidenceSpan(
+        path="../outside_secret.py",
+        line_start=1,
+        line_end=1,
+        byte_start=0,
+        byte_end=len(raw),
+        content_hash=content_hash(raw),
+    )
+    with pytest.raises(store.SpanEscapesRepo):
+        store.write_assertion(
+            conn,
+            subject_qualname="leases.acquire",
+            kind="purpose",
+            claim="reads the deployment secret",
+            spans=[escaping],
+            verify=False,
+        )
+    assert conn.execute("SELECT count(*) c FROM assertions").fetchone()["c"] == 0
+    assert conn.execute("SELECT count(*) c FROM evidence_spans").fetchone()["c"] == 0
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/etc/passwd",
+        "../outside.py",
+        "pkg/../../outside.py",
+        "a/b/../../../outside.py",
+        "with\x00nul.py",
+        "",
+    ],
+    ids=["absolute", "leading-dotdot", "buried-dotdot", "deep-dotdot", "nul", "empty"],
+)
+def test_every_shape_that_cannot_name_a_file_in_the_repo_is_refused(repo, path):
+    """`..` is rejected wherever it appears, not only in the lead.
+
+    `pkg/../../outside.py` escapes while never starting with one, and normalising
+    first to find out would mean resolving a path this check deliberately does not
+    touch the disk to resolve. A repo-relative citation has no legitimate reason to
+    carry one in any position -- every span this package builds comes from
+    `span_for_symbol`, whose paths are already normalised against the root."""
+    _root, conn = repo
+    span = store.EvidenceSpan(
+        path=path,
+        line_start=1,
+        line_end=1,
+        byte_start=0,
+        byte_end=4,
+        content_hash="0" * 64,
+    )
+    with pytest.raises(store.SpanEscapesRepo):
+        store.write_assertion(
+            conn,
+            subject_qualname="leases.acquire",
+            kind="purpose",
+            claim="a claim",
+            spans=[span],
+            verify=False,
+        )

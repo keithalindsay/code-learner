@@ -18,6 +18,7 @@ import sqlite3
 import sys
 from pathlib import Path
 
+from .. import db
 from ..index import DEFAULT_MODEL, Embedder
 from .commands import (
     CliError,
@@ -69,7 +70,28 @@ def build_parser() -> argparse.ArgumentParser:
     p_index.add_argument(
         "--force",
         action="store_true",
-        help="delete and rebuild an existing index (discards its embeddings)",
+        help="delete and rebuild an existing index. Always discards its embeddings; "
+        "if it holds a tier-2 store (assertions, verdicts, staleness events) the "
+        "rebuild refuses and names the counts, because only the embeddings are "
+        "re-derivable -- pick --carry-assertions or --discard-assertions",
+    )
+    # Mutually exclusive because the two answers to "what happens to the store" are
+    # opposites, and a command line asserting both is one whose author believed
+    # something untrue about at least one of them.
+    tier2 = p_index.add_mutually_exclusive_group()
+    tier2.add_argument(
+        "--carry-assertions",
+        action="store_true",
+        help="with --force: carry the tier-2 store across the rebuild. Subjects are "
+        "re-resolved by qualname, a claim whose subject is gone keeps a NULL link, "
+        "and a claim whose cited bytes moved comes back stale with a log row",
+    )
+    tier2.add_argument(
+        "--discard-assertions",
+        action="store_true",
+        help="with --force: destroy the tier-2 store along with the index. "
+        "Irreversible -- verdicts and the rejected set cannot be re-derived from "
+        "source the way embeddings can",
     )
     p_index.add_argument(
         "--embed",
@@ -190,6 +212,15 @@ def main(argv: list[str] | None = None, embedder_factory: EmbedderFactory | None
     try:
         return int(args.func(args, factory))
     except CliError as exc:
+        print(f"codelearner: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+    except (db.SchemaVersionError, db.RepoRootMismatchError) as exc:
+        # `open_index` and `cmd_index` both turn these into a `CliError` with a
+        # remedy attached, and this clause exists for the paths that do not go
+        # through either -- a library call reached from a command, a connection
+        # opened deeper in. They are `RuntimeError` subclasses, so without a clause
+        # of their own they land in Python's default handler as a traceback, which
+        # is the one thing this function promises never to print.
         print(f"codelearner: {exc}", file=sys.stderr)
         return EXIT_ERROR
     except (OSError, sqlite3.Error) as exc:

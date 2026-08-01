@@ -123,14 +123,18 @@ def test_stale_read_file_refuses_a_fifo_instead_of_blocking_the_serve_path(repo)
     catch and no log line to find -- on the MCP path that is the entire server, which
     has no second thread to notice. It is treated as unreadable, which is what it is.
 
-    What this test does NOT assert is that the claim's fate is right. None here means
-    `file_missing`, which expires the claim permanently and irreversibly, and a FIFO
-    is not an absence. That is the audit's "transient read failures permanently expire
-    claims" finding and it is WP10's to fix; conflating it with this guard would put
-    two different repairs in one place.
+    The claim's FATE was left open when this guard landed: the return was a bare None,
+    which meant `file_missing` and expired the claim permanently and irreversibly, and
+    a FIFO is not an absence. WP10 has since split the disposition, so the guard now
+    returns `_UNREADABLE` -- the claim is withheld for this call and its status is left
+    alone, and putting a regular file back restores it. This test asserts the guard
+    (it returns rather than blocking) and now also asserts the disposition, because
+    the two are no longer separable: returning the wrong one is how the block was
+    "handled" into data loss.
     """
     _fifo(repo)
-    assert _completes("stale._read_file", lambda: stale._read_file(repo, "leases.py")) is None
+    got = _completes("stale._read_file", lambda: stale._read_file(repo, "leases.py"))
+    assert got is stale._UNREADABLE
 
 
 def test_stale_read_file_still_reads_an_ordinary_file(repo):

@@ -13,6 +13,7 @@ just as well.
 from __future__ import annotations
 
 import json
+import sqlite3
 import subprocess
 import sys
 import tomllib
@@ -20,6 +21,8 @@ from pathlib import Path
 
 import pytest
 
+from codelearner import db
+from codelearner.assertions import store
 from codelearner.cli import build_parser, main
 from codelearner.cli.commands import INDEX_RELPATH, resolve_index_path
 from codelearner.cli.render import facts_only, tier_of
@@ -97,14 +100,16 @@ def _mkrepo(root: Path, files: dict[str, str] = REPO_FILES) -> Path:
     return root
 
 
-def _indexed(tmp_path: Path, capsys, embed: bool = False) -> tuple[Path, Path]:
+def _indexed(
+    tmp_path: Path, capsys, embed: bool = False, files: dict[str, str] = REPO_FILES
+) -> tuple[Path, Path]:
     """A repo with an index, returned as (repo, index_path).
 
     Drains capsys on the way out. Otherwise the indexer's own report is still in
     the buffer when the test under examination reads it, and every `--json`
     assertion tries to parse a table with a JSON document stapled to the end.
     """
-    repo = _mkrepo(tmp_path / "repo")
+    repo = _mkrepo(tmp_path / "repo", files)
     argv = ["index", str(repo)]
     if embed:
         argv += ["--embed", "--model", "fake/v1"]
@@ -177,6 +182,424 @@ def test_force_rebuilds_an_existing_index(tmp_path, capsys):
     assert main(["index", str(repo), "--force"], embedder_factory=fake_factory) == 0
     assert index_path.exists()
     assert index_path.stat().st_mtime_ns != before
+
+
+# ---------------------------------------------------------------------------
+# --force and the tier-2 store
+# ---------------------------------------------------------------------------
+#
+# `--force` used to unlink the DB file and call it "discards its embeddings". Every
+# test in this section names something that was destroyed by that sentence and is
+# not re-derivable from source: a verdict, a rejection, an expiry event, the claim
+# itself. The schema's `ON DELETE SET NULL` on `subject_symbol_id` was written for
+# exactly this moment and had never once executed, because nothing deleted a symbol
+# row -- the whole file went instead.
+
+
+def _git_add(repo: Path) -> None:
+    """Re-stage the repo, because `iter_python_files` asks git what is tracked."""
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)  # noqa: S603, S607
+
+
+def _admit(
+    index_path: Path,
+    repo: Path,
+    subject: str,
+    claim: str,
+    *,
+    cite: str | None = None,
+) -> int:
+    """Admit one claim through the real gate. Returns its id.
+
+    `cite` defaults to the subject; passing a different qualname is how a test
+    separates "the subject vanished" from "the evidence moved", which the carry path
+    has to answer differently.
+    """
+    conn = db.connect(index_path)
+    try:
+        subject_row = conn.execute(
+            "SELECT id FROM symbols WHERE qualname = ?", (subject,)
+        ).fetchone()
+        assert subject_row is not None, f"fixture has no symbol {subject!r}"
+        cited = conn.execute(
+            "SELECT f.path, s.byte_start, s.byte_end FROM symbols s "
+            "JOIN files f ON f.id = s.file_id WHERE s.qualname = ?",
+            (cite or subject,),
+        ).fetchone()
+        assert cited is not None, f"fixture has no symbol {cite!r}"
+        span = store.span_for(repo, cited["path"], cited["byte_start"], cited["byte_end"])
+        return store.write_assertion(
+            conn,
+            subject_qualname=subject,
+            kind="purpose",
+            claim=claim,
+            spans=[span],
+            subject_symbol_id=subject_row["id"],
+            generator="test-agent/v1",
+            confidence=0.7,
+            repo_root=repo,
+        )
+    finally:
+        conn.close()
+
+
+def _rows(index_path: Path, sql: str, params: tuple = ()) -> list[sqlite3.Row]:
+    conn = db.connect(index_path, check_schema=False)
+    try:
+        return list(conn.execute(sql, params))
+    finally:
+        conn.close()
+
+
+def test_force_refuses_a_non_empty_tier_2_store_and_names_the_counts(tmp_path, capsys):
+    """The counts are the argument. "Discards its embeddings" is true and beside the
+    point -- embeddings are minutes of GPU time, and a verdict is a judgement that was
+    made once and cannot be made again from source."""
+    repo, index_path = _indexed(tmp_path, capsys)
+    first = _admit(index_path, repo, "core.frobnicate_widgets", "frobnicates widgets")
+    second = _admit(index_path, repo, "core._plumbing", "returns the answer")
+    third = _admit(index_path, repo, "core", "the module")
+    conn = db.connect(index_path)
+    store.record_verdict(conn, second, "judge/v1", "refuted", "it does not")
+    store.mark_stale(conn, third, store.REASON_HASH_MISMATCH)
+    conn.close()
+
+    assert main(["index", str(repo), "--force"], embedder_factory=fake_factory) == 1
+    err = capsys.readouterr().err
+    assert "3 assertions" in err
+    assert "1 verdict" in err
+    assert "1 staleness event" in err
+    assert "--carry-assertions" in err
+    assert "--discard-assertions" in err
+    assert "Traceback" not in err
+    # Refused means untouched, not partially applied.
+    assert [r["id"] for r in _rows(index_path, "SELECT id FROM assertions ORDER BY id")] == [
+        first,
+        second,
+        third,
+    ]
+
+
+def test_carry_assertions_preserves_the_store_and_re_resolves_its_subjects(tmp_path, capsys):
+    """`subject_qualname` is `NOT NULL` precisely so a rebuild can re-find the symbol
+    after every row id in the file has been replaced. A new file shifts those ids, so
+    a carry that merely copied the old integer would come back pointing at the wrong
+    symbol -- or at a row that no longer exists."""
+    repo, index_path = _indexed(tmp_path, capsys)
+    admitted = _admit(index_path, repo, "core.frobnicate_widgets", "frobnicates widgets")
+    before = _rows(index_path, "SELECT * FROM assertions WHERE id = ?", (admitted,))[0]
+
+    # Sorts before core.py in `git ls-files`, so every symbol id after it moves.
+    (repo / "aardvark.py").write_text("def dig():\n    return 1\n\n\ndef burrow():\n    return 2\n")
+    _git_add(repo)
+    assert main(
+        ["index", str(repo), "--force", "--carry-assertions", "--json"],
+        embedder_factory=fake_factory,
+    ) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    after = _rows(index_path, "SELECT * FROM assertions ORDER BY id")
+    assert [r["id"] for r in after] == [admitted]
+    row = after[0]
+    assert row["claim"] == before["claim"]
+    assert row["status"] == "active"
+    assert row["kind"] == before["kind"]
+    assert row["generator"] == before["generator"]
+    assert row["confidence"] == before["confidence"]
+    # A rebuilt `created_at` would turn "we served that for three months" into "we
+    # wrote it today".
+    assert row["created_at"] == before["created_at"]
+
+    symbol = _rows(
+        index_path, "SELECT id FROM symbols WHERE qualname = 'core.frobnicate_widgets'"
+    )[0]
+    assert symbol["id"] != before["subject_symbol_id"], "fixture failed to move the ids"
+    assert row["subject_symbol_id"] == symbol["id"]
+
+    spans = _rows(index_path, "SELECT * FROM evidence_spans WHERE assertion_id = ? ORDER BY id", (admitted,))
+    assert len(spans) == 1
+    assert spans[0]["path"] == "core.py"
+    assert payload["tier2"]["assertions"] == 1
+    assert payload["tier2"]["subjects_resolved"] == 1
+    assert payload["tier2"]["expired_by_rebuild"] == 0
+
+
+def test_a_carried_claim_whose_evidence_moved_comes_back_stale_with_a_log_row(tmp_path, capsys):
+    """The honest outcome, and the one the staleness engine exists for. Deleting the
+    claim would destroy the record of what was believed and why it stopped being
+    true; keeping it active would serve a claim about bytes that are gone."""
+    repo, index_path = _indexed(tmp_path, capsys)
+    admitted = _admit(index_path, repo, "core.frobnicate_widgets", "frobnicates widgets")
+
+    (repo / "core.py").write_text(
+        REPO_FILES["core.py"].replace("every widget on the tray", "nothing whatsoever")
+    )
+    _git_add(repo)
+    assert main(
+        ["index", str(repo), "--force", "--carry-assertions", "--json"],
+        embedder_factory=fake_factory,
+    ) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    row = _rows(index_path, "SELECT * FROM assertions ORDER BY id")[0]
+    assert row["id"] == admitted
+    assert row["status"] == "stale"
+    assert row["claim"] == "frobnicates widgets"
+    events = _rows(index_path, "SELECT * FROM staleness_log WHERE assertion_id = ? ORDER BY id", (admitted,))
+    assert [e["reason"] for e in events] == ["hash_mismatch"]
+    assert events[0]["expected_hash"] and events[0]["observed_hash"]
+    assert payload["tier2"]["expired_by_rebuild"] == 1
+
+
+def test_a_carried_claim_whose_subject_vanished_keeps_a_null_link(tmp_path, capsys):
+    """The case `ON DELETE SET NULL` was written for, finally reachable. The claim
+    outlives the symbol it was about: the name is durable, the id was only ever a
+    convenience, and dropping the row would delete evidence of what the repository
+    used to contain."""
+    repo, index_path = _indexed(
+        tmp_path,
+        capsys,
+        files={
+            **REPO_FILES,
+            "helper.py": 'def only_here():\n    """Doomed."""\n    return 1\n',
+        },
+    )
+    # Subject in the file about to disappear, evidence in the file that stays: this
+    # separates "the subject vanished" from "the evidence moved".
+    admitted = _admit(
+        index_path, repo, "helper.only_here", "helps", cite="core.frobnicate_widgets"
+    )
+    (repo / "helper.py").unlink()
+    _git_add(repo)
+
+    assert main(
+        ["index", str(repo), "--force", "--carry-assertions", "--json"],
+        embedder_factory=fake_factory,
+    ) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    row = _rows(index_path, "SELECT * FROM assertions ORDER BY id")[0]
+    assert row["id"] == admitted
+    assert row["subject_qualname"] == "helper.only_here"
+    assert row["subject_symbol_id"] is None
+    # Its evidence never moved, so nothing about it went stale.
+    assert row["status"] == "active"
+    assert payload["tier2"]["subjects_unresolved"] == 1
+    assert payload["tier2"]["subjects_resolved"] == 0
+
+
+def test_verdicts_and_the_rejected_set_survive_a_rebuild(tmp_path, capsys):
+    """The rejected set is the only evidence the gate does anything. A rebuild that
+    took it away would leave the pass rate free to be whatever the last run says."""
+    repo, index_path = _indexed(tmp_path, capsys)
+    good = _admit(index_path, repo, "core.frobnicate_widgets", "frobnicates widgets")
+    bad = _admit(index_path, repo, "core._plumbing", "reticulates splines")
+    conn = db.connect(index_path)
+    store.record_verdict(conn, good, "judge/v1", "supported", "the span says so")
+    store.record_verdict(conn, bad, "judge/v1", "refuted", "it returns 42")
+    conn.close()
+
+    assert main(
+        ["index", str(repo), "--force", "--carry-assertions"], embedder_factory=fake_factory
+    ) == 0
+    capsys.readouterr()
+
+    conn = db.connect(index_path)
+    try:
+        assert [a.id for a in store.assertions_with_status(conn, store.STATUS_REJECTED)] == [bad]
+        assert [a.id for a in store.assertions_with_status(conn, store.STATUS_ACTIVE)] == [good]
+        verdicts = store.verdicts_for(conn, bad)
+        assert [v["verdict"] for v in verdicts] == ["refuted"]
+        assert verdicts[0]["judge"] == "judge/v1"
+        assert verdicts[0]["rationale"] == "it returns 42"
+    finally:
+        conn.close()
+
+
+def test_discard_assertions_is_the_only_way_to_lose_the_store(tmp_path, capsys):
+    """Destruction stays possible and stays deliberate. What changed is that it now
+    has to be typed out."""
+    repo, index_path = _indexed(tmp_path, capsys)
+    _admit(index_path, repo, "core.frobnicate_widgets", "frobnicates widgets")
+
+    assert main(
+        ["index", str(repo), "--force", "--discard-assertions", "--json"],
+        embedder_factory=fake_factory,
+    ) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["tier2"] is None
+    assert _rows(index_path, "SELECT * FROM assertions ORDER BY id") == []
+
+
+def test_carry_and_discard_cannot_both_be_asked_for():
+    """Two opposite answers to one question, so a command line asserting both is one
+    whose author believed something untrue about at least one of them. argparse
+    refuses it as a usage error -- a 2, not the 1 that means the world was wrong."""
+    parser = build_parser()
+    assert parser.parse_args(["index", "r", "--force", "--carry-assertions"]).carry_assertions
+    assert parser.parse_args(["index", "r", "--force", "--discard-assertions"]).discard_assertions
+    with pytest.raises(SystemExit) as excinfo:
+        parser.parse_args(
+            ["index", "r", "--force", "--carry-assertions", "--discard-assertions"]
+        )
+    assert excinfo.value.code == 2
+
+
+def test_a_crash_after_the_delete_leaves_the_store_on_disk_and_recoverable(
+    tmp_path, capsys, monkeypatch
+):
+    """The failure mode the whole package exists for. `index_repo` raising after
+    `_delete_index` used to end with the index gone and the store gone with it -- and
+    an in-memory carry would do exactly the same, because the interpreter is what
+    died. The sidecar outlives the process, and the plain no-flags `index` an operator
+    reaches for next is what puts the store back."""
+    from codelearner.cli import commands
+
+    repo, index_path = _indexed(tmp_path, capsys)
+    admitted = _admit(index_path, repo, "core.frobnicate_widgets", "frobnicates widgets")
+    carry = commands.carry_path(index_path)
+
+    def die(*args, **kwargs):
+        raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr(commands, "index_repo", die)
+    assert main(
+        ["index", str(repo), "--force", "--carry-assertions"], embedder_factory=fake_factory
+    ) == 1
+    capsys.readouterr()
+    assert not index_path.exists(), "the delete is what makes this the interesting case"
+    assert carry.exists(), "the store died with the process"
+
+    monkeypatch.undo()
+    assert main(["index", str(repo), "--json"], embedder_factory=fake_factory) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["tier2"]["recovered"] is True
+    assert payload["tier2"]["assertions"] == 1
+    row = _rows(index_path, "SELECT * FROM assertions ORDER BY id")[0]
+    assert row["id"] == admitted
+    assert row["claim"] == "frobnicates widgets"
+    assert row["subject_symbol_id"] is not None
+    # Removed only once the rows are back, so the window in which a second crash
+    # loses everything does not exist.
+    assert not carry.exists()
+
+
+def test_a_crash_during_the_restore_is_recovered_from_the_sidecar(tmp_path, capsys, monkeypatch):
+    """The other half of the window. The index is back and the store is not, which
+    looks from the outside like a successful rebuild -- so the sidecar is removed
+    only after the restore has committed, and until then it outranks whatever the
+    rebuilt file holds. `index_repo` never writes an assertion, which is what makes
+    the sidecar the superset rather than merely another opinion."""
+    from codelearner.cli import commands
+
+    repo, index_path = _indexed(tmp_path, capsys)
+    admitted = _admit(index_path, repo, "core.frobnicate_widgets", "frobnicates widgets")
+    carry = commands.carry_path(index_path)
+
+    def die(*args, **kwargs):
+        raise sqlite3.OperationalError("killed mid-restore")
+
+    monkeypatch.setattr(commands, "_restore_store", die)
+    assert main(
+        ["index", str(repo), "--force", "--carry-assertions"], embedder_factory=fake_factory
+    ) == 1
+    assert "Traceback" not in capsys.readouterr().err
+    assert index_path.exists()
+    assert carry.exists(), "removed before the rows were back"
+    assert _rows(index_path, "SELECT * FROM assertions ORDER BY id") == []
+
+    monkeypatch.undo()
+    assert main(["index", str(repo), "--force", "--json"], embedder_factory=fake_factory) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["tier2"]["recovered"] is True
+    assert [r["id"] for r in _rows(index_path, "SELECT id FROM assertions ORDER BY id")] == [
+        admitted
+    ]
+    assert not carry.exists()
+
+
+def test_a_carry_file_from_another_repo_is_refused_rather_than_restored(tmp_path, capsys):
+    """A carry file names claims by qualname and by repo-relative path. Restoring one
+    into an index of a different tree would attach real citations to unrelated bytes,
+    and every later verification would report that as an edit nobody made."""
+    from codelearner.cli import commands
+
+    repo, index_path = _indexed(tmp_path, capsys)
+    _admit(index_path, repo, "core.frobnicate_widgets", "frobnicates widgets")
+    dump = commands._dump_store(index_path)
+
+    other = _mkrepo(tmp_path / "other")
+    assert main(["index", str(other)], embedder_factory=fake_factory) == 0
+    capsys.readouterr()
+    other_index = other / INDEX_RELPATH
+    commands._write_carry_file(
+        commands.carry_path(other_index), dump, repo=repo, index_path=index_path
+    )
+
+    assert main(["index", str(other), "--force"], embedder_factory=fake_factory) == 1
+    err = capsys.readouterr().err
+    assert "Traceback" not in err
+    assert str(repo) in err
+    assert commands.carry_path(other_index).exists(), "a refusal must not consume it"
+
+
+# ---------------------------------------------------------------------------
+# a schema stamp this code cannot read -- one line, never a traceback
+# ---------------------------------------------------------------------------
+
+def _stamp_schema(index_path: Path, version: str) -> None:
+    conn = db.connect(index_path, check_schema=False)
+    conn.execute("UPDATE meta SET value = ? WHERE key = 'schema_version'", (version,))
+    conn.close()
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["stats"],
+        ["search", "frobnicate"],
+        ["learn"],
+    ],
+)
+def test_an_index_from_another_schema_is_one_line_not_a_traceback(tmp_path, capsys, argv):
+    """`db.connect` refuses a stale stamp on every READ, which is the point -- and
+    `SchemaVersionError` is a RuntimeError, so catching only `sqlite3.Error` sent the
+    single most predicted failure in this design out as a traceback. The stamp has
+    moved five times."""
+    repo, index_path = _indexed(tmp_path, capsys)
+    _stamp_schema(index_path, "4")
+
+    assert main([*argv, "--repo", str(repo)], embedder_factory=fake_factory) == 1
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.err + captured.out
+    assert "v4" in captured.err
+    assert "--carry-assertions" in captured.err
+
+
+def test_the_remedy_for_a_schema_mismatch_no_longer_costs_the_assertions(tmp_path, capsys):
+    """The two work packages meet here. `--force` is the documented remedy for a
+    stamp this code cannot read, and until the store could survive a rebuild that
+    remedy WAS the data loss -- the upgrade path and the destruction path were the
+    same command. The dump therefore has to read a database whose version check would
+    refuse it, which is why it opens with `check_schema=False`."""
+    repo, index_path = _indexed(tmp_path, capsys)
+    admitted = _admit(index_path, repo, "core.frobnicate_widgets", "frobnicates widgets")
+    _stamp_schema(index_path, "4")
+
+    assert main(["stats", "--repo", str(repo)], embedder_factory=fake_factory) == 1
+    assert "--carry-assertions" in capsys.readouterr().err
+
+    assert main(
+        ["index", str(repo), "--force", "--carry-assertions"], embedder_factory=fake_factory
+    ) == 0
+    capsys.readouterr()
+    assert [r["id"] for r in _rows(index_path, "SELECT id FROM assertions ORDER BY id")] == [
+        admitted
+    ]
+    stamp = _rows(index_path, "SELECT value FROM meta WHERE key = 'schema_version'")[0]
+    assert stamp["value"] == str(db.SCHEMA_VERSION)
+    # And the read that refused a moment ago now answers.
+    assert main(["stats", "--repo", str(repo)], embedder_factory=fake_factory) == 0
 
 
 def test_indexing_a_missing_directory_explains_itself(tmp_path, capsys):

@@ -10,13 +10,16 @@ carrier for exactly that: raised here, printed without a stack by `main`.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import sys
 from collections.abc import Callable
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
 from .. import db
+from ..assertions import store
 from ..index import Embedder, embed_chunks
 from ..ingest import index_repo
 from ..retrieve import load_reranker, search, stored_embed_model
@@ -47,6 +50,17 @@ def open_index(index_path: Path) -> sqlite3.Connection:
     `db.connect` happily creates an empty SQLite file at any path, which is how a
     typo'd path becomes "0 results" instead of "no such index". Checking for the
     file first is the difference between a wrong answer and an error message.
+
+    `SchemaVersionError` is caught here and not only in `cmd_index`, because it is
+    the READ paths that meet it. `db.connect` gained its version check precisely so
+    that a stale index cannot answer a query, and every one of those queries arrives
+    through this function -- so catching only `sqlite3.Error` meant the single most
+    predicted failure in the design (the stamp has moved five times) came out of
+    `stats`, `search`, and `learn` as a traceback, which this module's first
+    sentence promises it never will. `RepoRootMismatchError` rides along: it is
+    raised by `bind_repo_root` rather than by `connect` today, but it is the same
+    class of condition -- a file this code refuses to read -- and a caller that
+    starts binding here would otherwise reintroduce the same traceback.
     """
     if not index_path.exists():
         raise CliError(
@@ -56,6 +70,11 @@ def open_index(index_path: Path) -> sqlite3.Connection:
         )
     try:
         return db.connect(index_path)
+    except (db.SchemaVersionError, db.RepoRootMismatchError) as exc:
+        # The exception's own remedy says "delete the index file and re-index",
+        # which was the honest advice until the tier-2 store could survive a
+        # rebuild. It costs the embeddings now, and nothing else.
+        raise CliError(f"{exc} {REBUILD_ADVICE}") from exc
     except sqlite3.Error as exc:
         raise CliError(f"could not open the index at {index_path}: {exc}") from exc
 
@@ -92,15 +111,419 @@ def _delete_index(index_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# the tier-2 store across a rebuild
+# ---------------------------------------------------------------------------
+#
+# A rebuild replaces `files`, `symbols`, `edges`, and `chunks` wholesale, and every
+# one of those is re-derivable from source in seconds. The four tables below are not
+# re-derivable at all: a verdict is what a judge concluded on one particular day, and
+# the rejected set is the only evidence the gate does anything. Deleting the DB file
+# threw all of it away and called it "discards its embeddings".
+#
+# The `ON DELETE SET NULL` on `assertions.subject_symbol_id` was written for exactly
+# this moment and had never fired, because nothing in the package deletes a `symbols`
+# row -- the file simply went. Carrying the store means the schema's reasoning
+# finally executes: the qualname is durable and is re-resolved against the rebuilt
+# graph, the id link is disposable and comes back NULL when it cannot be re-made.
+
+CARRY_SUFFIX = ".carry"
+
+# Bumped if the column lists below change, so a carry file written by older code is
+# refused loudly instead of being read into the wrong columns.
+CARRY_FORMAT = 1
+
+REBUILD_ADVICE = (
+    "Since --carry-assertions that no longer costs the assertions: rebuild with "
+    "`codelearner index <repo> --force --carry-assertions` and the tier-2 store "
+    "(assertions, verdicts, staleness log) is carried across; only the embeddings "
+    "have to be re-derived."
+)
+
+# The four tables and every column of each, in insert order. Written out rather than
+# read from `PRAGMA table_info`, because a carry file has to be a statement about
+# which columns were preserved: a column added to `schema.sql` and forgotten here
+# should surface as an obviously missing field, not as a silently narrower dump.
+#
+# `span_verifications` is deliberately NOT carried. It is the stat() baseline for the
+# fast path, the schema calls it disposable, and dropping it costs one re-hash per
+# cited span. Carrying it would be worse than useless: a rebuild happens because the
+# repo moved, so a baseline saying "these bytes were fine at this mtime" is the one
+# piece of state most likely to be wrong and most able to authorise skipping the read
+# that would have found out.
+_CARRY_TABLES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "assertions",
+        ("id", "subject_qualname", "subject_symbol_id", "kind", "claim", "status",
+         "generator", "confidence", "created_at", "status_changed_at"),
+    ),
+    (
+        "evidence_spans",
+        ("id", "assertion_id", "path", "line_start", "line_end", "byte_start",
+         "byte_end", "content_hash"),
+    ),
+    ("verdicts", ("id", "assertion_id", "judge", "verdict", "rationale", "created_at")),
+    (
+        "staleness_log",
+        ("id", "assertion_id", "span_id", "reason", "expected_hash", "observed_hash",
+         "detected_at"),
+    ),
+)
+
+# The carry file's own schema carries no types, no CHECK constraints, and no foreign
+# keys. It is a transport, not a second store: a constraint here could refuse rows the
+# real store already holds, and the first time that happened would be halfway through
+# a rebuild with the index already deleted.
+_CARRY_SCHEMA = "\n".join(
+    [f"CREATE TABLE {table} ({', '.join(columns)});" for table, columns in _CARRY_TABLES]
+    + ["CREATE TABLE carry_meta (key TEXT PRIMARY KEY, value TEXT);"]
+)
+
+Dump = dict[str, list[tuple[Any, ...]]]
+
+
+@dataclass(frozen=True)
+class CarryReport:
+    """What survived a rebuild, and in what state."""
+
+    assertions: int
+    evidence_spans: int
+    verdicts: int
+    staleness_events: int
+    subjects_resolved: int
+    subjects_unresolved: int
+    expired_by_rebuild: int
+    recovered: bool = False
+
+
+def carry_path(index_path: Path) -> Path:
+    """Where the store waits while the index it came from does not exist.
+
+    Next to the index rather than in a temp directory, and on disk rather than in a
+    Python list, because the failure this whole mechanism exists for is the process
+    not surviving. `index_repo` raising after `_delete_index` -- a parse error, a full
+    disk, a Ctrl-C, an OOM kill -- used to end with the index gone and the store gone
+    with it. An in-memory dump dies with the interpreter; a sidecar outlives it, and
+    the next `codelearner index` finds it and puts the store back.
+    """
+    return Path(str(index_path) + CARRY_SUFFIX)
+
+
+def _store_counts(conn: sqlite3.Connection) -> dict[str, int]:
+    """Row counts for the four tier-2 tables; 0 for any table this DB lacks.
+
+    A pre-v4 index has none of them, and that is a legitimate thing to find rather
+    than an error: there is simply no store to carry.
+    """
+    counts: dict[str, int] = {}
+    for table, _ in _CARRY_TABLES:
+        try:
+            row = conn.execute(f"SELECT count(*) FROM {table}").fetchone()  # noqa: S608
+        except sqlite3.Error:
+            counts[table] = 0
+            continue
+        counts[table] = 0 if row is None else int(row[0])
+    return counts
+
+
+def _dump_store(index_path: Path) -> Dump:
+    """Read the whole tier-2 store out of an index that is about to be deleted.
+
+    Opened with `check_schema=False` on purpose. `--force` IS the documented remedy
+    for a schema mismatch, so the one moment this function matters most is the moment
+    the version check would refuse -- a v4 index being rebuilt by v5 code holds a
+    perfectly readable assertion store, and refusing to look at it would make the
+    upgrade path the thing that destroys the store.
+
+    Refuses to guess when a table exists, holds rows, and cannot be read with the
+    columns named above. That is a store this code cannot carry, and deleting it
+    quietly on the grounds that the dump failed is the exact behaviour being removed.
+    """
+    conn = db.connect(index_path, check_schema=False)
+    try:
+        counts = _store_counts(conn)
+        dump: Dump = {}
+        for table, columns in _CARRY_TABLES:
+            if counts[table] == 0:
+                dump[table] = []
+                continue
+            try:
+                rows = conn.execute(
+                    f"SELECT {', '.join(columns)} FROM {table} ORDER BY id"  # noqa: S608
+                ).fetchall()
+            except sqlite3.Error as exc:
+                raise CliError(
+                    f"the {table} table in {index_path} holds {counts[table]} row(s) "
+                    f"that this code cannot read ({exc}), so a rebuild would destroy "
+                    "a tier-2 store it is unable to carry across. Remedy: rebuild "
+                    "with a code-learner that understands this file, or re-run with "
+                    "--force --discard-assertions to destroy it deliberately."
+                ) from exc
+            dump[table] = [tuple(row) for row in rows]
+        return dump
+    finally:
+        conn.close()
+
+
+def _dump_totals(dump: Dump) -> dict[str, int]:
+    return {table: len(dump.get(table, [])) for table, _ in _CARRY_TABLES}
+
+
+def _write_carry_file(carry: Path, dump: Dump, *, repo: Path, index_path: Path) -> None:
+    """Publish the dump atomically, so a crash can never leave half a store.
+
+    Written to `<carry>.partial` and renamed into place. `os.replace` is atomic on
+    every platform this runs on, which is what makes the sidecar's presence mean
+    exactly one thing: a complete store is waiting to be restored. A file that could
+    be found half-written would need its own validation pass, and a validation pass
+    that ran on the recovery path is a second place for the store to be lost.
+
+    A second SQLite file rather than JSON: the rows come back with the same types,
+    the same NULLs, and the same integer ids they went in with, without a bespoke
+    encoder standing between the store and its only backup.
+    """
+    partial = Path(str(carry) + ".partial")
+    for suffix in ("", "-wal", "-shm"):
+        candidate = Path(str(partial) + suffix)
+        if candidate.exists():
+            candidate.unlink()
+    out = sqlite3.connect(str(partial))
+    try:
+        out.executescript(_CARRY_SCHEMA)
+        for table, columns in _CARRY_TABLES:
+            placeholders = ",".join("?" * len(columns))
+            out.executemany(
+                f"INSERT INTO {table} ({', '.join(columns)}) "  # noqa: S608
+                f"VALUES ({placeholders})",
+                dump.get(table, []),
+            )
+        out.executemany(
+            "INSERT INTO carry_meta (key, value) VALUES (?,?)",
+            [
+                ("carry_format", str(CARRY_FORMAT)),
+                ("repo_root", str(repo)),
+                ("source_index", str(index_path)),
+            ],
+        )
+        out.commit()
+    finally:
+        out.close()
+    os.replace(partial, carry)
+
+
+def _read_carry_file(carry: Path, *, repo: Path) -> Dump:
+    """Read a waiting store back, refusing anything it cannot vouch for.
+
+    The repo root is checked because a carry file names claims by qualname and by
+    repo-relative path, and restoring one into an index of a different tree would
+    attach real citations to unrelated bytes -- which every later verification would
+    then report as staleness blaming an edit nobody made.
+
+    An unreadable carry file is refused rather than ignored. Ignoring it would let a
+    single corrupt sidecar turn into a silent, permanent loss of the one thing in
+    this index that cannot be re-derived; refusing leaves the file where it is and
+    tells the operator it is there.
+    """
+    try:
+        conn = sqlite3.connect(f"file:{carry}?mode=ro", uri=True)
+    except sqlite3.Error as exc:
+        raise CliError(
+            f"a tier-2 store from an interrupted rebuild is waiting at {carry} but "
+            f"could not be opened ({exc}). Nothing has been deleted. Remedy: move "
+            "that file aside once you accept losing the assertions in it."
+        ) from exc
+    try:
+        try:
+            meta = {
+                str(row[0]): str(row[1])
+                for row in conn.execute("SELECT key, value FROM carry_meta")
+            }
+            dump: Dump = {}
+            for table, columns in _CARRY_TABLES:
+                dump[table] = [
+                    tuple(row)
+                    for row in conn.execute(
+                        f"SELECT {', '.join(columns)} FROM {table} ORDER BY id"  # noqa: S608
+                    )
+                ]
+        except sqlite3.Error as exc:
+            raise CliError(
+                f"the tier-2 store waiting at {carry} could not be read ({exc}). "
+                "Nothing has been deleted. Remedy: move that file aside once you "
+                "accept losing the assertions in it."
+            ) from exc
+    finally:
+        conn.close()
+    if meta.get("carry_format") != str(CARRY_FORMAT):
+        raise CliError(
+            f"the tier-2 store waiting at {carry} is carry format "
+            f"v{meta.get('carry_format') or '(unstamped)'}, and this code writes and "
+            f"reads v{CARRY_FORMAT}. Nothing has been deleted. Remedy: restore it "
+            "with the code-learner that wrote it, or move it aside."
+        )
+    stored_root = meta.get("repo_root")
+    if stored_root is not None and stored_root != str(repo):
+        raise CliError(
+            f"the tier-2 store waiting at {carry} was dumped from an index of "
+            f"{stored_root!r}, and this run is indexing {str(repo)!r}. Its citations "
+            "are paths and qualnames relative to the other tree, so restoring it "
+            "here would bind real claims to unrelated bytes. Nothing has been "
+            "deleted. Remedy: index this repo at its own --index-path, or move that "
+            "file aside."
+        )
+    return dump
+
+
+def _restore_store(conn: sqlite3.Connection, repo: Path, dump: Dump) -> CarryReport:
+    """Put the store back into the rebuilt index, and let the staleness engine judge it.
+
+    **Restored by direct INSERT, deliberately not through `write_assertion`.** That
+    function is the admission gate and enforces six rules, one of which re-verifies
+    every citation against disk. None of them apply here: these claims were already
+    admitted, on evidence that hashed at the time, and this is not a second admission
+    -- it is the same rows surviving a file being replaced underneath them. Sending
+    them back through the door would refuse exactly the ones most worth keeping. A
+    `rejected` claim would be re-admitted as `active` or refused outright; a `stale`
+    one would be refused as `EvidenceStale`, which means the store's record of what
+    went wrong would be destroyed by the machinery that exists to record it; and a
+    claim about a symbol this rebuild no longer parses would be refused as
+    `UnknownSubject` when the schema is explicitly shaped to keep it with a NULL link.
+    Re-verification at admission answers "should this be let in"; these are already
+    in, and the question that remains is the freshness question, which is answered
+    below by the same engine that answers it on every read.
+
+    Ids, statuses, `created_at` and `status_changed_at` are all preserved: an id is
+    what the verdicts and the staleness log point at, and a `created_at` rewritten by
+    a rebuild would turn "we served that claim for three months" into "we wrote it
+    today".
+
+    `subject_symbol_id` is the one field that is NOT preserved. It is re-resolved from
+    `subject_qualname`, which is `NOT NULL` for precisely this reason, and left NULL
+    when the rebuilt graph has no such symbol -- the case the schema's `ON DELETE SET
+    NULL` was written for and which, until now, could never happen because the row was
+    deleted along with the file.
+    """
+    assertion_rows = dump.get("assertions", [])
+    resolved = unresolved = 0
+    prepared: list[tuple[Any, ...]] = []
+    for row in assertion_rows:
+        qualname = row[1]
+        found = conn.execute(
+            "SELECT id FROM symbols WHERE qualname = ?", (qualname,)
+        ).fetchone()
+        if found is None:
+            unresolved += 1
+            symbol_id: int | None = None
+        else:
+            resolved += 1
+            symbol_id = int(found[0])
+        prepared.append((row[0], qualname, symbol_id, *row[3:]))
+
+    before = _scalar(conn, "SELECT count(*) FROM staleness_log")
+    with db.transaction(conn):
+        for table, columns in _CARRY_TABLES:
+            rows = prepared if table == "assertions" else dump.get(table, [])
+            if not rows:
+                continue
+            placeholders = ",".join("?" * len(columns))
+            conn.executemany(
+                f"INSERT INTO {table} ({', '.join(columns)}) "  # noqa: S608
+                f"VALUES ({placeholders})",
+                rows,
+            )
+
+    # The honest outcome for a claim whose evidence moved while the index was being
+    # rebuilt is `stale` with a log row naming the citation that moved -- not a
+    # deletion, and not a silent promotion either. `servable_assertions` is the same
+    # verification the read path runs, called here so that the answer a rebuild gives
+    # and the answer the next query gives cannot differ.
+    store.servable_assertions(conn, repo)
+    expired = _scalar(conn, "SELECT count(*) FROM staleness_log") - before
+
+    totals = _dump_totals(dump)
+    return CarryReport(
+        assertions=totals["assertions"],
+        evidence_spans=totals["evidence_spans"],
+        verdicts=totals["verdicts"],
+        staleness_events=totals["staleness_log"],
+        subjects_resolved=resolved,
+        subjects_unresolved=unresolved,
+        expired_by_rebuild=expired,
+    )
+
+
+def _recover_carry(carry: Path, repo: Path) -> Dump:
+    """Take a waiting store, and say out loud that a previous run did not finish.
+
+    Announced on stderr rather than left to the summary, because the operator's
+    mental model at this point is "my index is gone"; a run that silently produced a
+    correct index would leave them believing the store went with it.
+    """
+    dump = _read_carry_file(carry, repo=repo)
+    print(
+        f"codelearner: recovering the tier-2 store left by an interrupted rebuild "
+        f"({carry})",
+        file=sys.stderr,
+    )
+    return dump
+
+
+def _plural(count: int, noun: str) -> str:
+    """`1 verdict`, `2 verdicts`.
+
+    Worth four lines because of where the string is read: by somebody deciding
+    whether to destroy the one part of this index that cannot be rebuilt. "1
+    verdicts" reads as generated boilerplate at the exact moment the number needs to
+    read as a fact about their data.
+    """
+    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
+
+
+def _rebuild_refusal(index_path: Path, totals: dict[str, int]) -> CliError:
+    """The refusal that used to be a deletion, with the real numbers in it.
+
+    "Discards its embeddings" was true and beside the point. Embeddings are minutes
+    of GPU time; a verdict is a judgement that was made once, and the rejected set is
+    the only evidence the gate does anything at all.
+    """
+    named = (
+        f"{_plural(totals['assertions'], 'assertion')}, "
+        f"{_plural(totals['verdicts'], 'verdict')}, "
+        f"{_plural(totals['staleness_log'], 'staleness event')}"
+    )
+    return CliError(
+        f"an index already exists at {index_path}, and it holds a tier-2 store: "
+        f"{named}. Rebuilding from scratch discards {named} and any embeddings -- "
+        "and only the embeddings are re-derivable. Re-run with --force "
+        "--carry-assertions to rebuild and carry the store across (a claim whose "
+        "evidence moved comes back stale, with a log row, rather than vanishing), or "
+        "--force --discard-assertions to destroy it deliberately."
+    )
+
+
+# ---------------------------------------------------------------------------
 # index
 # ---------------------------------------------------------------------------
 
 def cmd_index(args: Any, factory: EmbedderFactory) -> int:
+    """Build an index, and carry the one part of it that cannot be rebuilt.
+
+    The order of operations is the whole point and is not negotiable: dump the
+    tier-2 store to a sidecar, THEN delete the index, THEN rebuild, THEN restore and
+    only then remove the sidecar. Every failure in the middle leaves the store on
+    disk with a file whose presence means "an interrupted rebuild owes this index a
+    store", which the next run of this command finds and honours -- including the
+    plain, no-flags run the operator is most likely to reach for after a crash.
+    """
     repo = args.repo.expanduser().resolve()
     if not repo.is_dir():
         raise CliError(f"{repo} is not a directory, so there is nothing to index.")
 
     index_path = resolve_index_path(repo, args.index_path)
+    carry = carry_path(index_path)
+    discarding = bool(getattr(args, "discard_assertions", False))
+    carried: Dump | None = None
+    recovered = False
+
     if index_path.exists():
         if not args.force:
             raise CliError(
@@ -110,7 +533,33 @@ def cmd_index(args: Any, factory: EmbedderFactory) -> int:
                 "any embeddings, which are the expensive part -- or use "
                 "--index-path to build a second index elsewhere."
             )
+        if carry.exists() and not discarding:
+            # An earlier rebuild died between the delete and the restore, so this
+            # file is the only copy of the store. `index_repo` never writes an
+            # assertion, which is what makes the sidecar the superset: whatever sits
+            # in the half-built index that replaced the old one either came from this
+            # file or is not a claim. Overwriting it with a dump of that index would
+            # finish the loss the crash only started.
+            carried = _recover_carry(carry, repo)
+            recovered = True
+        elif not discarding:
+            dump = _dump_store(index_path)
+            totals = _dump_totals(dump)
+            if totals["assertions"]:
+                if not getattr(args, "carry_assertions", False):
+                    raise _rebuild_refusal(index_path, totals)
+                _write_carry_file(carry, dump, repo=repo, index_path=index_path)
+                carried = dump
         _delete_index(index_path)
+    elif carry.exists() and not discarding:
+        # The index is not here and a store is. That is the crash-after-delete state
+        # exactly, and it is reached by the command an operator types next.
+        carried = _recover_carry(carry, repo)
+        recovered = True
+    if discarding and carry.exists():
+        # --discard-assertions means what it says, including about a store that is
+        # only waiting because a previous rebuild was interrupted.
+        carry.unlink()
 
     try:
         conn, stats = index_repo(repo, index_path=index_path)
@@ -118,6 +567,15 @@ def cmd_index(args: Any, factory: EmbedderFactory) -> int:
         raise CliError(str(exc)) from exc
     except sqlite3.Error as exc:
         raise CliError(f"indexing failed while writing {index_path}: {exc}") from exc
+
+    carry_report: CarryReport | None = None
+    if carried is not None:
+        report = _restore_store(conn, repo, carried)
+        # Only now, and only after the restore committed. The sidecar is the store's
+        # only copy for the whole window above; removing it any earlier would open a
+        # gap in which a crash loses everything, which is the gap this exists to close.
+        carry.unlink(missing_ok=True)
+        carry_report = replace(report, recovered=recovered)
 
     embed_info: dict[str, Any] | None = None
     if args.embed:
@@ -156,6 +614,20 @@ def cmd_index(args: Any, factory: EmbedderFactory) -> int:
             "by_resolver": dict(sorted(rstats.by_resolver.items())),
         },
         "embeddings": embed_info,
+        # Reported rather than left implicit: a rebuild that quietly expired half the
+        # store would look exactly like one that carried all of it, and the number
+        # that separates them is the one worth printing.
+        "tier2": None if carry_report is None else {
+            "carried": True,
+            "recovered": carry_report.recovered,
+            "assertions": carry_report.assertions,
+            "evidence_spans": carry_report.evidence_spans,
+            "verdicts": carry_report.verdicts,
+            "staleness_events": carry_report.staleness_events,
+            "subjects_resolved": carry_report.subjects_resolved,
+            "subjects_unresolved": carry_report.subjects_unresolved,
+            "expired_by_rebuild": carry_report.expired_by_rebuild,
+        },
     }
 
     if args.json:
@@ -183,6 +655,20 @@ def cmd_index(args: Any, factory: EmbedderFactory) -> int:
             f"  embedded   {embed_info['embedded']:>9,}  "
             f"chunks with {embed_info['model']} ({embed_info['dim']}-dim)"
         )
+    if carry_report is not None:
+        print(
+            f"  carried    {carry_report.assertions:>9,}  "
+            f"assertions ({carry_report.subjects_resolved} re-linked to a symbol, "
+            f"{carry_report.subjects_unresolved} left unlinked), "
+            f"{_plural(carry_report.verdicts, 'verdict')}, "
+            f"{_plural(carry_report.staleness_events, 'staleness event')}"
+        )
+        if carry_report.expired_by_rebuild:
+            print(
+                f"  expired    {carry_report.expired_by_rebuild:>9,}  "
+                "carried claims whose cited bytes have moved -- marked stale, with a "
+                "log row naming the citation, not deleted"
+            )
     return 0
 
 

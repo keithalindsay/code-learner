@@ -25,6 +25,7 @@ import pytest
 
 pytest.importorskip("mcp", reason="the MCP server needs the optional `mcp` dependency")
 
+from codelearner import db  # noqa: E402
 from codelearner.assertions import store  # noqa: E402
 from codelearner.ingest import index_repo  # noqa: E402
 from codelearner.retrieve import Hit  # noqa: E402
@@ -253,6 +254,41 @@ def test_an_index_deleted_underneath_a_live_server_is_reported(served):
         if candidate.exists():
             candidate.unlink()
     assert call(server, "index_stats")["error"]["code"] == "no_index"
+
+
+@pytest.mark.parametrize(
+    ("tool", "arguments"),
+    [
+        ("index_stats", {}),
+        ("search_code", {"query": QUERY}),
+        ("get_symbol", {"qualname": "core.frobnicate_widgets"}),
+    ],
+)
+def test_an_index_from_another_schema_is_data_and_not_a_transport_error(
+    served, tool, arguments
+):
+    """The most predicted failure in the design, and it went out as a traceback.
+
+    `db.connect` refuses an index whose stamp is not the current `SCHEMA_VERSION` --
+    that check is the whole reason a stale index cannot answer a query -- and it
+    refuses with a `RuntimeError`, which is neither a `ToolError` nor a
+    `sqlite3.Error`. So it walked straight through `_guard` and into the transport,
+    where an agent reads it as "this tool is broken" and stops calling it. The stamp
+    has moved five times, and the realistic sequence is an agent session left open
+    across the re-index that follows the sixth.
+    """
+    _, index_path, server = served
+    conn = db.connect(index_path, check_schema=False)
+    conn.execute("UPDATE meta SET value = '4' WHERE key = 'schema_version'")
+    conn.close()
+
+    payload = call(server, tool, **arguments)
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "schema_mismatch"
+    assert "v4" in payload["error"]["message"]
+    # The remedy has to travel with the code: the agent cannot re-index, and the
+    # human who can needs to know it no longer costs them the assertion store.
+    assert "--carry-assertions" in payload["error"]["message"]
 
 
 # ---------------------------------------------------------------------------
@@ -1016,13 +1052,21 @@ def test_a_cited_fifo_is_refused_rather_than_blocking_the_server(served):
 
 
 @needs_fifo
-def test_a_fifo_under_a_stored_claim_expires_it_instead_of_hanging_the_read(served):
+def test_a_fifo_under_a_stored_claim_is_withheld_instead_of_blocking_the_read(served):
     """The other side of the same defect, and the one that reaches further: the serve
     path re-reads every cited file on every `get_symbol`, so a FIFO left where a cited
-    file used to be wedges reads, not just writes. `store._read_source` is library code
-    and cannot raise the server's `ToolError`; it reports the file as unreadable, which
-    is what it is, and the claim expires as `file_missing` exactly as a deleted file
-    would."""
+    file used to be wedges reads, not just writes. Reading it must not block, and the
+    claim must not be served -- neither of those is negotiable.
+
+    What it must NOT do is expire the claim. A FIFO is not an absent file; it is a
+    file this process could not read, in the same class as `EACCES`, `EIO`, an NFS
+    blip, or a repo that moved. `stale` means the cited bytes changed, and nothing in
+    this codebase ever moves an assertion back to `active` -- so recording "we could
+    not look" as "the evidence changed" made a transient condition into a permanent,
+    irreversible loss of the claim and of the record of why. Withholding is the
+    reversible disposition: the claim is not served on this call, its status is not
+    touched, and the next call after the FIFO is gone serves it again.
+    """
     repo, index_path, server = served
     good_hash, line_start, line_end = _hash_of(server, "core.frobnicate_widgets")
     accepted = call(
@@ -1044,15 +1088,34 @@ def test_a_fifo_under_a_stored_claim_expires_it_instead_of_hanging_the_read(serv
     (repo / "core.py").unlink()
     os.mkfifo(repo / "core.py")
 
+    # The no-hang guarantee. A cited FIFO used to wedge the single-threaded server
+    # until some other process opened the write end: no exception, no log line, no
+    # timeout -- it simply stopped answering.
     payload = _within(10, call, server, "get_symbol", qualname="core.frobnicate_widgets")
     assert payload["assertions"] == []
 
-    from codelearner import db
-
     conn = db.connect(index_path)
-    events = store.staleness_events(conn, accepted["assertion_id"])
-    assert [e["reason"] for e in events] == [store.REASON_FILE_MISSING]
-    conn.close()
+    try:
+        # Withheld, not expired: no staleness event, and the claim is still active
+        # and still serving-eligible the moment the file can be read again.
+        assert store.staleness_events(conn, accepted["assertion_id"]) == []
+        row = conn.execute(
+            "SELECT status FROM assertions WHERE id = ?", (accepted["assertion_id"],)
+        ).fetchone()
+        assert row["status"] == store.STATUS_ACTIVE
+    finally:
+        conn.close()
+
+    # And reversible is the whole argument, so it is asserted rather than described:
+    # put the real bytes back and the claim is served again, with no repair step and
+    # nothing to un-expire. Expiring it would have made this unreachable, because
+    # nothing anywhere moves an assertion back to `active`.
+    (repo / "core.py").unlink()
+    (repo / "core.py").write_text(CORE)
+    restored = call(server, "get_symbol", qualname="core.frobnicate_widgets")
+    assert [a["claim"] for a in restored["assertions"]] == [
+        "frobnicates every widget on the tray"
+    ]
 
 
 @needs_fifo

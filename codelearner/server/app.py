@@ -29,6 +29,7 @@ from pydantic import BaseModel, Field
 from .. import db
 from ..assertions import store
 from ..cli.commands import (
+    REBUILD_ADVICE,
     _classify_unresolved,
     _embedding_info,
     _scalar,
@@ -91,6 +92,7 @@ _STORE_REFUSAL_CODES: dict[type[BaseException], str] = {
     store.EvidenceUnverifiable: "evidence_unverifiable",
     store.UnknownSubject: "unknown_subject",
     store.EvidenceStale: "evidence_stale",
+    store.SpanEscapesRepo: "span_escapes_repo",
 }
 
 # Spelled out rather than `tuple(_STORE_REFUSAL_CODES)`, so that a class added to the
@@ -103,6 +105,7 @@ _STORE_REFUSALS = (
     store.EvidenceUnverifiable,
     store.UnknownSubject,
     store.EvidenceStale,
+    store.SpanEscapesRepo,
 )
 
 INSTRUCTIONS = """\
@@ -287,6 +290,16 @@ def _guard(source: IndexSource, fn: Any, /, **kwargs: Any) -> dict[str, Any]:
     a condition, not a condition with a known remedy. A rising count of `bad_request`
     is a bug report about this file.
 
+    `SchemaVersionError` and `RepoRootMismatchError` are caught for the strongest
+    reason of the three. `db.connect` refuses an index whose stamp is not the current
+    `SCHEMA_VERSION`, and that refusal is a `RuntimeError` -- not a `sqlite3.Error`,
+    not a `ToolError` -- so it went straight through this function and out into the
+    transport, which is the failure this module's first rule names. It is also the
+    most predictable failure in the whole design: the stamp has moved five times, an
+    agent's client keeps this server running across the re-index that follows, and the
+    first tool call afterwards met a version check with nothing to catch it. The
+    remedy travels with the code so the agent can tell its human what to type.
+
     Positional-only up front so that a tool body may itself take a parameter named
     `source` or `fn` without colliding with this frame's own arguments.
     """
@@ -295,6 +308,12 @@ def _guard(source: IndexSource, fn: Any, /, **kwargs: Any) -> dict[str, Any]:
         return fn(conn, source, **kwargs)
     except ToolError as exc:
         return exc.payload()
+    except (db.SchemaVersionError, db.RepoRootMismatchError) as exc:
+        return ToolError(
+            "schema_mismatch",
+            f"{exc} {REBUILD_ADVICE}",
+            index=str(source.path),
+        ).payload()
     except ValueError as exc:
         return ToolError(
             "bad_request",

@@ -17,7 +17,10 @@ project cannot afford to get wrong twice:
 """
 from __future__ import annotations
 
+import ast
 import dataclasses
+import inspect
+import shutil
 import urllib.error
 import urllib.request
 
@@ -26,14 +29,26 @@ import pytest
 from codelearner import db
 from codelearner.assertions import store
 from codelearner.generate.pipeline import (
+    # Private on purpose, and imported anyway: `_OUTCOME_COUNTERS` is the mapping that
+    # keeps the report's partition identity true, and the test below is the only thing
+    # that can establish it is COMPLETE. Reaching for it here is cheaper than the
+    # alternative, which is discovering an outcome with no counter as a run whose totals
+    # quietly stop adding up.
+    _OUTCOME_COUNTERS,
     OUTCOME_ADMITTED,
     OUTCOME_EMPTY_CLAIM,
     OUTCOME_ERROR,
+    OUTCOME_ESCAPING_SPAN,
+    OUTCOME_INVALID_SPAN,
     OUTCOME_NO_CITATION,
     OUTCOME_NO_OFFERS,
     OUTCOME_SKIPPED_EXISTING,
+    OUTCOME_STALE_EVIDENCE,
+    OUTCOME_UNKNOWN_SUBJECT,
+    OUTCOME_UNVERIFIABLE,
     PHASE_DONE,
     PHASE_START,
+    REFUSAL_OUTCOMES,
     ROLE_CALLEE,
     ROLE_CALLER,
     ROLE_SUBJECT,
@@ -44,6 +59,7 @@ from codelearner.generate.pipeline import (
 )
 from codelearner.generate.types import Draft, GeneratorUnavailable, Offer
 from codelearner.ingest import index_repo
+from codelearner.ingest.types import content_hash
 
 # Shaped so that ordering is actually exercised: `acquire` has THREE callees whose
 # qualnames do not appear in call order, and TWO callers, one of which is a test. A
@@ -688,10 +704,19 @@ def test_the_counters_partition_every_symbol_and_every_draft(repo):
         report.skipped_existing + report.symbols_without_offers + report.drafts_requested
     )
     assert report.drafts_requested == (
-        report.admitted
-        + report.refused_empty_claim
+        report.admitted + report.refused_by_the_gate + report.generator_errors
+    )
+    # Spelled out as well as summed. `refused_by_the_gate` is a property, so a counter
+    # dropped out of it would keep the identity above true while losing the draft from
+    # every number a reader actually looks at.
+    assert report.refused_by_the_gate == (
+        report.refused_empty_claim
         + report.refused_no_citation
-        + report.generator_errors
+        + report.refused_invalid_span
+        + report.refused_unverifiable
+        + report.refused_unknown_subject
+        + report.refused_stale_evidence
+        + report.refused_escaping_span
     )
     assert len(report.results) == report.considered
 
@@ -770,6 +795,286 @@ def test_an_unbound_index_refuses_rather_than_guessing_where_the_repo_is(tmp_pat
     conn = db.init_db(tmp_path / "unbound.db")
     with pytest.raises(ValueError, match="repo root"):
         learn(conn, None, FakeGenerator())
+
+
+# --------------------------------------------------------------------------
+# the store's other five refusals -- WP4 moved the rules, and they arrived here
+# --------------------------------------------------------------------------
+
+
+def _refusals_write_assertion_can_raise() -> set[type]:
+    """Every store exception reachable from `write_assertion`, read out of its source.
+
+    Read rather than listed, because a list is exactly what went stale: `write_assertion`
+    grew from one refusal to six and the pipeline's single `except` did not notice. The
+    walk follows one level of module-private helper, which is what reaches
+    `_verification_root` -- the rule that fires before any span is looked at and the only
+    one not raised in the function's own body.
+
+    One level, and the limit is honest rather than incidental: a rule delegated two calls
+    deep would escape this and would have to be caught by the run-level tests below
+    instead. Bare `ValueError` raises are excluded on purpose -- `_repo_root` raises one,
+    it is not a refusal of a claim, and `learn` is meant to propagate it.
+    """
+    module = ast.parse(inspect.getsource(store))
+    functions = {n.name: n for n in module.body if isinstance(n, ast.FunctionDef)}
+
+    def names_raised(func: str, depth: int) -> set[str]:
+        found: set[str] = set()
+        for node in ast.walk(functions[func]):
+            if (
+                isinstance(node, ast.Raise)
+                and isinstance(node.exc, ast.Call)
+                and isinstance(node.exc.func, ast.Name)
+            ):
+                found.add(node.exc.func.id)
+            if (
+                depth
+                and isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id in functions
+                and node.func.id != func
+            ):
+                found |= names_raised(node.func.id, depth - 1)
+        return found
+
+    classes = set()
+    for name in names_raised("write_assertion", 1):
+        obj = getattr(store, name, None)
+        if isinstance(obj, type) and issubclass(obj, ValueError) and obj.__module__ == store.__name__:
+            classes.add(obj)
+    return classes
+
+
+def test_every_store_refusal_has_its_own_outcome_and_its_own_counter():
+    """The structural guard, and the one that would have caught this whole class of bug
+    the day WP4 landed.
+
+    `write_assertion` grew from one refusal to six. This module caught one of them, so
+    the other five came out of `_admit` as unhandled exceptions -- three of the four
+    reproducible ones ended the run outright. Enumerated from the store's own source
+    rather than from a list here, so that the NEXT rule added to the chokepoint fails
+    this test until the pipeline decides what to call it. A list would have gone stale in
+    exactly the way the code did.
+
+    Exactly, not merely a superset. An entry mapped here that `write_assertion` cannot
+    raise is a handler for a condition that never happens, which reads as coverage and is
+    the same kind of lie in the other direction -- `NotReinstatable` belongs to
+    `reinstate` and has no business in this pipeline's counters."""
+    declared = _refusals_write_assertion_can_raise()
+    assert len(declared) >= 6, "the enumeration has stopped finding the store's rules"
+    assert set(REFUSAL_OUTCOMES) == declared, (
+        "a store refusal with no pipeline outcome would leave `learn` and crash a run"
+    )
+    # Every outcome is distinct -- collapsing two would merge their counters -- and
+    # every one of them is counted somewhere.
+    assert len(set(REFUSAL_OUTCOMES.values())) == len(declared)
+    for outcome in REFUSAL_OUTCOMES.values():
+        assert outcome in _OUTCOME_COUNTERS, outcome
+    assert len(set(_OUTCOME_COUNTERS.values())) == len(_OUTCOME_COUNTERS)
+
+
+def test_no_gate_refusal_is_counted_as_a_generator_error():
+    """`generator_errors` is the number a reader uses to judge a MODEL. A corrupt index,
+    a moving repository and a caller-supplied subject are facts about the environment,
+    and the obvious fix for the crash above -- widening the generator's `except
+    Exception` -- would have put all three in that column while keeping every total
+    correct. That is worse than the crash: the crash is visible."""
+    assert "generator_errors" not in _OUTCOME_COUNTERS.values()
+    assert OUTCOME_ERROR not in REFUSAL_OUTCOMES.values()
+
+
+def test_a_repository_that_moves_mid_run_is_counted_rather_than_ending_the_run(repo):
+    """The menu is built, the model is asked, and forty seconds later the bytes it was
+    shown are not the bytes on disk. `write_assertion` refuses -- correctly, because the
+    citation would have failed its first verification -- and before this was caught the
+    refusal propagated out of `learn` and the run returned nothing at all.
+
+    Counted under its own name, because the repair is specific: re-index and re-run. A
+    generator error would send the reader to the model."""
+    root, conn = repo
+
+    class MovingRepo(FakeGenerator):
+        def draft(self, *, subject, offered):
+            path = root / "leases.py"
+            path.write_text(path.read_text().replace("Take a lease", "Take a leash"))
+            return super().draft(subject=subject, offered=offered)
+
+    report = learn(conn, root, MovingRepo(), limit=1)
+
+    assert report.drafts_requested == 1
+    assert report.refused_stale_evidence == 1
+    assert report.generator_errors == 0
+    assert [r.outcome for r in report.results] == [OUTCOME_STALE_EVIDENCE]
+    assert "EvidenceStale" in report.results[0].error
+    assert _count(conn, "assertions") == 0
+
+
+def test_a_subject_the_index_never_parsed_is_counted_rather_than_ending_the_run(repo):
+    """`candidates` overrides selection entirely -- that is how the eval scores the exact
+    set a run used -- so a caller can hand `learn` a qualname the index does not hold.
+    The menu still builds, because it is keyed on the symbol id, and the refusal arrives
+    only at the write. It is a fact about the candidate list, so it gets a counter of its
+    own rather than being blamed on the generator."""
+    root, conn = repo
+    invented = Candidate(
+        symbol_id=_symbol_id(conn, "leases.acquire"),
+        qualname="leases.acquire_renamed_away",
+        kind="function",
+        path="leases.py",
+        line_start=1,
+        line_end=7,
+    )
+    report = learn(conn, root, FakeGenerator(), candidates=[invented])
+
+    assert report.drafts_requested == 1
+    assert report.refused_unknown_subject == 1
+    assert report.generator_errors == 0
+    assert [r.outcome for r in report.results] == [OUTCOME_UNKNOWN_SUBJECT]
+    assert _count(conn, "assertions") == 0
+
+
+def test_a_degenerate_span_in_the_index_is_counted_apart_from_everything_else(repo):
+    """Every `Offer.span` comes from `store.span_for_symbol`, so the pipeline cannot
+    build a bad byte range -- but it can be handed one. A symbol row whose byte range is
+    empty passes the menu's hash check (sha256 of nothing is a perfectly stable hash) and
+    is offered, and the store then refuses the citation as `InvalidSpan`.
+
+    That is the zero-length span the gate controls reproduced as admitted and servable
+    before WP4, arriving from the other direction: not a caller inventing offsets, but an
+    index publishing them. Its counter is separate because its repair is separate --
+    nothing about the model or the repository is wrong, the index needs rebuilding."""
+    root, conn = repo
+    conn.execute(
+        "UPDATE symbols SET byte_start = byte_end, content_hash = ? WHERE qualname = ?",
+        (content_hash(b""), "leases.acquire"),
+    )
+    conn.commit()
+
+    report = learn(conn, root, FakeGenerator(), limit=1)
+
+    assert report.drafts_requested == 1
+    assert report.refused_invalid_span == 1
+    assert report.generator_errors == 0
+    assert [r.outcome for r in report.results] == [OUTCOME_INVALID_SPAN]
+    assert "InvalidSpan" in report.results[0].error
+    assert _count(conn, "evidence_spans") == 0
+
+
+def test_an_indexed_path_that_leaves_the_repository_is_counted_rather_than_crashing(
+    repo, tmp_path
+):
+    """The counter that shipped wired to nothing, and how it gets exercised at all.
+
+    Every `Offer.span` comes from `store.span_for_symbol`, so the pipeline cannot invent
+    a path -- but it takes the one the index recorded, and `files.path` is data. Point a
+    row at `../leases.py`, put a byte-identical file there, and the menu builds happily:
+    the file reads, the hash matches, the offer is made, and the store refuses the
+    citation at the door because a reader of THIS repository cannot open it.
+
+    `refused_escaping_span` existed as a field, and as a term in the documented
+    partition identity, with no entry in `_OUTCOME_COUNTERS` -- so the first draft
+    refused this way would have vanished out of `drafts_requested` and the identity
+    would have stopped holding on that run and no run before it. A counter nothing
+    increments is worse than a missing counter: it reads zero forever."""
+    root, conn = repo
+    escaped = tmp_path / "leases.py"
+    escaped.write_text((root / "leases.py").read_text())
+    conn.execute("UPDATE files SET path = ? WHERE path = ?", ("../leases.py", "leases.py"))
+    conn.commit()
+
+    report = learn(conn, root, FakeGenerator())
+
+    assert report.drafts_requested == 2
+    assert report.refused_escaping_span == 2
+    assert report.generator_errors == 0
+    assert [r.outcome for r in report.results] == [OUTCOME_ESCAPING_SPAN] * 2
+    assert "SpanEscapesRepo" in report.results[0].error
+    assert _count(conn, "assertions") == 0
+    # The identity has to survive the refusal that was not being counted.
+    assert report.drafts_requested == (
+        report.admitted + report.refused_by_the_gate + report.generator_errors
+    )
+    assert "escaping_span=2" in report.summary()
+
+
+def test_a_run_across_two_trees_is_refused_before_the_first_model_call(repo, tmp_path):
+    """The one store refusal that is NOT per-symbol, and is therefore not counted.
+
+    Menus are built from the root this function was handed; every citation is verified
+    against the root the index is bound to. If those differ, the model is shown one tree
+    and its claims are checked against another -- and when the two happen to hold
+    identical bytes the run SUCCEEDS, storing citations nobody read. That is the outcome
+    this refuses, and it is worse than the failing one.
+
+    Settled up front by the same argument that leaves `GeneratorUnavailable` uncaught: it
+    is a property of the configuration, not of a symbol, so discovering it once per
+    symbol spends the whole run to learn one fact -- and reports it as four hundred
+    refusals, which reads as a completed measurement of a bad generator."""
+    root, conn = repo
+    twin = tmp_path / "twin"
+    shutil.copytree(root, twin)
+    generator = FakeGenerator()
+
+    with pytest.raises(store.EvidenceUnverifiable, match="bound"):
+        learn(conn, twin, generator)
+
+    assert generator.seen == [], "a doomed run must not spend a single model call"
+    assert _count(conn, "assertions") == 0
+
+
+def test_an_unbound_index_is_refused_before_the_first_model_call(repo):
+    """The other run-wide shape of the same exception, and the reason the pre-flight asks
+    the store the question `_admit` will ask rather than the one about its own argument.
+    With a root supplied and no binding, menus build perfectly and every write raises --
+    so before this check the failure cost one model call per symbol and returned no
+    report."""
+    root, conn = repo
+    conn.execute("DELETE FROM meta WHERE key = 'repo_root'")
+    conn.commit()
+    generator = FakeGenerator()
+
+    with pytest.raises(store.EvidenceUnverifiable, match="not bound"):
+        learn(conn, root, generator)
+
+    assert generator.seen == []
+
+
+def test_an_empty_claim_is_still_an_empty_claim_when_the_references_also_miss(repo):
+    """Why the local empty-claim check stays although `write_assertion` makes the same
+    decision. The store's rules run cheapest first, so it checks the spans BEFORE the
+    text: a draft with no claim and no resolved reference is `EvidenceRequired` there,
+    and would be counted as `refused_no_citation` -- pointing its reader at the
+    reference-numbering design when what happened is that the generator emitted nothing.
+
+    Deleting the check in `_admit` does not change which drafts are stored. It changes
+    which counter moves, which is the entire content of the report."""
+    root, conn = repo
+    report = learn(conn, root, FakeGenerator(claim="  \n ", refs=()))
+
+    assert report.refused_empty_claim == 2
+    assert report.refused_no_citation == 0
+    assert [r.outcome for r in report.results] == [OUTCOME_EMPTY_CLAIM] * 2
+    # And the same generator with a resolvable reference is still an empty claim, so the
+    # precedence above is not an artefact of there being nothing to cite.
+    again = learn(conn, root, FakeGenerator(claim="  \n ", refs=(1,)))
+    assert (again.refused_empty_claim, again.refused_no_citation) == (2, 0)
+
+
+def test_the_report_prints_the_gates_refusals_even_when_they_are_all_zero(repo):
+    """A line that appears only when something is wrong is a line nobody learns to read,
+    and these four are the counters a reader would not think to ask for. Printed on every
+    run, so that the day one of them is non-zero it is a number in a familiar place
+    rather than a new sentence."""
+    root, conn = repo
+    text = learn(conn, root, FakeGenerator()).summary()
+
+    assert "invalid_span=0" in text
+    assert "unverifiable=0" in text
+    assert "unknown_subject=0" in text
+    assert "stale_evidence=0" in text
+    assert "escaping_span=0" in text
+    assert OUTCOME_UNVERIFIABLE == "refused_unverifiable"
 
 
 def test_the_repo_root_can_come_from_the_index_binding(repo):

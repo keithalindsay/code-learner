@@ -34,17 +34,49 @@ baseline, and marks nothing stale. The fast path is an accelerator over the hash
 an authority beside it; only the hash can expire a claim.
 
 **Failure modes stay apart.** `hash_mismatch`, `file_missing`, `span_truncated` and
-`no_evidence` are the four reasons `store` already names, and this engine preserves all
+`no_evidence` are the four terminal reasons `store` names, and this engine preserves all
 four rather than collapsing them into "stale". They call for different repairs: an
 edited function should be re-derived, a missing file is usually a rename that nothing
 followed, a truncated span is a deleted tail, and `no_evidence` is a bug in the write
 gate rather than a fact about the repo. One flag would make those four indistinguishable
 in the log, and the log is the only place the difference is visible.
 
+**`unreadable` is the fifth reason and the only non-terminal one.** A cited file that
+is present but cannot be opened -- a permission bit, `EMFILE`, `EIO`, an NFS blip, a
+FIFO -- establishes nothing about the bytes, so the claim is WITHHELD for this call and
+its status is left exactly as it was found. It is not served: this module's contract is
+that a result outside the stale bucket has been checked, and an unchecked claim sitting
+in it is the cached-freshness-verdict failure with extra steps. It is not expired
+either: expiring on a permission bit is how `chmod 000` used to destroy every claim
+citing a file, irreversibly, while logging that the file was missing. A caller who
+wants to see them asks for them by name (`include_unverifiable=True`), and a sweep
+counts them separately (`RefreshReport.unverifiable`), because a number that quietly
+lands in `fresh` is a report claiming a check it did not perform.
+
+**The fast path must never serve what `force_hash` would withhold.** That is why
+`_stat_file` tests readability rather than only existence. `stat()` succeeds on a
+`chmod 000` file, and its mtime and size are unchanged, so the stat baseline matched
+and the claim was served as `fresh, method='stat'` -- while `store.servable_assertions`,
+which has to actually open the file, withheld it. Two verifiers, one repo state, two
+answers; and worse, `serve_assertions()` and `serve_assertions(force_hash=True)`
+disagreed with each other on the same index in the same second. An accelerator that can
+outrun the authority it accelerates is not an accelerator. The readability test costs
+one `faccessat` per distinct cited FILE per pass, cached beside the `stat`, and it
+restores the invariant that stage one only ever reaches conclusions stage two would
+also reach. It inherits `os.access`'s known limits -- real rather than effective ids,
+and ACL or NFS setups where the client's answer is not the server's -- so the residual
+is that stage one can still be optimistic about an exotic filesystem, and `force_hash`
+remains the way to buy the exact answer.
+
 **Serving.** `serve_assertions` withholds anything stale by default. `include_stale=True`
 returns them, and everything it returns is labelled with its status, its reason, the
 stage that checked it and the age of its hash binding -- there is no way to receive a
-stale claim from this module without also receiving the word "stale".
+stale claim from this module without also receiving the word "stale". Unreadable claims
+need a SECOND opt-in, `include_unverifiable=True`, and are withheld from
+`include_stale=True` as well: the natural way to consume that flag is
+`if r.stale: ... else: <treat as fresh>`, so a record with `stale=False` and nothing
+verified would land in the `else` and be presented as checked -- the failure this whole
+module exists to prevent, arriving through the flag added to prevent it.
 
 **What it actually bought, measured.** Not what was expected, and the number belongs
 here rather than buried. Serving every claim in an index, median of interleaved A/B
@@ -75,7 +107,9 @@ than someone discovering it later.
 """
 from __future__ import annotations
 
+import os
 import sqlite3
+import stat as stat_module
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -83,10 +117,18 @@ from pathlib import Path
 from .. import db
 from ..ingest.types import content_hash
 from .store import (
-    REASON_FILE_MISSING,
+    _ABSENT,
+    _UNREADABLE,
+    # Re-exported, not used directly any more: `_stat_file` and `_read_file` now
+    # return `_ABSENT`, which already carries this reason. The five reasons must stay
+    # readable off this module as one set -- the docstring above enumerates them, and
+    # a caller that gets its verdicts from `stale` should not have to import `store`
+    # to name what it just received.
+    REASON_FILE_MISSING,  # noqa: F401
     REASON_HASH_MISMATCH,
     REASON_NO_EVIDENCE,
     REASON_SPAN_TRUNCATED,
+    REASON_UNREADABLE,
     STATUS_ACTIVE,
     STATUS_STALE,
     Assertion,
@@ -94,6 +136,7 @@ from .store import (
     _atomic,
     _load_assertions,
     _repo_root,
+    _Unread,
     mark_stale,
 )
 
@@ -185,6 +228,12 @@ class ServedAssertion:
     reason: str | None = None
     failing_span: EvidenceSpan | None = None
     observed_hash: str | None = None
+    # A cited file could not be opened, so nothing was established either way. Kept as
+    # its OWN field rather than folded into `stale`, because `stale` drives `_expire`
+    # and means "the evidence moved" -- a claim nobody could check has not moved, and
+    # writing it into the status is the irreversible mistake WP10 exists to undo. The
+    # two are mutually exclusive and both are False on a claim that verified.
+    unreadable: bool = False
 
     @property
     def bound_hashes(self) -> tuple[tuple[str, str], ...]:
@@ -200,9 +249,17 @@ class ServedAssertion:
     def label(self) -> str:
         """One line naming the status and the strength of the check behind it.
 
-        Every path out of this module that can emit a stale claim goes through here,
-        so a caller cannot end up holding one that is not visibly marked.
+        Every path out of this module that can emit a stale or unchecked claim goes
+        through here, so a caller cannot end up holding one that is not visibly marked.
+
+        The unreadable line says UNVERIFIED rather than STALE and names the withholding
+        explicitly. A reader skimming labels must not be able to mistake it for either
+        neighbour: it is not `fresh` (nothing was checked) and it is not `STALE`
+        (nothing was found wrong, and no status changed).
         """
+        if self.unreadable:
+            where = f" at {self.failing_span.citation}" if self.failing_span else ""
+            return f"UNVERIFIED (could not read{where}) -- withheld, status unchanged"
         if self.stale:
             where = f" at {self.failing_span.citation}" if self.failing_span else ""
             return f"STALE ({self.reason or 'unknown'}{where})"
@@ -217,6 +274,21 @@ class RefreshReport:
     to make: on an unchanged repo the second should be zero, and if it is not, the
     baseline is being invalidated by something (a checkout that rewrites mtimes, a
     formatter, a build step) and the fast path is buying nothing.
+
+    `unverifiable` is the third bucket, and it exists because the other two would
+    otherwise have to absorb it and both would lie. Counting an unreadable claim as
+    `fresh` is a report asserting a check that did not happen -- and this report is the
+    only evidence anyone gets that the fast path works, so a number in it that means
+    something else than it says poisons the one measurement. Counting it as `expired`
+    is worse: it puts a reason in `by_reason` for a claim that did not expire, implies
+    data loss that did not occur, and sends an operator looking for an edit nobody
+    made. So it is its own count, `checked == fresh + expired + unverifiable` holds
+    exactly, and `by_reason` continues to sum to `expired` alone.
+
+    `files_unreadable` is the cause rather than the effect: one `chmod 000` module can
+    withhold forty claims, and "1 file" is the actionable number while "40 claims" is
+    the alarming one. Both are reported because an operator needs to know the blast
+    radius and where to point the fix.
     """
 
     checked: int = 0
@@ -227,30 +299,80 @@ class RefreshReport:
     files_read: int = 0
     spans_fast_pathed: int = 0
     spans_hashed: int = 0
+    # Assertions withheld because a cited file could not be read. NOT expired: their
+    # stored status is untouched and they return on the next healthy pass.
+    unverifiable: int = 0
+    # Distinct cited files that could not be read this pass.
+    files_unreadable: int = 0
 
     def summary(self) -> str:
         reasons = ", ".join(f"{n} {r}" for r, n in sorted(self.by_reason.items()))
         detail = f" ({reasons})" if reasons else ""
+        # Shown only when there is something to show. A permanent ", 0 unverifiable"
+        # is noise an operator learns to skip, and this is the line it must not be
+        # possible to skip on the one day it is not zero.
+        withheld = (
+            f", {self.unverifiable} withheld unread "
+            f"({self.files_unreadable} unreadable files)"
+            if self.unverifiable
+            else ""
+        )
         return (
             f"{self.checked} active, {self.fresh} still fresh, "
-            f"{self.expired} expired{detail}; "
+            f"{self.expired} expired{detail}{withheld}; "
             f"{self.files_statted} stat, {self.files_read} read, "
             f"{self.spans_fast_pathed} spans fast-pathed, "
             f"{self.spans_hashed} re-hashed"
         )
 
 
-def _stat_file(root: Path, path: str) -> _Stat | None:
-    """`stat()` one cited file. None if it is not there (or not readable)."""
+def _stat_file(root: Path, path: str) -> _Stat | _Unread:
+    """Stage one on one cited file: is it there, is it a file, and can we open it?
+
+    Returns the mtime/size pair, or an `_Unread` naming why there is none. The
+    disposition type is imported from `store` rather than decided again here, because
+    two verifiers each choosing their own answer for the same repo state is exactly the
+    disagreement this module is measured against.
+
+    Three things are settled here rather than downstream, and each is a defect fixed:
+
+    * **Absent vs unopenable.** The old code caught every `OSError` and returned
+      `None`, which the caller expired as `file_missing`. `stat()` fails with `EACCES`
+      when a parent directory is unsearchable and with `ESTALE`/`ENOTCONN` off a dead
+      NFS mount, neither of which means anything was deleted -- and expiring is
+      irreversible while the condition is not.
+    * **Not a regular file.** `S_ISREG` on the `st_mode` we already have, so it costs
+      nothing. A FIFO stats as a zero-byte file, which used to be caught downstream by
+      `st.size < span.byte_end` and reported as `span_truncated` -- an accident of
+      check ordering that named the wrong finding and expired the claim for it.
+    * **Readability.** `stat()` succeeds on a `chmod 000` file and reports the same
+      mtime and size it always did, so the fast path matched its baseline and served
+      the claim as fresh, while the reference verifier -- which must actually open the
+      file -- withheld it. Same index, same second, two verdicts; and
+      `serve_assertions(force_hash=True)` disagreed with `serve_assertions()`. An
+      accelerator that reaches conclusions the authority would not reach is not
+      accelerating anything. One `faccessat` per distinct cited file restores it.
+
+    `os.access` answers with the real uid/gid rather than the effective one and can be
+    defeated by ACLs or an NFS server that disagrees with its client, so this narrows
+    the window rather than closing it; `force_hash=True` is the exact answer and always
+    was. Stated rather than quietly carried.
+    """
     try:
         st = (root / path).stat()
+    except (FileNotFoundError, NotADirectoryError):
+        return _ABSENT
     except OSError:
-        return None
+        return _UNREADABLE
+    if not stat_module.S_ISREG(st.st_mode):
+        return _UNREADABLE
+    if not os.access(root / path, os.R_OK):
+        return _UNREADABLE
     return _Stat(mtime_ns=st.st_mtime_ns, size=st.st_size)
 
 
-def _read_file(root: Path, path: str) -> bytes | None:
-    """Read one cited file whole. None if it cannot be read.
+def _read_file(root: Path, path: str) -> bytes | _Unread:
+    """Read one cited file whole. An `_Unread` naming why, if it cannot be read.
 
     A module-level function rather than an inline `read_bytes()` on purpose: this is
     the single seam through which stage two touches the disk, which is what lets a
@@ -274,24 +396,33 @@ def _read_file(root: Path, path: str) -> bytes | None:
     "a race won against this function", and that residual is stated rather than
     quietly carried.
 
-    Where it does not bite today: `_Pass.check_span` stats before it reads, and a FIFO
-    stats as zero bytes, so `st.size < span.byte_end` reports the span truncated first.
-    That is an accident of check ordering -- the ordering exists to keep this
-    verifier's reasons identical to `store._first_failure`'s, not to keep anyone off a
-    pipe -- so the guard belongs at the seam that actually opens the file.
+    `_stat_file` now settles the same question one syscall earlier, so in practice this
+    branch fires only on a file that turned into a pipe between the stat and the read.
+    Kept anyway: this is the seam that actually opens the file, and a guard that only
+    holds because some other function ran first is a guard that disappears the day the
+    call order changes.
 
-    Returning None expires the claim as `file_missing`, which is the same disposition
-    an unreadable file already has here and is deliberately left alone: that a
-    non-absence failure permanently expires a claim with no way back is WP10's
-    finding, not this guard's to fix, and splitting it here would collide.
+    The disposition split matters as much here as at the stat. `_ABSENT` means the file
+    was deleted between the two calls and the claim genuinely expires; `_UNREADABLE`
+    means this reader could not open what is there, and the claim is withheld with its
+    status untouched. Returning one `None` for both is what let a permission bit
+    permanently destroy a claim -- see `store._read_source`.
     """
     target = root / path
-    if not target.is_file():
-        return None
+    try:
+        st = target.stat()
+    except (FileNotFoundError, NotADirectoryError):
+        return _ABSENT
+    except OSError:
+        return _UNREADABLE
+    if not stat_module.S_ISREG(st.st_mode):
+        return _UNREADABLE
     try:
         return target.read_bytes()
+    except (FileNotFoundError, NotADirectoryError):
+        return _ABSENT
     except OSError:
-        return None
+        return _UNREADABLE
 
 
 def _now(conn: sqlite3.Connection) -> str:
@@ -342,35 +473,50 @@ class _Pass:
         self.files_read = 0
         self.spans_fast_pathed = 0
         self.spans_hashed = 0
-        self._stats: dict[str, _Stat | None] = {}
-        self._sources: dict[str, bytes | None] = {}
+        self._stats: dict[str, _Stat | _Unread] = {}
+        self._sources: dict[str, bytes | _Unread] = {}
         self._baseline_writes: list[tuple[int, int, int, str, str]] = []
+        # Distinct files this pass could not open. A set rather than a counter so a
+        # module cited by forty claims counts once -- the operator's question is "which
+        # file do I fix", and a count that scales with citations does not answer it.
+        self.unreadable_files: set[str] = set()
 
-    def stat(self, path: str) -> _Stat | None:
+    def stat(self, path: str) -> _Stat | _Unread:
         if path not in self._stats:
-            self._stats[path] = _stat_file(self.root, path)
+            result = _stat_file(self.root, path)
+            self._stats[path] = result
             self.files_statted += 1
+            if result is _UNREADABLE:
+                self.unreadable_files.add(path)
         return self._stats[path]
 
-    def source(self, path: str) -> bytes | None:
+    def source(self, path: str) -> bytes | _Unread:
         if path not in self._sources:
-            self._sources[path] = _read_file(self.root, path)
+            result = _read_file(self.root, path)
+            self._sources[path] = result
             self.files_read += 1
+            if result is _UNREADABLE:
+                self.unreadable_files.add(path)
         return self._sources[path]
 
     def check_span(self, span: EvidenceSpan, baseline: _Baseline | None, now: str) -> SpanCheck:
         """Two-stage check of one citation.
 
-        Ordering matches `store._first_failure` exactly -- missing, then truncated,
-        then mismatched -- so the two verifiers cannot report different reasons for
-        the same repo state.
+        Ordering matches `store._first_failure` exactly -- unavailable (missing or
+        unreadable), then truncated, then mismatched -- so the two verifiers cannot
+        report different reasons for the same repo state. The unavailability test has
+        to come FIRST and not merely early: a file that is both `chmod 000` and shorter
+        than the cited range would otherwise be reported as `span_truncated` here, from
+        a `st.size` this process was never entitled to act on, and expired for it,
+        while the reference verifier withheld it unread.
         """
         seen_at = None if baseline is None else baseline.verified_at
         st = self.stat(span.path)
-        if st is None:
+        if isinstance(st, _Unread):
+            # `_ABSENT` -> file_missing, terminal. `_UNREADABLE` -> withheld. The
+            # reason travels from where the errno was in scope; nothing re-decides it.
             return SpanCheck(
-                span, METHOD_STAT, ok=False, verified_at=seen_at,
-                reason=REASON_FILE_MISSING,
+                span, METHOD_STAT, ok=False, verified_at=seen_at, reason=st.reason,
             )
 
         if (
@@ -393,12 +539,13 @@ class _Pass:
                 reason=REASON_SPAN_TRUNCATED,
             )
         source = self.source(span.path)
-        if source is None:
-            # Existed at stat, unreadable at read -- a delete that landed between the
-            # two. Reported as missing, which is what it is.
+        if isinstance(source, _Unread):
+            # Statted fine, would not read -- something landed between the two calls.
+            # A delete reports `file_missing` and expires; a permission change or a
+            # swap for a FIFO reports `unreadable` and withholds. Which of those it
+            # was is decided at the seam that saw the errno, not guessed here.
             return SpanCheck(
-                span, METHOD_HASH, ok=False, verified_at=seen_at,
-                reason=REASON_FILE_MISSING,
+                span, METHOD_HASH, ok=False, verified_at=seen_at, reason=source.reason,
             )
         if span.byte_end > len(source):
             return SpanCheck(
@@ -466,11 +613,25 @@ def _check(
         check = pass_.check_span(span, baseline, now)
         checks.append(check)
         if not check.ok:
+            # The one branch that decides whether a status is written. `unreadable`
+            # says the check did not happen, so `stale` stays False and `_expire`
+            # never sees this record -- the claim is withheld and comes back on its
+            # own. Everything else is a finding about the repository and expires.
+            could_not_check = check.reason == REASON_UNREADABLE
             return ServedAssertion(
-                assertion=assertion, stale=True, checked_at=now,
-                verified_at=check.verified_at, method=check.method,
+                assertion=assertion, stale=not could_not_check, checked_at=now,
+                # `method` names the stage that CONFIRMED something, and on an
+                # unreadable claim no stage did -- the stat only established that it
+                # could not look. Reporting `method='stat'` here would put the exact
+                # string a fast-path confirmation carries onto a claim nothing
+                # confirmed, which is the misreading this whole split exists to
+                # prevent. `verified_at` is kept, and is the useful half: it is when
+                # these bytes were last genuinely hashed, so a caller sees "last
+                # confirmed on Tuesday, cannot look today" rather than a bare refusal.
+                verified_at=check.verified_at, method=None if could_not_check else check.method,
                 checks=tuple(checks), reason=check.reason,
                 failing_span=check.span, observed_hash=check.observed_hash,
+                unreadable=could_not_check,
             )
 
     seen = [c.verified_at for c in checks if c.verified_at is not None]
@@ -508,6 +669,11 @@ def _expire(
     Each expiry is logged with the SAME instant this pass reports as `checked_at`, so
     one expiry carries one timestamp -- see the note at the `detected_at` argument
     below.
+
+    Records carrying `unreadable=True` are not in `failed` and never reach this
+    function's writes. That is the entire point of keeping `unreadable` off `stale`:
+    the only place a status is written is here, and a claim nobody could check must
+    not pass through it.
     """
     failed = [r for r in results if r.stale]
     if not failed:
@@ -560,6 +726,13 @@ def refresh_staleness(
 
     Verification runs first and writes happen once at the end, so a sweep over an
     unchanged repo takes no write lock.
+
+    Claims withheld because a cited file could not be READ are counted in
+    `unverifiable` and in neither `fresh` nor `expired`. Folding them into `fresh`
+    would make this report -- the only evidence anyone has that the fast path works --
+    assert a check it did not perform; folding them into `expired` would put a reason
+    in `by_reason` for a claim whose status never moved. `checked` is the sum of all
+    three, exactly.
     """
     root = _repo_root(conn, repo_root)
     assertions = _load_assertions(conn, "status = ?", (STATUS_ACTIVE,))
@@ -578,13 +751,17 @@ def refresh_staleness(
             by_reason[key] = by_reason.get(key, 0) + 1
     return RefreshReport(
         checked=len(results),
-        fresh=sum(1 for r in results if not r.stale),
+        # `not stale AND not unreadable`. A claim nobody could open is not fresh, and
+        # the old `not r.stale` would now count it as such.
+        fresh=sum(1 for r in results if not r.stale and not r.unreadable),
         expired=sum(1 for r in results if r.stale),
         by_reason=by_reason,
         files_statted=pass_.files_statted,
         files_read=pass_.files_read,
         spans_fast_pathed=pass_.spans_fast_pathed,
         spans_hashed=pass_.spans_hashed,
+        unverifiable=sum(1 for r in results if r.unreadable),
+        files_unreadable=len(pass_.unreadable_files),
     )
 
 
@@ -616,6 +793,7 @@ def serve_assertions(
     subject_qualname: str | None = None,
     kind: str | None = None,
     include_stale: bool = False,
+    include_unverifiable: bool = False,
     force_hash: bool = False,
 ) -> list[ServedAssertion]:
     """Serve claims, verified two-stage, each carrying the provenance of its check.
@@ -628,6 +806,18 @@ def serve_assertions(
     `stale=True`, the reason it expired, and the citation that moved. Anything expiring
     during THIS call is expired first and then labelled, so the flag and the stored
     status never disagree.
+
+    Claims whose citations could not be READ are withheld too, and by DEFAULT they are
+    withheld from `include_stale=True` as well. That is the more important of the two
+    decisions here. `include_stale` promises a caller expired claims -- code that
+    handles the result reasonably reads `if r.stale: ... else: <treat as fresh>`, and
+    an unreadable claim arriving in that stream with `stale=False` lands in the `else`
+    and is presented as verified. It would be the cached-freshness-verdict failure
+    delivered through the very flag added to prevent it. So there is a second, separate
+    opt-in: `include_unverifiable=True`. A caller cannot receive one of these records
+    without having typed the word, and having typed it has demonstrated it knows the
+    state exists. They arrive with `unreadable=True`, `stale=False`, `method=None`, and
+    a `label` reading UNVERIFIED.
 
     `force_hash=True` bypasses the stat fast path for this call.
     """
@@ -650,8 +840,17 @@ def serve_assertions(
     pass_.flush(conn)
     results = _expire(conn, results)
 
+    # Three buckets, two of them opt-in. `active` was loaded ordered by id and this
+    # preserves that order, so only the `include_stale` branch below needs to re-sort.
+    results = [
+        r
+        for r in results
+        if (not r.stale and not r.unreadable)
+        or (r.stale and include_stale)
+        or (r.unreadable and include_unverifiable)
+    ]
     if not include_stale:
-        return [r for r in results if not r.stale]
+        return results
 
     # Claims that were already stale before this call. Loaded with the same predicate
     # so `subject_qualname`/`kind` mean the same thing whichever set a claim is in.
