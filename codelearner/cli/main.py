@@ -19,7 +19,14 @@ import sys
 from pathlib import Path
 
 from ..index import DEFAULT_MODEL, Embedder
-from .commands import CliError, EmbedderFactory, cmd_index, cmd_search, cmd_stats
+from .commands import (
+    CliError,
+    EmbedderFactory,
+    cmd_index,
+    cmd_learn,
+    cmd_search,
+    cmd_stats,
+)
 
 DEFAULT_K = 10
 
@@ -109,6 +116,47 @@ def build_parser() -> argparse.ArgumentParser:
     _add_index_location(p_stats)
     p_stats.add_argument("--json", action="store_true", help="emit JSON instead of a table")
     p_stats.set_defaults(func=cmd_stats)
+
+    p_learn = sub.add_parser(
+        "learn",
+        help="draft tier-2 claims with a local model and admit the ones that cite evidence",
+    )
+    _add_index_location(p_learn)
+    p_learn.add_argument(
+        "--model",
+        default=None,
+        help=(
+            "ollama model to draft with (default: llama3.1:8b, chosen because it is NOT "
+            "the judge's family)"
+        ),
+    )
+    p_learn.add_argument(
+        "--host", default="http://localhost:11434", help="ollama host (default: localhost)"
+    )
+    p_learn.add_argument(
+        "--limit", type=_positive_int, default=None, help="stop after this many symbols"
+    )
+    p_learn.add_argument(
+        "--max-offers",
+        type=_positive_int,
+        default=12,
+        help="how many evidence spans to put on the menu (default: 12)",
+    )
+    p_learn.add_argument(
+        "--no-callers",
+        action="store_true",
+        help="offer only the subject and its callees; a symbol's purpose is usually "
+        "visible from its callers, so this makes the task harder on purpose",
+    )
+    p_learn.add_argument(
+        "--redo",
+        action="store_true",
+        help="re-draft symbols that already hold an active claim from this generator "
+        "(default: skip them, so a long run is resumable)",
+    )
+    p_learn.add_argument("--quiet", action="store_true", help="no per-symbol progress")
+    p_learn.add_argument("--json", action="store_true", help="emit JSON instead of a table")
+    p_learn.set_defaults(func=cmd_learn)
 
     return parser
 

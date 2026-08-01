@@ -525,6 +525,161 @@ regenerated rather than trusted. The two sets barely overlap in any case — onl
 hand set's 23 symbols got a mined label, which makes them complementary rather than
 alternative.
 
+## Generation: the claims, and the two numbers that judge them
+
+Everything above this point was built against a store filled by hand. `codelearner
+learn` is the generator, and it arrives last on purpose -- the gate, the staleness
+engine, the negative controls and the judge all had to be measured before the thing
+they exist to restrain was allowed to produce anything.
+
+**It cites by reference number, and there is no other channel.** The model is handed a
+numbered menu of spans the *index* built and answers with integers. This is the whole
+design and it is worth being precise about why, because the obvious alternative looks
+fine: let the model name a path and a byte range. A model asked for
+`swarmsync/repolock.py[4120:4380]` produces something in that shape whether or not it
+read those bytes, and an invented offset does not fail loudly -- it lands inside a real
+file, hashes to something stable, and verifies forever while pointing at nothing. With
+integers, a citation the model invents is not a bad citation, it is not a citation.
+
+That is not hypothetical. On the run below the model cited off its own menu **23 times
+across 10 drafts**, and the pattern is specific: it happens on short menus. A symbol
+offered one span gets cited as `[2, 3, 4, 5, 6]` -- the model assumes a longer list
+exists and invents entries in it. Under a byte-offset design every one of those would
+have become a plausible, permanently-verifying citation to code the claim was not about.
+
+### Measured, on swarm-sync
+
+`llama3.1:8b` drafting, `qwen3.5:9b` judging. Different families, which is the point:
+see below.
+
+```
+admitted 147/150 (0.980)  generator=ollama/llama3.1:8b
+  considered=150 skipped_existing=0 no_offers=0
+  refused: empty_claim=0 no_valid_citation=3 generator_errors=0
+  off-menu refs=23 across 10 draft(s); offers dropped: oversize=96 unreadable=0
+```
+
+223s for 150 symbols on a 10GB RTX 3080, ~0.67 symbols/second.
+
+| | |
+|---|---|
+| **faithfulness** | **0.544** (n=147: 80 supported, 65 not_supported, 2 uncertain) |
+| **purpose agreement** | **gold 0.102, lift 0.081** against 43 labels mined from git history |
+
+### The number that is supposed to be low
+
+0.544 is the honest number, and the first version of this generator would have scored
+close to 1.0 while being worthless. That is the finding worth keeping.
+
+Told only to prefer "a narrow claim you can support to a broad one you cannot",
+`llama3.1:8b` complied exactly, over real symbols:
+
+```
+demo._crash_agent.main    -> "The `main` function requires a `--base-url` argument."
+demo.run_demo._free_port  -> "The function `_free_port` returns an integer."
+```
+
+Restating a type signature is the global optimum of narrow-and-supportable. The span
+entails it, so an adversarial judge supports every one, and a store full of them scores
+~1.0 on faithfulness while saying nothing about any symbol in the repo -- a number
+indistinguishable, from the outside, from one earned by good claims. The prompt now
+states the question first, names the signature shape as a rejected answer with a
+bad/good pair, and re-scopes narrowness to mean claiming less of the *job* rather than
+retreating to syntax. Faithfulness fell from what would have been ~1.0 to 0.544, and
+that fall is the improvement.
+
+**Read 0.544 as a lower bound, not an accuracy.** The judge is written to refute and it
+does: it declines `sample_repo.calc.sub is used to compute the difference between two
+numbers` on the grounds that one passing test "does not prove the function is used to
+compute differences in all cases". That is a defensible reading of the instruction it
+was given, and it means the not_supported set contains claims a reasonable reviewer
+would keep. The set is printed in full rather than summarised for exactly this reason;
+the number is a prompt to go read it, not a verdict.
+
+### The example that leaked, and the failure it turned into
+
+The bad/good pair in the first revision used the real symbols it had been derived from
+-- `main` and `_free_port`, out of swarm-sync's demo package. On the next run the model
+answered for `demo.run_demo.main` with the GOOD example nearly word for word, and that
+is a *different function* from the one the example described. The claim was fluent,
+purpose-shaped, cited a real span, and was about the wrong code. Nothing downstream
+could have caught it: the gate hashes the citation and it verifies, and a menu holding a
+plausible `main` can entail it.
+
+The fix is that examples name symbols which cannot exist in a repo under index
+(`_next_ticket`, `_drain_outbox`). The interesting part is what happened next. The model
+**still copies the example** -- twice in this run, against `swarmsync.config.require_python`
+and `swarmsync.hooks.adapter.cmd_release`:
+
+```
+[refused_no_citation] swarmsync.config.require_python
+  claim:  The `_next_ticket` function is used to prevent two writers from appending
+          to the same slot simultaneously.
+```
+
+But `_next_ticket` is not in the repo, so there was no span to cite, so the reference
+missed the menu, so `write_assertion` refused it and no row exists. Making the examples
+synthetic did not stop the fabrication. It converted a silent, plausible, admitted
+fabrication into a loud refusal -- which is the only outcome the rest of the system can
+act on.
+
+### Purpose accuracy: the generator loses to a bag of identifiers
+
+Scored against labels mined from commit prose the generator is structurally prevented
+from seeing (43 usable labels, 13.5% of 318 symbols, 18 distinct commits, 9 from one):
+
+| condition | n | gold | shuffled | lift |
+|---|---|---|---|---|
+| docstring first sentence | 43 | 0.155 | 0.034 | 0.121 |
+| name + signature only | 43 | 0.020 | 0.001 | 0.019 |
+| body identifiers | 43 | **0.205** | 0.065 | **0.140** |
+| body identifiers, doc-blind | 43 | 0.124 | 0.039 | 0.085 |
+| LLM `llama3.1:8b` | 43 | 0.102 | 0.021 | 0.081 |
+| LLM `llama3.1:8b`, doc-blind | 43 | 0.072 | 0.019 | 0.053 |
+
+**The LLM is beaten by a bag of body identifiers, on both conditions.** That is the
+result, and it is not softened here.
+
+It is also not quite the humiliation it looks like, and the reason is stated in this
+README's own warning about the metric: token-F1 rewards vocabulary, not meaning. A
+commit message about a symbol tends to *contain that symbol's identifiers*, and the
+body-identifier baseline emits exactly those, so it is playing the metric's strongest
+suit. The LLM paraphrases into fluent English -- "hands out the sequence number a
+writer stamps on a record" -- and pays for every word that is not the word the
+committer used. The comparison that survives this is the one the harness was built to
+support: the LLM's lift over its own shuffled control is 0.081, comfortably positive, so
+it is carrying real signal about the symbol rather than repo-wide vocabulary. It is
+simply carrying less *lexical* signal than extraction does.
+
+What this does not license is the conclusion that the LLM understands the code better
+and the metric is unfair. Nothing here measures that. A generator that reads well and
+scores badly on token-F1 and a generator that is wrong are indistinguishable under this
+eval, which is why faithfulness is reported beside it and the refusal set is printed.
+
+One flag on the doc-blind row: `suspect` -- output tokens present in the held-out label
+but not in the source view -- is 2 for the sighted LLM condition and **9** for the
+doc-blind one. Nine is small enough to be coincidence across 43 short strings and large
+enough that it should not be waved through. It is reported rather than explained.
+
+### What this run does not establish
+
+- **150 symbols of one repo, and swarm-sync includes a `sample_repo/` fixture.**
+  Several admitted claims are about `calc.add` and `calc.sub` -- toy functions whose
+  purpose is their name. They inflate the count and tell you nothing.
+- **One generator, one judge, one prompt, one run.** Temperature is 0, which removes the
+  variance that is free to remove and does not make the run reproducible across ollama
+  or driver versions.
+- **`oversize=96` is a budget decision, not a defect.** Those neighbours were longer
+  than `max_offer_bytes` and were dropped rather than truncated -- a model that reads
+  the first 4KB and cites a span covering 40KB would produce a citation that verifies.
+  It sat in the same counter as `unreadable` until a run reported "96 dropped as
+  unreadable" against a repo whose 1,345 symbols every one hashed clean; they are now
+  separate, because one is routine and the other means stop and re-index.
+- **The judge and the generator must stay in different families.** `collides_with_judge`
+  makes that checkable rather than remembered: pointing `--model` at a Qwen model runs
+  fine, breaks no test, and silently converts faithfulness from an audit into two
+  relatives agreeing.
+
 ## Onboarding tours
 
 Retrieval ranks. Onboarding **orders**. `codelearner.onboard` cuts the same call
@@ -814,6 +969,51 @@ vectors from two different models are not comparable: querying with a mismatched
 embedder returns results that look plausible and mean nothing. `search` checks the
 same thing and disables dense rather than answering from incomparable vectors.
 
+### `codelearner learn`
+
+The only command that calls a language model. Drafts one claim per candidate symbol,
+cites by menu reference, and admits what survives `write_assertion`.
+
+```bash
+codelearner learn --repo /path/to/repo
+codelearner learn --repo /path/to/repo --limit 20 --json
+codelearner learn --repo /path/to/repo --no-callers    # harder on purpose
+```
+
+```
+admitted 147/150 (0.980)  generator=ollama/llama3.1:8b
+  considered=150 skipped_existing=0 no_offers=0
+  refused: empty_claim=0 no_valid_citation=3 generator_errors=0
+  off-menu refs=23 across 10 draft(s); offers dropped: oversize=96 unreadable=0
+```
+
+`admitted` is deliberately not the headline. A generator that cites whatever is put in
+front of it produces the same count as one that read the code, and the numbers that
+separate them are the rest of the line: how often it abstained, how often its references
+missed the menu it was given, and how often it was simply unreachable. Those stay apart
+rather than summing, because a run that refused everything because the claims came back
+empty and a run that refused everything because the references all missed are the same
+total and entirely different repairs.
+
+| flag | |
+|---|---|
+| `--model` | ollama model to draft with. Default `llama3.1:8b` — **not** a Qwen model, because the faithfulness judge is one |
+| `--limit` | stop after N symbols |
+| `--max-offers` | menu size including the subject (default 12) |
+| `--no-callers` | offer only the subject and its callees. A symbol's purpose is usually visible from its callers, so this makes the task harder |
+| `--redo` | re-draft symbols that already hold an active claim from this generator |
+| `--json` | machine-readable, carrying every counter |
+
+Re-running **resumes** rather than duplicates: a symbol that already holds an active
+claim from the same generator is skipped. The store never deletes, so a second run
+without this would double it permanently and re-weight every rate computed over it
+afterwards. A claim that went *stale* is no longer active, so its symbol becomes a
+candidate again — the repo invalidated that claim and the pipeline re-derives it.
+
+Passing a Qwen model prints a warning and runs anyway. Measuring the family collision on
+purpose is a legitimate experiment; doing it by accident and then reading the
+faithfulness score as an independent audit is not.
+
 ### Exit codes
 
 | code | meaning |
@@ -998,16 +1198,17 @@ get_symbol(qualname)                     -> the claim, re-verified against disk
 | 2b | Dense embeddings (`Qwen3-Embedding-0.6B`) into sqlite-vec | done |
 | 3 | Hybrid retrieval: RRF fusion + graph expansion | done |
 | 3b | Cross-encoder reranking (`zerank-1-small`) | done |
-| 4 | Assertion pipeline + adversarial gate | |
-| 5 | Staleness engine | |
+| 4 | Assertion pipeline + adversarial gate | done |
+| 5 | Staleness engine | done |
 | 6 | Onboarding tours | done |
 | 7 | MCP server + CLI | done |
-| 8 | Eval: per-modality ablation (done), faithfulness scoring with a cross-family judge (done), git-history purpose gold (done, 13% yield), gate negative controls (done — **6,091 attacks refused, 100.00%**; 1,688 correct citations admitted, 100.00%; 12/12 controls mutation-verified) | partial |
+| 8 | Eval: per-modality ablation (done), faithfulness scoring with a cross-family judge (done), git-history purpose gold (done, 13% yield), gate negative controls (done — **6,091 attacks refused, 100.00%**; 1,688 correct citations admitted, 100.00%; 12/12 controls mutation-verified) | done |
+| 9 | Claim generation: cited drafts, `codelearner learn`, and a measured generator (done — **147/150 admitted**, faithfulness **0.544**, purpose lift **0.081**) | done |
 
 ## Verification
 
 ```bash
-.venv/bin/python -m pytest tests/ -q      # 369 tests
+.venv/bin/python -m pytest tests/ -q      # 484 tests
 .venv/bin/ruff check .
 .venv/bin/mypy codelearner --ignore-missing-imports
 ```

@@ -1,4 +1,4 @@
-"""The three commands: index, search, stats.
+"""The four commands: index, search, stats, learn.
 
 Every failure here is somebody's Tuesday afternoon, so the rule this module follows
 is that a user must never see a traceback for a condition the tool could have
@@ -463,4 +463,106 @@ def cmd_stats(args: Any, factory: EmbedderFactory) -> int:
             "  none. Dense retrieval is unavailable on this index; build vectors "
             "with `codelearner index <repo> --embed --force`."
         )
+    return 0
+
+
+def cmd_learn(args: Any, factory: EmbedderFactory) -> int:
+    """Fill the tier-2 store: draft a cited claim per symbol, admit what survives the gate.
+
+    The only command in this tool that calls a language model, and the only one whose
+    output is not derived from source alone. That is why it prints a refusal breakdown
+    rather than a success count: `admitted` on its own is indistinguishable between a
+    generator that understood the repo and one that cited whatever was in front of it,
+    and the numbers that separate those -- how often it abstained, how often it cited
+    something that was not on its menu -- are the ones worth reading.
+
+    Progress goes to stderr so that `--json` on stdout stays a clean document even
+    while a local model spends twenty minutes working through a repository.
+    """
+    from ..generate import DEFAULT_GENERATOR_MODEL, OllamaClaimGenerator, learn
+    from ..generate.llm import collides_with_judge
+    from ..generate.pipeline import PHASE_DONE
+    from ..generate.types import GeneratorUnavailable
+
+    repo = args.repo.expanduser().resolve()
+    index_path = resolve_index_path(repo, args.index_path)
+    conn = open_index(index_path)
+
+    model = args.model or DEFAULT_GENERATOR_MODEL
+    generator = OllamaClaimGenerator(model=model, host=args.host)
+
+    # Said once, at the point of use, rather than left to a log nobody reads. The run
+    # still happens -- measuring the collision deliberately is legitimate -- but a
+    # faithfulness score computed afterwards is no longer cross-family, and the person
+    # who has to know that is the one who just typed the command.
+    if collides_with_judge(model):
+        print(
+            f"codelearner: warning: {model!r} is the same model family as the "
+            f"faithfulness judge. Claims from it can still be stored, but scoring them "
+            f"with `qwen3.5:9b` measures two relatives agreeing rather than an "
+            f"independent audit.",
+            file=sys.stderr,
+        )
+
+    total = [0]
+
+    def on_progress(progress: Any) -> None:
+        if progress.phase != PHASE_DONE:
+            return
+        total[0] += 1
+        if not args.json and not args.quiet:
+            print(
+                f"\r  {total[0]}/{progress.total} {progress.candidate.qualname[:60]:<60}",
+                end="",
+                file=sys.stderr,
+                flush=True,
+            )
+
+    try:
+        report = learn(
+            conn,
+            repo,
+            generator,
+            limit=args.limit,
+            max_offers=args.max_offers,
+            include_callers=not args.no_callers,
+            skip_existing=not args.redo,
+            on_progress=on_progress,
+        )
+    except GeneratorUnavailable as exc:
+        # An outage is not a result, and must not be reported as a run that finished
+        # with nothing to say. `learn` already refuses to absorb it; this turns it into
+        # the one-line, no-traceback failure the rest of the CLI promises.
+        raise CliError(str(exc)) from exc
+    finally:
+        generator.release()
+
+    if not args.json and not args.quiet:
+        print("\r" + " " * 72 + "\r", end="", file=sys.stderr)
+
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "repo": str(repo),
+                    "index": str(index_path),
+                    "generator": report.generator,
+                    "considered": report.considered,
+                    "skipped_existing": report.skipped_existing,
+                    "symbols_without_offers": report.symbols_without_offers,
+                    "drafts_requested": report.drafts_requested,
+                    "admitted": report.admitted,
+                    "refused_empty_claim": report.refused_empty_claim,
+                    "refused_no_citation": report.refused_no_citation,
+                    "invalid_refs": report.invalid_refs,
+                    "drafts_citing_off_menu": report.drafts_citing_off_menu,
+                    "offers_dropped_unreadable": report.offers_dropped_unreadable,
+                    "generator_errors": report.generator_errors,
+                    "admission_rate": report.admission_rate,
+                },
+                indent=2,
+            )
+        )
+    else:
+        print(report.format_report())
     return 0

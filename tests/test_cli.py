@@ -482,3 +482,136 @@ def test_module_entry_point_runs_out_of_the_source_tree():
     )
     assert proc.returncode == 0
     assert "index" in proc.stdout and "search" in proc.stdout and "stats" in proc.stdout
+
+
+# ---------------------------------------------------------------------------
+# learn
+# ---------------------------------------------------------------------------
+
+
+class FakeClaimGenerator:
+    """A `ClaimGenerator` that cites ref 1 and nothing else.
+
+    Stands in for ollama for the same reason `FakeEmbedder` stands in for
+    `Qwen3-Embedding-0.6B`: no test in this repo may call a model, and the wiring
+    being checked here -- that the command reaches the pipeline, that refusals reach
+    the report, that an outage becomes one line instead of a traceback -- is not
+    wiring a model has anything to say about.
+    """
+
+    def __init__(self, *args, **kwargs) -> None:
+        self.released = False
+
+    @property
+    def name(self) -> str:
+        return "fake/claims"
+
+    def draft(self, *, subject, offered):
+        from codelearner.generate.types import Draft
+
+        return Draft(claim=f"{subject} does the thing.", cited_refs=(1,), kind="purpose")
+
+    def release(self) -> None:
+        self.released = True
+
+
+def _patch_generator(monkeypatch, cls) -> None:
+    """Swap the generator the command builds.
+
+    `cmd_learn` imports `OllamaClaimGenerator` inside the function body, so patching
+    the attribute on the package is enough and no injection seam is needed. That
+    import is deliberate for a second reason: `codelearner search` must not pay the
+    import cost of the generation stack.
+    """
+    import codelearner.generate as generate
+
+    monkeypatch.setattr(generate, "OllamaClaimGenerator", cls)
+
+
+def test_learn_admits_claims_and_reports_what_it_refused(tmp_path, capsys, monkeypatch):
+    """The happy path, and the shape of its report.
+
+    `admitted` alone cannot be the headline: a generator that cites whatever is in
+    front of it produces the same number as one that understood the repo. So the
+    refusal counters have to survive into the output, and this pins that they do."""
+    _patch_generator(monkeypatch, FakeClaimGenerator)
+    repo, _ = _indexed(tmp_path, capsys)
+
+    assert main(["learn", "--repo", str(repo)], embedder_factory=fake_factory) == 0
+    out = capsys.readouterr().out
+    assert "admitted" in out
+
+
+def test_learn_json_carries_every_counter(tmp_path, capsys, monkeypatch):
+    """`--json` is the machine surface, so a counter missing from it is a counter that
+    silently stops being auditable. The refusal breakdown is the point of the document,
+    not an appendix to it."""
+    _patch_generator(monkeypatch, FakeClaimGenerator)
+    repo, _ = _indexed(tmp_path, capsys)
+
+    assert main(["learn", "--repo", str(repo), "--json"], embedder_factory=fake_factory) == 0
+    doc = json.loads(capsys.readouterr().out)
+    for key in (
+        "generator",
+        "considered",
+        "drafts_requested",
+        "admitted",
+        "refused_empty_claim",
+        "refused_no_citation",
+        "invalid_refs",
+        "generator_errors",
+    ):
+        assert key in doc, key
+    assert doc["generator"] == "fake/claims"
+
+
+def test_learn_without_an_index_says_so_instead_of_creating_one(tmp_path, monkeypatch, capsys):
+    """`db.connect` will happily make an empty file at any path, which is how a typo
+    becomes "0 symbols considered" rather than an error. Same rule as every other
+    read-side command."""
+    _patch_generator(monkeypatch, FakeClaimGenerator)
+    empty = tmp_path / "not-a-repo"
+    empty.mkdir()
+
+    assert main(["learn", "--repo", str(empty)], embedder_factory=fake_factory) == 1
+    assert "no index" in capsys.readouterr().err
+
+
+def test_a_backend_outage_is_one_line_and_not_a_traceback(tmp_path, capsys, monkeypatch):
+    """The failure this command will actually hit: ollama is not running.
+
+    It must not surface as a stack trace, and -- more importantly -- must not surface
+    as a completed run with nothing admitted, which is what absorbing the exception
+    would produce and what a reader would mistake for a model that had nothing to say.
+    """
+
+    class Down(FakeClaimGenerator):
+        def draft(self, *, subject, offered):
+            from codelearner.generate.types import GeneratorUnavailable
+
+            raise GeneratorUnavailable("could not reach the generator at http://x (down)")
+
+    _patch_generator(monkeypatch, Down)
+    repo, _ = _indexed(tmp_path, capsys)
+
+    assert main(["learn", "--repo", str(repo)], embedder_factory=fake_factory) == 1
+    captured = capsys.readouterr()
+    assert "could not reach the generator" in captured.err
+    assert "Traceback" not in captured.err
+    assert "admitted" not in captured.out
+
+
+def test_a_second_run_skips_what_the_first_admitted(tmp_path, capsys, monkeypatch):
+    """The store never deletes, so a re-run that re-drafted everything would double it
+    permanently and re-weight every rate computed over it afterwards."""
+    _patch_generator(monkeypatch, FakeClaimGenerator)
+    repo, _ = _indexed(tmp_path, capsys)
+
+    assert main(["learn", "--repo", str(repo), "--json"], embedder_factory=fake_factory) == 0
+    first = json.loads(capsys.readouterr().out)
+    assert main(["learn", "--repo", str(repo), "--json"], embedder_factory=fake_factory) == 0
+    second = json.loads(capsys.readouterr().out)
+
+    assert first["admitted"] > 0
+    assert second["skipped_existing"] == first["admitted"]
+    assert second["drafts_requested"] == 0
