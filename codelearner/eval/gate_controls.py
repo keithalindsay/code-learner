@@ -357,9 +357,37 @@ FAMILIES: dict[str, Family] = {
         name="absent_file",
         expect=REFUSED,
         attack="the right content cited in a file that does not exist",
+        # Still exactly one code, and that is now load-bearing rather than incidental.
+        # WP2 put an index-membership check ahead of the read, so this control is
+        # refused before anything is stat'd -- and it is refused with the SAME code and
+        # the same shape as a path that is present on disk but unindexed. A second code
+        # would have made the refusal answer "does this file exist", which is the
+        # oracle WP2 exists to close. If this set ever grows, check that the new code
+        # is not distinguishing two paths a caller is not entitled to tell apart.
         codes=frozenset({"file_missing"}),
         mutation=_mut(
-            "_verify_span refuses a citation it cannot read off disk",
+            "_verify_span refuses a citation it cannot, or will not, read off disk",
+            # Three edits, one rule. Defence in depth means no single deletion admits
+            # the attack, so a mutation that removed only one guard would report this
+            # control as undetectable when it is in fact over-defended. Each `old` is
+            # a single line and each is unique in the module, so drift in the
+            # surrounding comments cannot silently turn this into a no-op -- the
+            # harness raises on a snippet that no longer matches exactly once.
+            Edit(
+                target=GATE_MODULE,
+                old='    if conn.execute("SELECT 1 FROM files WHERE path = ?", (raw.path,)).fetchone() is None:',
+                new="    if False:  # mutated: the index-membership guard is gone",
+            ),
+            Edit(
+                target=GATE_MODULE,
+                old="    if not target.is_file():",
+                new="    if False:  # mutated: the regular-file guard is gone",
+            ),
+            Edit(
+                target=GATE_MODULE,
+                old="        size = target.stat().st_size",
+                new="        size = 0  # mutated: the size ceiling is gone",
+            ),
             Edit(
                 target=GATE_MODULE,
                 old=(

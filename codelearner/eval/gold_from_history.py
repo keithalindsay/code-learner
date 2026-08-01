@@ -118,6 +118,7 @@ between them can be computed from five cases.
 from __future__ import annotations
 
 import math
+import os
 import random
 import re
 import subprocess
@@ -353,6 +354,32 @@ class MineReport:
 # --------------------------------------------------------------------------------
 
 
+# Repeated from `ingest.indexer` rather than imported, and repeated on purpose.
+#
+# Git executes the value of `core.fsmonitor` (and `core.hooksPath`, `core.pager`,
+# `alias.*`), reading it from the config of the repo it is pointed at -- so mining
+# labels out of a second party's history ran that party's command as us. The mining
+# subcommands here are read-only in the sense that they write nothing to the repo;
+# that says nothing about what git runs on the way. Which subcommands consult
+# fsmonitor is a property of the git version, not of the subcommand list, so the
+# defence goes on the chokepoint rather than on the calls judged to need it.
+#
+# The overrides live on the COMMAND LINE because `-c` is the only tier that outranks
+# the repo's own `.git/config`; a config file cannot defend against a config file.
+# `GIT_CONFIG_NOSYSTEM` covers /etc/gitconfig, which has no `-c` equivalent, and
+# `GIT_CONFIG_GLOBAL` is left alone -- `~/.gitconfig` is the user's, not the
+# attacker's. The full argument is on `indexer._GIT_HARDENED_ARGV`.
+#
+# This module already imports from `ingest`, so sharing the constant would have been
+# legal. It is not shared anyway: a security prefix that one module holds on loan
+# from another is one refactor away from being silently dropped here, and the
+# duplication is six tokens. `tests/test_ingest.py` pins both copies against the
+# same hostile repo so they cannot drift apart unnoticed.
+_GIT_HARDENED_ARGV = (
+    "git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null",
+)
+
+
 def _git(repo: Path, *args: str, timeout: int = 60) -> str | None:
     """Run a read-only git command in `repo`. None on any failure.
 
@@ -364,10 +391,11 @@ def _git(repo: Path, *args: str, timeout: int = 60) -> str | None:
         # S603/S607: `git` from PATH on purpose (see indexer._git_tracked_python_files).
         # Fixed argument vector, no shell. Every subcommand used here is read-only.
         proc = subprocess.run(  # noqa: S603
-            ["git", "-C", str(repo), "-c", "log.showSignature=false", *args],  # noqa: S607
+            [*_GIT_HARDENED_ARGV, "-C", str(repo), "-c", "log.showSignature=false", *args],  # noqa: S607
             capture_output=True,
             timeout=timeout,
             check=False,
+            env={**os.environ, "GIT_CONFIG_NOSYSTEM": "1"},
         )
     except (OSError, subprocess.SubprocessError):
         return None

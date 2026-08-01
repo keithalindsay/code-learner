@@ -270,6 +270,65 @@ def test_git_repo_with_nothing_committed_still_indexes(tmp_path):
     assert {r["path"] for r in conn.execute("SELECT path FROM files")} == {"m.py"}
 
 
+def _make_hostile_repo(tmp_path, name: str) -> tuple:
+    """A normal repo whose `.git/config` carries an exec payload, and its sentinel.
+
+    The payload is appended AFTER `git init`/`git add`, so the setup itself never
+    runs it -- if the sentinel exists at the end of a test, the code under test is
+    what ran it. Everything the payload can touch is inside `tmp_path`.
+    """
+    sentinel = tmp_path / f"{name}-EXECUTED"
+    repo = _mkrepo(tmp_path / name, {"m.py": "def f():\n    return 1\n"})
+    cfg = repo / ".git" / "config"
+    hooks = tmp_path / f"{name}-hooks"
+    hooks.mkdir()
+    cfg.write_text(
+        cfg.read_text()
+        + f'[core]\n\tfsmonitor = "touch {sentinel}"\n\thooksPath = "{hooks}"\n'
+    )
+    return repo, sentinel
+
+
+def test_indexing_a_repo_does_not_execute_its_git_config(tmp_path):
+    """SECURITY REGRESSION. Git honours `core.fsmonitor` by EXECUTING it, and it
+    reads that key from the config of the repo it has been pointed at -- so indexing
+    any directory a second party can write to ran their command as us, silently,
+    while the index reported success. Reproduced against the unhardened call: the
+    sentinel below appeared during `git ls-files`.
+
+    The overrides have to be on the command line. A config-file mitigation is
+    defeated by the very thing being defended against, because the repo's config is
+    what git is reading; only `-c` outranks it. `safe.directory` is no help either --
+    it guards repos owned by a different uid, which is precisely the case this
+    misses."""
+    repo, sentinel = _make_hostile_repo(tmp_path, "hostile")
+    conn, stats = index_repo(repo, index_path=tmp_path / "i.db")
+    assert not sentinel.exists(), "indexing executed the repo's core.fsmonitor"
+    # And the hardening did not cost the git listing it protects.
+    assert stats.files == 1
+    assert {r["path"] for r in conn.execute("SELECT path FROM files")} == {"m.py"}
+
+
+def test_gold_mining_git_helper_does_not_execute_a_repo_git_config(tmp_path):
+    """The same defect at the second call site. `eval/gold_from_history` funnels
+    every git invocation it makes -- `rev-list`, the `log -L` line log, `show` --
+    through one helper, and that helper needs the same argv because it is pointed at
+    the same second-party repos.
+
+    Exercised through `ls-files` rather than through `log`: on git 2.34 only the
+    subcommands that refresh the index consult `core.fsmonitor`, so the history
+    subcommands the miner actually runs cannot demonstrate the vector today. That is
+    a property of one git version, not a guarantee, and the helper is generic over
+    its arguments -- hardening the chokepoint is the only version-independent
+    answer. Lives here, beside its twin, so the pair cannot drift apart unnoticed."""
+    from codelearner.eval.gold_from_history import _git
+
+    repo, sentinel = _make_hostile_repo(tmp_path, "hostile-eval")
+    out = _git(repo, "ls-files")
+    assert not sentinel.exists(), "the gold miner executed the repo's core.fsmonitor"
+    assert out is not None and "m.py" in out
+
+
 def test_two_repos_indexed_in_one_session_share_nothing(tmp_path):
     """The isolation guarantee: separate files, no shared rows, no cross-links."""
     a = _mkrepo(tmp_path / "a", {"m.py": "def alpha():\n    return 1\n"})

@@ -37,7 +37,16 @@ class Hit:
 
 
 # FTS5 treats these as query syntax. A user typing `db.init_db(` means it literally.
-_FTS_SPECIAL = re.compile(r'["*():^-]')
+#
+# The C0 range (and DEL) is here for a different failure than the punctuation is, and
+# a worse one. Quoting a term containing a NUL byte does not produce a quoted term:
+# SQLite's string handling stops at the NUL, so the closing quote this function
+# appended is never seen and FTS5 raises `unterminated string` -- an `sqlite3.Error`
+# that `server.app._guard` cannot distinguish from a damaged index, so the server
+# answers `index_unreadable` and tells the caller to re-index a database that is
+# perfectly healthy. The rest of C0 cannot appear in an identifier either, so
+# stripping the whole range costs no query anyone could have meant.
+_FTS_SPECIAL = re.compile(r'[\x00-\x1f\x7f"*():^-]')
 
 
 def escape_fts_query(query: str) -> str:
@@ -46,6 +55,11 @@ def escape_fts_query(query: str) -> str:
     Every term is quoted, which disables operator interpretation entirely. Passing
     raw input to MATCH otherwise turns `foo(` into a syntax error and `a-b` into a
     NOT query -- both of which look like "no results" rather than like a bug.
+
+    Quoting is necessary and not sufficient: a control byte inside a term escapes the
+    quoting itself (see `_FTS_SPECIAL`), which is why the substitution runs first and
+    why its character class covers bytes no code search could contain rather than
+    only the ones FTS5 documents as operators.
     """
     terms = [t for t in _FTS_SPECIAL.sub(" ", query).split() if t]
     if not terms:

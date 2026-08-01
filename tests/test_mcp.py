@@ -13,7 +13,10 @@ tens of seconds and ~1.2GB of VRAM to prove wiring that three floats prove.
 from __future__ import annotations
 
 import asyncio
+import json
+import os
 import subprocess
+import threading
 import tomllib
 from pathlib import Path
 from typing import Any
@@ -736,6 +739,401 @@ def test_a_citation_past_the_end_of_the_file_is_refused(served):
     )
     assert payload["ok"] is False
     assert payload["error"]["code"] == "bad_range"
+
+
+# ---------------------------------------------------------------------------
+# submit_assertion -- the refusal, which is the half that reads files
+# ---------------------------------------------------------------------------
+
+# S105: it is meant to look exactly like a leaked credential -- that is the point of
+# the fixture. AWS's own documentation example key, which is not a key.
+SECRET = "AKIAIOSFODNN7EXAMPLE-not-a-real-key"  # noqa: S105
+
+# One symbol whose bytes are comfortably past the 2048-character cap on quoted text,
+# so that the truncation is exercised by a legitimately large function rather than by
+# lowering the limit for the test.
+WIDE = "def widgets():\n" + "".join(f'    x{i} = "{"y" * 48}"\n' for i in range(64))
+
+
+@pytest.fixture
+def with_a_secret(tmp_path):
+    """An indexed repo that also contains a file the index never parsed.
+
+    `.env` is the auditor's actual target and is not a contrivance: every repo has
+    files git tracks, the indexer skips, and nobody expects a code-search tool to
+    read. The point of the fixture is that `core.py` and `.env` sit in the same
+    directory under the same repo root, so nothing about the path distinguishes them.
+    """
+    repo = _mkrepo(tmp_path / "repo", {"core.py": CORE, "wide.py": WIDE})
+    (repo / ".env").write_text(f"AWS_SECRET_ACCESS_KEY={SECRET}\n")
+    index_path = tmp_path / "index.db"
+    conn, _ = index_repo(repo, index_path=index_path)
+    conn.close()
+    return repo, index_path, build_server(index_path, embedder_factory=FakeEmbedder)
+
+
+def _cite(server: Any, path: str, line_start: int, line_end: int) -> dict[str, Any]:
+    """Submit a deliberately wrong hash for a range -- the read-oracle manoeuvre.
+
+    A wrong `content_hash` is guaranteed to fail the gate, and failing the gate is
+    how the caller gets the file's bytes quoted back at it. Walk the line range and
+    the whole file arrives one refusal at a time.
+    """
+    return call(
+        server,
+        "submit_assertion",
+        subject_qualname="core.frobnicate_widgets",
+        claim="a claim",
+        evidence_spans=[
+            {
+                "path": path,
+                "line_start": line_start,
+                "line_end": line_end,
+                "content_hash": "0" * 64,
+            }
+        ],
+    )
+
+
+def test_an_unindexed_file_inside_the_repo_is_not_read_into_the_refusal(with_a_secret):
+    """The gate was never defeated here -- the refusal was the exfiltration channel.
+
+    `path_escapes_repo` correctly stops `../../etc/passwd`. Inside the root there was
+    no check at all: any file the server process could open was read, decoded and
+    returned as `observed_text` on a hash mismatch. An auditor pulled `.env` secrets
+    and an SSH private key out of error messages by submitting a wrong hash and
+    walking the line ranges. Delete the `files` lookup in `_verify_span` and the
+    secret is in this payload again.
+
+    The refusal must also not become the oracle it replaced, which is why an absent
+    path is asserted to give the SAME code as a present-but-unindexed one. A refusal
+    that said `file_missing` for one and something else for the other would still
+    answer "does this file exist", one guess at a time."""
+    _, _, server = with_a_secret
+
+    payload = _cite(server, ".env", 1, 1)
+    # The leak first, before anything about codes: this assertion is the finding, and
+    # a test that checked the code first would report a renamed error rather than a
+    # recovered credential.
+    assert SECRET not in json.dumps(payload), "the refusal handed back the secret"
+    assert "observed_text" not in payload["error"]
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "file_missing"
+
+    absent = _cite(server, "no-such-file-anywhere.py", 1, 1)
+    assert absent["error"]["code"] == payload["error"]["code"]
+    assert absent["error"]["message"].replace("no-such-file-anywhere.py", ".env") == (
+        payload["error"]["message"]
+    ), "the two refusals differ, which is enough to answer 'does this file exist'"
+
+
+def test_the_quoted_bytes_in_a_refusal_are_capped_and_say_they_were_cut(with_a_secret):
+    """Quoting the bytes is what makes a `hash_mismatch` correctable rather than just
+    correct, so the cap is on the size of the answer and not on whether there is one.
+    Unbounded, one refusal returns as much text as the cited range holds -- which is
+    the whole file when the range is the module.
+
+    The marker is not decoration. Text silently cut at 2048 characters is a false
+    statement about what the file says at those lines, and an agent that trusts it
+    will resubmit a citation built from a half-read line."""
+    _, _, server = with_a_secret
+    _, line_start, line_end = _hash_of(server, "wide.widgets")
+    payload = _cite(server, "wide.py", line_start, line_end)
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "hash_mismatch"
+    text = payload["error"]["observed_text"]
+    # Literals, deliberately, and checked against the module's constants only
+    # afterwards. A test written as `len(text) == MAX_OBSERVED_TEXT_CHARS + ...` goes
+    # red against code that has no such constant with an AttributeError, which proves
+    # the constant is new and proves nothing at all about the behaviour.
+    assert len(WIDE) > 2048, "fixture is too small to be cut"
+    assert len(text) <= 2100, f"quoted {len(text)} characters back, uncapped"
+    assert "truncated" in text[-32:], "cut without saying so"
+
+    assert server_app.MAX_OBSERVED_TEXT_CHARS == 2048
+    assert len(text) == server_app.MAX_OBSERVED_TEXT_CHARS + len(server_app.TRUNCATION_MARKER)
+    assert text.endswith(server_app.TRUNCATION_MARKER)
+
+
+def test_a_file_grown_past_the_ceiling_is_refused_before_it_is_read(with_a_secret):
+    """Refused on `st_size`, before `read_bytes`, because the read is the cost being
+    avoided. One call against a large file returned a 209,715,200-character payload at
+    ~479MB peak RSS -- the entire file, decoded, inside an error message.
+
+    The file is indexed and then grown, rather than indexed large, because that is the
+    reachable path: the ceiling has to hold against what is on disk now, not against
+    what the indexer saw."""
+    repo, _, server = with_a_secret
+    # A literal 8MiB rather than `MAX_CITED_FILE_BYTES + 1`, so that this goes red
+    # against code with no ceiling by refusing to refuse -- not by failing to find a
+    # constant that only the fix introduces.
+    (repo / "core.py").write_text(f"# {SECRET}\n" + "x = 1\n" * ((8 * 1024 * 1024) // 6))
+
+    payload = _cite(server, "core.py", 1, 1)
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "file_too_large"
+    assert SECRET not in json.dumps(payload)
+
+    assert server_app.MAX_CITED_FILE_BYTES == 4 * 1024 * 1024
+    assert payload["error"]["limit"] == server_app.MAX_CITED_FILE_BYTES
+
+
+# ---------------------------------------------------------------------------
+# the transport contract: no predictable condition raises into it
+# ---------------------------------------------------------------------------
+
+def _within(seconds: float, fn, *args, **kwargs):
+    """Run `fn`, failing the test rather than the suite if it never comes back.
+
+    A blocked `open()` on a FIFO is the thing under test, so these tests have to be
+    able to survive the code being wrong -- and a wrong answer here is not an
+    exception, it is a call that never returns. Signals were the obvious tool and do
+    not work: the tool body runs on a worker thread inside the MCP server, so SIGALRM
+    is delivered to a main thread that is merely waiting, and the blocked read is
+    never interrupted (measured against the unfixed code -- the run hung).
+
+    A daemon thread is abandoned instead. It stays blocked on the pipe for the rest of
+    the session and is killed at interpreter exit without being joined, so a
+    regression costs one failed test and one leaked thread rather than a suite that
+    has to be killed from outside."""
+    outcome: dict[str, Any] = {}
+
+    def run() -> None:
+        try:
+            outcome["value"] = fn(*args, **kwargs)
+        except BaseException as exc:  # noqa: BLE001 - re-raised on the calling thread
+            outcome["error"] = exc
+
+    worker = threading.Thread(target=run, daemon=True)
+    worker.start()
+    worker.join(seconds)
+    if worker.is_alive():
+        raise AssertionError(
+            f"blocked for more than {seconds}s -- a citation read is waiting on a FIFO "
+            "that nothing will ever write to, which in the real server means it has "
+            "stopped answering entirely"
+        )
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome["value"]
+
+
+needs_fifo = pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="named pipes are POSIX")
+
+
+def test_a_nul_in_a_citation_path_does_not_raise_into_the_transport(served):
+    """"No predictable condition raises into the transport" is the module's own first
+    rule and the README's stated guarantee, and a NUL byte in a path broke it: the
+    path reached `Path.resolve`, which raised `ValueError: embedded null byte`, and a
+    traceback crossed the MCP boundary. That is the one result that tells an agent the
+    tool itself is broken, which is the one conclusion that stops it retrying.
+
+    `bad_path` rather than the generic `bad_request` `_guard` now falls back to: the
+    refusal names the field, so the fix is visible."""
+    _, _, server = served
+    payload = call(
+        server,
+        "submit_assertion",
+        subject_qualname="core.frobnicate_widgets",
+        claim="a claim",
+        evidence_spans=[
+            {"path": "core\x00.py", "line_start": 1, "line_end": 1, "content_hash": "0" * 64}
+        ],
+    )
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "bad_path"
+
+
+def test_a_nul_in_a_search_query_does_not_make_the_server_accuse_its_own_index(served):
+    """The same guarantee, broken more quietly. Quoting a term does not survive a NUL:
+    SQLite stops at the NUL, never sees the closing quote this code appended, and FTS5
+    raises `unterminated string`. That is an `sqlite3.Error`, so `_guard` reported
+    `index_unreadable` -- the server telling its caller to re-index a database with
+    nothing whatsoever wrong with it, because somebody pasted a control byte into a
+    search box. A misdiagnosis that costs an hour is worse than a crash that costs a
+    minute."""
+    _, _, server = served
+    payload = call(server, "search_code", query="frobnicate\x00widgets")
+    assert payload.get("error", {}).get("code") != "index_unreadable"
+    assert payload["ok"] is True
+    assert [h["qualname"] for h in payload["hits"]][:1] == ["core.frobnicate_widgets"]
+
+
+@needs_fifo
+def test_a_cited_fifo_is_refused_rather_than_blocking_the_server(served):
+    """The failure that does not look like a failure. `read_bytes` on a FIFO blocks
+    until another process opens the write end; this server is single-threaded, so one
+    citation of a named pipe inside the repo root stops it answering anything, with no
+    exception, no log line and no timeout. Every other unreadable thing -- a missing
+    file, a directory -- raises promptly, which is why `except OSError` was believed to
+    cover this and does not.
+
+    The pipe replaces an indexed file so that the citation gets past the `files`
+    lookup: the two guards are independent and this one has to hold on its own."""
+    repo, _, server = served
+    (repo / "core.py").unlink()
+    os.mkfifo(repo / "core.py")
+
+    payload = _within(10, _cite, server, "core.py", 1, 3)
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "file_missing"
+
+
+@needs_fifo
+def test_a_fifo_under_a_stored_claim_expires_it_instead_of_hanging_the_read(served):
+    """The other side of the same defect, and the one that reaches further: the serve
+    path re-reads every cited file on every `get_symbol`, so a FIFO left where a cited
+    file used to be wedges reads, not just writes. `store._read_source` is library code
+    and cannot raise the server's `ToolError`; it reports the file as unreadable, which
+    is what it is, and the claim expires as `file_missing` exactly as a deleted file
+    would."""
+    repo, index_path, server = served
+    good_hash, line_start, line_end = _hash_of(server, "core.frobnicate_widgets")
+    accepted = call(
+        server,
+        "submit_assertion",
+        subject_qualname="core.frobnicate_widgets",
+        claim="frobnicates every widget on the tray",
+        evidence_spans=[
+            {
+                "path": "core.py",
+                "line_start": line_start,
+                "line_end": line_end,
+                "content_hash": good_hash,
+            }
+        ],
+    )
+    assert accepted["ok"] is True
+
+    (repo / "core.py").unlink()
+    os.mkfifo(repo / "core.py")
+
+    payload = _within(10, call, server, "get_symbol", qualname="core.frobnicate_widgets")
+    assert payload["assertions"] == []
+
+    from codelearner import db
+
+    conn = db.connect(index_path)
+    events = store.staleness_events(conn, accepted["assertion_id"])
+    assert [e["reason"] for e in events] == [store.REASON_FILE_MISSING]
+    conn.close()
+
+
+@needs_fifo
+def test_span_for_refuses_a_fifo_with_its_own_exception_type(tmp_path):
+    """`store` is a library and has no transport to be polite towards, so it raises
+    `ValueError` -- what `span_for` already raises for a range that is not a citable
+    one -- rather than importing the server's error type. Checked directly because the
+    server guards this first, so no test that goes through the tool would notice this
+    guard being deleted."""
+    os.mkfifo(tmp_path / "pipe.py")
+    with pytest.raises(ValueError, match="not a regular file"):
+        _within(10, store.span_for, tmp_path, "pipe.py", 0, 10)
+
+
+# ---------------------------------------------------------------------------
+# submit_assertion -- what one call may cost the index forever
+# ---------------------------------------------------------------------------
+
+def _stored(index_path: Path) -> int:
+    from codelearner import db
+
+    conn = db.connect(index_path)
+    try:
+        return int(conn.execute("SELECT count(*) FROM assertions").fetchone()[0])
+    finally:
+        conn.close()
+
+
+def test_a_submission_with_too_many_spans_is_refused(served):
+    """Nothing in the store deletes, so this is not a transient cost: an assertion
+    with 5,000 spans -- which the auditor stored in one call -- is 5,000 file reads on
+    every later `get_symbol` that names its subject, for the life of the index, and
+    the only repair is rebuilding it."""
+    repo, index_path, server = served
+    good_hash, line_start, line_end = _hash_of(server, "core.frobnicate_widgets")
+    span = {
+        "path": "core.py",
+        "line_start": line_start,
+        "line_end": line_end,
+        "content_hash": good_hash,
+    }
+    payload = call(
+        server,
+        "submit_assertion",
+        subject_qualname="core.frobnicate_widgets",
+        claim="a claim resting on the same span many times over",
+        # 33, written out, so that unfixed code fails by accepting it rather than by
+        # not having the constant this test would otherwise have counted from.
+        evidence_spans=[dict(span) for _ in range(33)],
+    )
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "too_many_spans"
+    assert _stored(index_path) == 0
+
+    assert server_app.MAX_EVIDENCE_SPANS == 32
+    assert payload["error"]["limit"] == server_app.MAX_EVIDENCE_SPANS
+
+
+def test_a_claim_longer_than_the_cap_is_refused(served):
+    """A 5MB claim was accepted. It is returned in full by every `get_symbol` that
+    reaches its subject, so one call permanently makes an unrelated read path expensive
+    -- and the claim is not adjudicable by anything, which is the failure the evidence
+    rule exists to prevent, arrived at by volume."""
+    repo, index_path, server = served
+    good_hash, line_start, line_end = _hash_of(server, "core.frobnicate_widgets")
+    payload = call(
+        server,
+        "submit_assertion",
+        subject_qualname="core.frobnicate_widgets",
+        claim="x" * 4097,  # a literal, for the reason given in the spans test above
+        evidence_spans=[
+            {
+                "path": "core.py",
+                "line_start": line_start,
+                "line_end": line_end,
+                "content_hash": good_hash,
+            }
+        ],
+    )
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "claim_too_long"
+    assert _stored(index_path) == 0
+    assert server_app.MAX_CLAIM_CHARS == 4096
+
+
+@pytest.mark.parametrize("confidence", [1e308, -0.5, 2.0, float("inf"), float("nan")])
+def test_a_confidence_that_is_not_a_probability_is_refused(served, confidence):
+    """`confidence=1e308` was stored. It is read as the probability that a claim is
+    right, so anything outside 0..1 makes every comparison against it meaningless --
+    and `inf`/`nan` are worse than absurd, because they compare false against every
+    threshold, so a claim carrying one sits permanently neither above nor below any
+    filter later written over the column.
+
+    Enforced in Python and not yet by a CHECK constraint: the DDL rides along with the
+    next schema bump, because this project refuses to open an index whose version does
+    not match and bumping twice would charge every user for the rebuild twice."""
+    repo, index_path, server = served
+    good_hash, line_start, line_end = _hash_of(server, "core.frobnicate_widgets")
+    payload = call(
+        server,
+        "submit_assertion",
+        subject_qualname="core.frobnicate_widgets",
+        claim="frobnicates every widget on the tray",
+        confidence=confidence,
+        evidence_spans=[
+            {
+                "path": "core.py",
+                "line_start": line_start,
+                "line_end": line_end,
+                "content_hash": good_hash,
+            }
+        ],
+    )
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "bad_confidence"
+    assert _stored(index_path) == 0
 
 
 # ---------------------------------------------------------------------------

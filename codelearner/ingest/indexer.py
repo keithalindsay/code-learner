@@ -12,6 +12,7 @@ Two passes, deliberately separated:
 """
 from __future__ import annotations
 
+import os
 import sqlite3
 import subprocess
 from collections.abc import Iterable, Iterator
@@ -101,6 +102,41 @@ def iter_python_files(repo_root: Path) -> Iterator[Path]:
             yield path
 
 
+# The argv prefix every git invocation here starts with.
+#
+# Git honours a handful of config keys by EXECUTING their value -- `core.fsmonitor`
+# above all, and `core.hooksPath`, `core.pager` and `alias.*` in the same class --
+# and it reads them from the config of the repo it is pointed at. So indexing a
+# directory a second party can write to ran their command as us, silently, while
+# reporting a successful index. Reproduced: a `.git/config` carrying
+# `fsmonitor = "touch /tmp/PWNED"` fires during `git ls-files`. Not a clone-and-get-
+# owned bug (clone does not transfer remote config); it fires on repos delivered as
+# archives, vendored subtrees, or any directory a second party can write into.
+# `safe.directory` does not cover it -- that guards repos owned by a DIFFERENT uid,
+# which is exactly the case this misses.
+#
+# The overrides are on the command line because that is the only tier that outranks
+# the repo's own config. Anything written into a config file is just another file
+# git merges, and the repo's config is the thing being defended against, so a
+# config-file mitigation loses to it. `GIT_CONFIG_NOSYSTEM` removes /etc/gitconfig
+# the same way -- there is no `-c` for that.
+#
+# `GIT_CONFIG_GLOBAL=/dev/null` is deliberately NOT set. `~/.gitconfig` is the one
+# tier the hostile repo cannot write, so it is not part of the threat; blanking it
+# would instead change behaviour for legitimate users -- their `core.excludesFile`,
+# `include.path`, and any `core.quotePath`/output settings vanish, so git would
+# start answering differently here than it does in their own shell. That is a real
+# cost paid against no attacker.
+_GIT_HARDENED_ARGV = (
+    "git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null",
+)
+
+
+def _git_env() -> dict[str, str]:
+    """The environment for a hardened git call: inherited, plus no system config."""
+    return {**os.environ, "GIT_CONFIG_NOSYSTEM": "1"}
+
+
 def _git_tracked_python_files(repo_root: Path) -> list[Path] | None:
     """Tracked `.py` files per git, or None if this is not a usable git repo."""
     if not (repo_root / ".git").exists():
@@ -111,10 +147,11 @@ def _git_tracked_python_files(repo_root: Path) -> list[Path] | None:
         # with no shell, and the only interpolated value is a filesystem path the
         # caller already chose to index.
         proc = subprocess.run(  # noqa: S603
-            ["git", "-C", str(repo_root), "ls-files", "-z", "--", "*.py"],  # noqa: S607
+            [*_GIT_HARDENED_ARGV, "-C", str(repo_root), "ls-files", "-z", "--", "*.py"],  # noqa: S607
             capture_output=True,
             timeout=30,
             check=False,
+            env=_git_env(),
         )
     except (OSError, subprocess.SubprocessError):
         return None

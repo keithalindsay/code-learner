@@ -173,8 +173,31 @@ def span_for(repo_root: db.StrPath, path: str, byte_start: int, byte_end: int) -
     Line numbers are derived from the byte range rather than accepted next to it. A
     citation whose lines and bytes disagree points a human at one place and the
     verifier at another, and nothing about it would ever look wrong.
+
+    Anything that is not a regular file is refused before a byte is read, and the
+    hazard is not the obvious one. A missing file raises promptly and a directory
+    raises promptly; a FIFO does neither. `read_bytes` on a FIFO blocks until some
+    other process opens the write end, which in the single-threaded MCP server means
+    the call never returns, no exception is ever raised, no log line is written, and
+    the process simply stops answering -- a repo-relative path is enough to wedge it.
+    `is_file()` is the cheap test that separates "bytes exist" from "opening this
+    will block".
+
+    This is a library function and it raises `ValueError`, as the range check below
+    does, rather than the server's `ToolError`: `store` has no transport to be polite
+    towards and must not import one. `server.app._verify_span` runs the same check
+    first and turns it into a structured `file_missing` refusal, so the server path
+    never reaches this raise; it is here for every other caller, which is all of them
+    except one.
     """
-    source = (Path(str(repo_root)) / path).read_bytes()
+    target = Path(str(repo_root)) / path
+    if not target.is_file():
+        raise ValueError(
+            f"{path!r} is not a regular file, so there are no bytes to cite. Reading "
+            "a FIFO or a device node here would block this call until another "
+            "process obliged, which is not a bound on anything."
+        )
+    source = target.read_bytes()
     if not 0 <= byte_start < byte_end <= len(source):
         raise ValueError(
             f"span {path}[{byte_start}:{byte_end}] is not a non-empty range inside "
@@ -361,10 +384,22 @@ def _read_source(root: Path, path: str, cache: dict[str, bytes | None]) -> bytes
 
     Cached because a batch of claims about one module would otherwise re-read that
     module once per claim, and verification runs on every serve.
+
+    The `is_file` test is not redundant with the `except OSError`. Catching OSError
+    handles every way a read can fail loudly; a FIFO fails quietly, by blocking in
+    `read_bytes` until another process opens the write end. This function runs on the
+    serve path, so a claim citing a FIFO would hang whoever asked for it -- and since
+    nothing raises, the caller sees a call that never returns rather than an
+    assertion that went stale. Treated as unreadable, which is what it is: a
+    `REASON_FILE_MISSING` expiry, the same outcome as a deleted file.
     """
     if path not in cache:
+        target = root / path
+        if not target.is_file():
+            cache[path] = None
+            return cache[path]
         try:
-            cache[path] = (root / path).read_bytes()
+            cache[path] = target.read_bytes()
         except OSError:
             cache[path] = None
     return cache[path]

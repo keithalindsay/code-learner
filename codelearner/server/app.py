@@ -17,6 +17,7 @@ the drift shows up as a caller who asked for facts and got a resolver's guess.
 """
 from __future__ import annotations
 
+import math
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
@@ -48,6 +49,27 @@ SERVER_NAME = "codelearner"
 # rather than a server that stops responding.
 MAX_K = 100
 MAX_STOPS = 100
+
+# Ceilings on one submission. Unlike `MAX_K` these do not bound a transient cost:
+# nothing in `assertions.store` deletes, so an oversized assertion is re-loaded and
+# its spans re-read and re-hashed on every later `get_symbol` that names its subject,
+# for the life of the index. An auditor stored 5,000 spans and a 5MB claim in a
+# single call, and every one of those spans is a file read on every subsequent serve.
+# 32 spans is more citations than any honest claim about one symbol has -- the
+# generator's own ceiling is 12 offers (`generate.pipeline.DEFAULT_MAX_OFFERS`) --
+# and 4096 characters is several paragraphs about a single function.
+MAX_EVIDENCE_SPANS = 32
+MAX_CLAIM_CHARS = 4096
+
+# What one refusal may read, and how much of it may come back. See `_verify_span`:
+# the `hash_mismatch` refusal quotes the bytes that are actually there so the agent
+# can correct its citation, and that quotation was an unbounded read of any file
+# inside the repo root. 4MiB is ~67x the largest file in this repository and still
+# small enough that a call cannot be used to move a disk image through an error
+# message; 2048 characters is enough to show an agent the symbol it mis-cited.
+MAX_CITED_FILE_BYTES = 4 * 1024 * 1024
+MAX_OBSERVED_TEXT_CHARS = 2048
+TRUNCATION_MARKER = "\n... (truncated)"
 
 # What an assertion is about, when the caller does not say. `store` treats `kind` as
 # free text and the schema does not constrain it, so the default lives here where the
@@ -225,6 +247,17 @@ def _guard(source: IndexSource, fn: Any, /, **kwargs: Any) -> dict[str, Any]:
     not a code-learner index fails on the first query rather than on connect, and
     "no such table: symbols" is a condition with a remedy, not a bug to report.
 
+    `ValueError` is caught for a weaker reason, and deliberately as a backstop rather
+    than as a contract. The standard library raises it for input this module should
+    have refused itself -- a path containing a NUL byte reaches `Path.resolve` and
+    comes back as `ValueError: embedded null byte`, which crossed this boundary as a
+    traceback and told the agent the tool was broken. The specific case is now
+    rejected up front in `_verify_span` as `bad_path`; this clause exists so that the
+    next such value, whatever it turns out to be, is still an answer rather than a
+    crash. The generic code is honest about that: this is the module failing to name
+    a condition, not a condition with a known remedy. A rising count of `bad_request`
+    is a bug report about this file.
+
     Positional-only up front so that a tool body may itself take a parameter named
     `source` or `fn` without colliding with this frame's own arguments.
     """
@@ -233,6 +266,13 @@ def _guard(source: IndexSource, fn: Any, /, **kwargs: Any) -> dict[str, Any]:
         return fn(conn, source, **kwargs)
     except ToolError as exc:
         return exc.payload()
+    except ValueError as exc:
+        return ToolError(
+            "bad_request",
+            f"an argument to this call could not be used ({exc}). Check the paths and "
+            "numbers you passed; this tool takes repo-root-relative paths and 1-based "
+            "line numbers.",
+        ).payload()
     except sqlite3.Error as exc:
         return ToolError(
             "index_unreadable",
@@ -322,7 +362,26 @@ def _verify_span(
     still matches nothing. What it removes is a false rejection, which is the more
     dangerous failure here: an agent told its correct citation is wrong learns that
     the gate is noise.
+
+    Everything between the path check and the read is about the refusal rather than
+    the admission, because the refusal is the dangerous half. This function reads a
+    file off disk and quotes it back inside `hash_mismatch`, so every restriction on
+    what it will open is a restriction on what a deliberately wrong `content_hash`
+    can be made to print. See the `files` lookup and the size ceiling below.
     """
+    if "\x00" in raw.path:
+        # Rejected here, by name, rather than left to `Path.resolve` -- which raises
+        # `ValueError: embedded null byte`, a bare traceback across the MCP boundary
+        # and a direct breach of this module's first rule. `_guard` now catches
+        # ValueError as well, but a caller that gets `bad_request` learns only that
+        # something was wrong somewhere; one that gets `bad_path` with the offending
+        # field named can fix it.
+        raise ToolError(
+            "bad_path",
+            "the citation path contains a NUL byte, which no file on disk can. "
+            "Pass the `path` exactly as search_code or get_symbol returned it.",
+            path=raw.path.replace("\x00", "\\x00"),
+        )
     target = (root / raw.path).resolve()
     if not target.is_relative_to(root.resolve()):
         raise ToolError(
@@ -330,6 +389,75 @@ def _verify_span(
             f"{raw.path!r} resolves outside the indexed repository. Citations must "
             "be repo-root-relative paths.",
             path=raw.path,
+        )
+
+    # The read is restricted to files this index parsed, and the reason is not
+    # tidiness. Before this check the gate refused paths that escaped the repo root
+    # and read ANY file inside it, indexed or not, then returned the decoded bytes as
+    # `observed_text` in the refusal below. An auditor recovered `.env` secrets and an
+    # SSH private key by submitting a deliberately wrong `content_hash` and walking
+    # the line ranges. The gate was never defeated; the refusal was the exfiltration
+    # channel, and a channel is closed by narrowing what feeds it.
+    #
+    # `file_missing`, and NOT a new code, which is the more interesting half of the
+    # choice. A distinct code -- `file_not_indexed` for `.env`, `file_missing` for a
+    # path that is simply absent -- would tell an honest agent slightly more, and
+    # would tell a probing one exactly what it came for: run the two cases and the
+    # difference in the code IS the answer to "does this file exist on disk". The
+    # oracle would survive the fix in a smaller form. One code, raised from one place,
+    # for every path this index did not parse, means absent, present-but-ignored, and
+    # `.env` are indistinguishable from outside. The remaining `file_missing` raises
+    # below can afford to say more, because by then the path is one this index parsed
+    # and its existence is already public through search_code.
+    #
+    # The message carries the remedy, which is where the honest agent's information
+    # actually lives: cite what retrieval handed you, or re-index. That agent cites
+    # what it retrieved and never sees this refusal at all -- which is why restricting
+    # the read to indexed files costs nothing real.
+    if conn.execute("SELECT 1 FROM files WHERE path = ?", (raw.path,)).fetchone() is None:
+        raise ToolError(
+            "file_missing",
+            f"{raw.path!r} is not a file in this index, so there is nothing here to "
+            "cite. Cite a path that search_code or get_symbol returned. If the file is "
+            "part of this repository but was added or renamed after the last index "
+            "run, re-index it first -- this tool reads only what it has parsed.",
+            path=raw.path,
+        )
+
+    if not target.is_file():
+        # Checked before the read, not inferred from an OSError afterwards. A missing
+        # file and a directory both fail loudly; a FIFO does not fail at all --
+        # `read_bytes` blocks until another process opens the write end, and this
+        # server is single-threaded, so one citation of a named pipe inside the repo
+        # stops it answering anything, forever, without raising or logging.
+        raise ToolError(
+            "file_missing",
+            f"{raw.path!r} is not a readable file in the repository right now. Cite a "
+            "file that exists; if it was deleted or replaced, re-index.",
+            path=raw.path,
+        )
+    try:
+        size = target.stat().st_size
+    except OSError as exc:
+        raise ToolError(
+            "file_missing",
+            f"cannot stat {raw.path!r} ({exc}). Cite a file that exists in the "
+            "indexed repository.",
+            path=raw.path,
+        ) from exc
+    if size > MAX_CITED_FILE_BYTES:
+        # Refused on `st_size` before `read_bytes`, which is the only order that
+        # helps: the cost being avoided is the read itself. One call against a 200MB
+        # file returned a 209,715,200-character payload at ~479MB peak RSS -- the
+        # whole file, decoded, inside an error message.
+        raise ToolError(
+            "file_too_large",
+            f"{raw.path!r} is {size} bytes, over the {MAX_CITED_FILE_BYTES}-byte "
+            "ceiling on a citable file. Nothing this large is source a claim can rest "
+            "on; cite the symbol you actually read.",
+            path=raw.path,
+            size=size,
+            limit=MAX_CITED_FILE_BYTES,
         )
     try:
         source = target.read_bytes()
@@ -399,6 +527,14 @@ def _verify_span(
     # opening the file at those lines would see, and the point of this message is to
     # let the agent correct itself rather than guess again.
     shown = candidates[-1]
+    # Quoting the bytes is what makes this refusal correctable rather than merely
+    # correct -- and it is also the thing an attacker submits a wrong hash in order to
+    # read. Bounded, with the cut marked, because a truncation an agent cannot see is
+    # a lie about what the file says. The bound is on the answer; the bounds on what
+    # can be opened at all are above, and they are the ones doing the security work.
+    observed_text = source[shown.byte_start:shown.byte_end].decode("utf-8", "replace")
+    if len(observed_text) > MAX_OBSERVED_TEXT_CHARS:
+        observed_text = observed_text[:MAX_OBSERVED_TEXT_CHARS] + TRUNCATION_MARKER
     raise ToolError(
         "hash_mismatch",
         f"the bytes at {shown.citation} do not match what you cited. The file has "
@@ -409,7 +545,7 @@ def _verify_span(
         cited_hash=cited,
         observed_hash=shown.content_hash,
         observed_hashes=[s.content_hash for s in candidates],
-        observed_text=source[shown.byte_start:shown.byte_end].decode("utf-8", "replace"),
+        observed_text=observed_text,
     )
 
 
@@ -653,6 +789,53 @@ def _submit_body(
     confidence: float | None,
 ) -> dict[str, Any]:
     root = source.repo_root(conn)
+
+    # Size first, before the index is touched and long before a file is opened. These
+    # are not rules about whether a claim is true -- they are the only defence against
+    # a submission whose cost outlives it. Nothing in `assertions.store` deletes, so a
+    # 5,000-span assertion is 5,000 file reads on every later `get_symbol` naming its
+    # subject, and a 5MB claim is 5MB in every response that serves it, for as long as
+    # the index exists. There is no repair short of rebuilding.
+    if len(evidence_spans) > MAX_EVIDENCE_SPANS:
+        raise ToolError(
+            "too_many_spans",
+            f"{len(evidence_spans)} evidence spans, over the limit of "
+            f"{MAX_EVIDENCE_SPANS}. A claim about one symbol that needs more citations "
+            "than that is really several claims -- submit them separately, each "
+            "standing on the spans that actually support it.",
+            spans=len(evidence_spans),
+            limit=MAX_EVIDENCE_SPANS,
+        )
+    if len(claim) > MAX_CLAIM_CHARS:
+        raise ToolError(
+            "claim_too_long",
+            f"the claim is {len(claim)} characters, over the limit of "
+            f"{MAX_CLAIM_CHARS}. A stored claim is read back next to the code it is "
+            "about; anything longer than a few paragraphs is a document, and this is "
+            "not where a document goes.",
+            length=len(claim),
+            limit=MAX_CLAIM_CHARS,
+        )
+    # Bounded here in Python and NOT by a CHECK constraint on `assertions.confidence`,
+    # which is where it belongs. Adding the constraint is a DDL change, and this
+    # project's schema policy is refuse-and-rotate: every bump makes every existing
+    # index refuse to open until it is rebuilt. Bumping twice in one remediation would
+    # charge that twice, so the constraint rides along with the WP8 v6 change and this
+    # check holds the line until then. When it lands, this stays -- a caller deserves
+    # `bad_confidence` rather than an IntegrityError, and the store deserves a rule
+    # that holds for library callers who never come through this tool.
+    #
+    # `isfinite` is the half that matters: `1e308` is merely absurd, but `inf` and
+    # `nan` compare false against every threshold, so a claim carrying one is
+    # permanently neither above nor below any confidence filter later written.
+    if confidence is not None and not (math.isfinite(confidence) and 0.0 <= confidence <= 1.0):
+        raise ToolError(
+            "bad_confidence",
+            f"confidence must be a real number between 0 and 1, not {confidence!r}. "
+            "It is read as a probability that this claim is right.",
+            confidence=repr(confidence),
+        )
+
     # The cheapest rule, and the one the negative controls in `eval.gate_controls`
     # found missing: a claim whose subject is not in the index is refused before any
     # file is read. Every span can hash-match perfectly while the qualname they are
@@ -860,7 +1043,9 @@ def build_server(
         not make a claim about a symbol that does not exist accountable to anyone.
 
         Cite what you read: pass the content_hash that search_code or get_symbol
-        returned, or the exact source text at those lines.
+        returned, or the exact source text at those lines. Spans must name files this
+        index parsed ('file_not_indexed'), at most 32 of them; the claim is capped at
+        4096 characters and confidence, if given, is a probability between 0 and 1.
         """
         return _guard(
             source,
@@ -887,7 +1072,11 @@ def build_server(
 
 
 __all__ = [
+    "MAX_CITED_FILE_BYTES",
+    "MAX_CLAIM_CHARS",
+    "MAX_EVIDENCE_SPANS",
     "MAX_K",
+    "MAX_OBSERVED_TEXT_CHARS",
     "MAX_STOPS",
     "SERVER_NAME",
     "EvidenceSpanInput",

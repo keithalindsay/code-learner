@@ -14,11 +14,13 @@ right when it is measuring nothing: an empty corpus refuses 100% of what it subm
 harness pointed at the wrong repo refuses everything for the wrong reason, and a decoy
 hash that happens to be the correct one passes as a refusal that never happened.
 
-So the tests below are in two halves. The first half measures the gate. The second half
-attacks the measurement -- an empty corpus must raise rather than report 1.0, a no-op
-mutation must NOT be reported as detected, an unmutated copy must score exactly what the
-working tree scores, and a mutation snippet that has drifted out of the source must fail
-loudly rather than silently test nothing.
+So the tests below are in three parts. The first measures the gate. The second attacks
+the measurement -- an empty corpus must raise rather than report 1.0, a no-op mutation
+must NOT be reported as detected, an unmutated copy must score exactly what the working
+tree scores, and a mutation snippet that has drifted out of the source must fail loudly
+rather than silently test nothing. The third attacks `Outcome.held`, the single predicate
+all of those numbers are computed through, with synthetic outcomes the corpus cannot
+currently produce.
 """
 from __future__ import annotations
 
@@ -37,6 +39,7 @@ from codelearner.eval.gate_controls import (  # noqa: E402
     GateReport,
     Mutation,
     MutationFailed,
+    Outcome,
     VacuousCorpus,
     build_corpus,
     build_harness,
@@ -396,3 +399,172 @@ def test_the_working_tree_is_never_edited_by_a_mutation(mutant_dir, report):
     before = open(gate, "rb").read()  # noqa: SIM115
     run_mutation("decoy_content_hash", mutant_dir / "untouched", baseline=report)
     assert open(gate, "rb").read() == before  # noqa: SIM115
+
+
+# ---------------------------------------------------------------------------
+# the scoring function, scored
+# ---------------------------------------------------------------------------
+
+# One negative family and one positive family, named as literals rather than stubbed:
+# `held` reads its expectation and its acceptable codes out of FAMILIES, so both branches
+# have to be exercised through real spec entries or the table is testing a fixture.
+ATTACK_FAMILY = "past_eof"        # expect REFUSED, codes == {"bad_range"}
+LEGITIMATE_FAMILY = "multi_span"  # expect ACCEPTED, two spans submitted, both stored
+
+
+def _attack(**overrides) -> Outcome:
+    """An attack the gate refused exactly as promised, before overrides."""
+    return Outcome(**{
+        "control": f"{ATTACK_FAMILY}/tray.Tray.count",
+        "family": ATTACK_FAMILY,
+        "verdict": REFUSED,
+        "code": "bad_range",
+        "rows_added": 0,
+        "evidence": 0,
+        "expected_evidence": 0,
+        "servable": None,
+        **overrides,
+    })
+
+
+def _legitimate(**overrides) -> Outcome:
+    """A correct citation the gate admitted exactly as promised, before overrides."""
+    return Outcome(**{
+        "control": f"{LEGITIMATE_FAMILY}/tray.Tray.widgets",
+        "family": LEGITIMATE_FAMILY,
+        "verdict": ACCEPTED,
+        "code": None,
+        "rows_added": 1,
+        "evidence": 2,
+        "expected_evidence": 2,
+        "servable": True,
+        **overrides,
+    })
+
+
+# Each row is one way a control can fall short of what its family promised, plus the two
+# rows that have to hold or an always-False `held` would pass this table. The wrong-code
+# and leaked-row rows are not hypothetical shapes: they are the two failures the gate
+# report is specifically supposed to distinguish from a clean refusal.
+HELD_TABLE = [
+    # -- negative branch: refused, by the named rule, with nothing written -----
+    pytest.param(_attack(), True, id="refused-by-its-own-rule-leaving-no-row"),
+    pytest.param(
+        _attack(rows_added=1), False,
+        id="refused-but-a-row-was-written",
+    ),
+    pytest.param(
+        _attack(code="file_missing"), False,
+        id="refused-for-the-wrong-reason",
+    ),
+    pytest.param(
+        _attack(code=None), False,
+        id="refused-with-no-code-at-all",
+    ),
+    pytest.param(
+        _attack(verdict=ACCEPTED, code="bad_range"), False,
+        id="attack-admitted-while-still-carrying-a-refusal-code",
+    ),
+    # -- positive branch: accepted, servable, one row, every span kept ---------
+    pytest.param(_legitimate(), True, id="admitted-servable-and-whole"),
+    pytest.param(
+        _legitimate(servable=False), False,
+        id="admitted-but-not-servable",
+    ),
+    pytest.param(
+        _legitimate(servable=None), False,
+        id="admitted-but-servability-never-established",
+    ),
+    pytest.param(
+        _legitimate(evidence=1), False,
+        id="admitted-having-silently-dropped-a-span",
+    ),
+    pytest.param(
+        _legitimate(rows_added=0), False,
+        id="admitted-but-nothing-was-stored",
+    ),
+    pytest.param(
+        _legitimate(rows_added=2), False,
+        id="admitted-and-stored-twice",
+    ),
+    pytest.param(
+        _legitimate(verdict=REFUSED), False,
+        id="legitimate-citation-refused",
+    ),
+]
+
+
+@pytest.mark.parametrize(("outcome", "expected"), HELD_TABLE)
+def test_held_is_false_for_every_way_a_control_can_fall_short(outcome, expected):
+    """`held` is the predicate every number in the gate report is computed through, and
+    until this table existed three of its four conjuncts could be deleted with the whole
+    suite green.
+
+    `held` feeds `hold_rate`, `attributed_rate` and `positive_pass_rate`, and through
+    `MutationResult.detected` it decides whether each family can see its own rule being
+    removed. The properties it checks ARE tested directly elsewhere -- a refusal leaves
+    no row, a refusal names its rule, an admission is servable and keeps its evidence --
+    but those tests run over the corpus as it is today, in which no control has ever
+    produced a row-leaking refusal, a wrong code or a non-servable admission. A conjunct
+    that never fires on real data is a conjunct no corpus-driven test can pin, so the
+    scoring function drifts free of the checks while the reported rate still reads 1.000.
+    A future rule that refused and wrote the row anyway would be scored as a clean
+    refusal by the very apparatus whose job is to notice.
+
+    This is the failure `assertions/store.py` names as the reason nothing is ever deleted
+    -- a pipeline that scores its own rejections can report any pass rate it likes --
+    one level up, in the scorer rather than in the store. Hence synthetic outcomes: the
+    only way to reach a state the corpus cannot currently reach is to construct it.
+    """
+    assert outcome.held is expected
+
+
+def test_the_held_table_exercises_both_branches_of_the_predicate():
+    """The negative and positive branches of `held` share no conjunct except the verdict,
+    so a table that drifted to one side would leave the other unscored while still
+    looking thorough. The two families are read out of FAMILIES for the same reason: if
+    `past_eof` ever stopped expecting a refusal, or its code vocabulary grew to include
+    the wrong-reason code used above, the rows built on it would silently stop
+    discriminating."""
+    assert FAMILIES[ATTACK_FAMILY].expect == REFUSED
+    assert FAMILIES[LEGITIMATE_FAMILY].expect == ACCEPTED
+    assert "file_missing" not in FAMILIES[ATTACK_FAMILY].codes
+    assert "bad_range" in FAMILIES[ATTACK_FAMILY].codes
+    branches = {FAMILIES[case.values[0].family].expect for case in HELD_TABLE}
+    assert branches == {REFUSED, ACCEPTED}
+    # Both polarities on both sides: without a held=True row per branch, a `held` that
+    # returned False unconditionally would satisfy every other row in the table.
+    for expect in (REFUSED, ACCEPTED):
+        verdicts = {
+            expected
+            for case in HELD_TABLE
+            for outcome, expected in [case.values]
+            if FAMILIES[outcome.family].expect == expect
+        }
+        assert verdicts == {True, False}
+
+
+def test_a_report_that_scores_a_leaked_row_as_a_refusal_does_not_reach_1_0():
+    """The reason the table above is not merely pedantic. `attributed_rate` is the number
+    the README quotes as proof the controls are not vacuous, and it is `held` summed. A
+    single attack refused with a row left behind has to move it off 1.0 -- if it does
+    not, the headline rate is reporting the gate's intent rather than its behaviour."""
+    leaky = GateReport(
+        corpus="synthetic",
+        symbols=0,
+        outcomes=[_attack(), _attack(control="past_eof/core", rows_added=1)],
+        skips=[],
+        gate_path="?",
+    )
+    assert leaky.rejection_rate == 1.0, "both were refused, so the crude rate is blind"
+    assert leaky.attributed_rate == 0.5
+    assert [o.control for o in leaky.failures] == ["past_eof/core"]
+
+    mixed = GateReport(
+        corpus="synthetic",
+        symbols=0,
+        outcomes=[_legitimate(), _legitimate(control="multi_span/core", servable=False)],
+        skips=[],
+        gate_path="?",
+    )
+    assert mixed.positive_pass_rate == 0.5
