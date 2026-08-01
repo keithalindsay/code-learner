@@ -256,9 +256,40 @@ def _read_file(root: Path, path: str) -> bytes | None:
     the single seam through which stage two touches the disk, which is what lets a
     test assert that the fast path did NOT read -- the claim "no read happened" is
     otherwise untestable, and an untestable performance claim is just a comment.
+
+    The `is_file` test is not redundant with the `except OSError`. Catching OSError
+    handles every way a read fails loudly; a FIFO fails quietly, by blocking inside
+    `read_bytes` until some other process opens the write end. Nothing raises, nothing
+    is logged, and the pass simply stops -- and this runs on the serve path, where the
+    single-threaded MCP server has no other thread to notice. `is_file()` is False for
+    a FIFO, a directory, a socket and a device node, and True for a regular file or a
+    symlink to one, so one test covers the whole class. Same defence, and the same
+    reasoning, as `store._read_source`; duplicated rather than imported, because a
+    private cross-package helper is a worse coupling than four lines said twice.
+
+    It does not close the window between the test and the read: a regular file
+    swapped for a FIFO in between is still opened blocking. Only an fd-based open
+    (`os.open` with `O_NONBLOCK`, then `fstat`) closes that, which is more machinery
+    than this seam earns. The exposure narrows from "a pipe committed in the repo" to
+    "a race won against this function", and that residual is stated rather than
+    quietly carried.
+
+    Where it does not bite today: `_Pass.check_span` stats before it reads, and a FIFO
+    stats as zero bytes, so `st.size < span.byte_end` reports the span truncated first.
+    That is an accident of check ordering -- the ordering exists to keep this
+    verifier's reasons identical to `store._first_failure`'s, not to keep anyone off a
+    pipe -- so the guard belongs at the seam that actually opens the file.
+
+    Returning None expires the claim as `file_missing`, which is the same disposition
+    an unreadable file already has here and is deliberately left alone: that a
+    non-absence failure permanently expires a claim with no way back is WP10's
+    finding, not this guard's to fix, and splitting it here would collide.
     """
+    target = root / path
+    if not target.is_file():
+        return None
     try:
-        return (root / path).read_bytes()
+        return target.read_bytes()
     except OSError:
         return None
 

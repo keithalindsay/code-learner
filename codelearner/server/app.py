@@ -76,6 +76,35 @@ TRUNCATION_MARKER = "\n... (truncated)"
 # agent-facing contract is described rather than being invented per call site.
 DEFAULT_ASSERTION_KIND = "purpose"
 
+# Every way the store can refuse an admission, and the code an agent sees for it. One
+# entry per exception class rather than one shared `store_refused`, because the whole
+# value of a refusal code is that it names WHICH rule said no: `eval.gate_controls`
+# scores a negative control as held only when the code matches the rule its family
+# targets, so collapsing these would turn "refused by the right rule" back into
+# "refused", which is the measurement failure the negative controls exist to prevent.
+# `unknown_subject` deliberately reuses the code `_submit_body` raises above it -- the
+# same rule reached through a different door must not look like a different rule.
+_STORE_REFUSAL_CODES: dict[type[BaseException], str] = {
+    store.EvidenceRequired: "evidence_required",
+    store.EmptyClaim: "empty_claim",
+    store.InvalidSpan: "invalid_span",
+    store.EvidenceUnverifiable: "evidence_unverifiable",
+    store.UnknownSubject: "unknown_subject",
+    store.EvidenceStale: "evidence_stale",
+}
+
+# Spelled out rather than `tuple(_STORE_REFUSAL_CODES)`, so that a class added to the
+# mapping and forgotten here fails as an unhandled ValueError that `_guard` reports as
+# `bad_request` -- visible -- rather than being caught and looked up as a KeyError.
+_STORE_REFUSALS = (
+    store.EvidenceRequired,
+    store.EmptyClaim,
+    store.InvalidSpan,
+    store.EvidenceUnverifiable,
+    store.UnknownSubject,
+    store.EvidenceStale,
+)
+
 INSTRUCTIONS = """\
 GraphRAG over an indexed codebase.
 
@@ -873,14 +902,21 @@ def _submit_body(
             subject_symbol_id=int(subject["id"]),
             generator=generator,
             confidence=confidence,
+            repo_root=root,
         )
-    except store.EvidenceRequired as exc:
-        # The zero-evidence rule, enforced where it has always been enforced. This
-        # tool does not re-check for an empty list first -- an empty list simply
-        # verifies nothing and falls through to the store, so there is exactly one
-        # place in the project that can decide an uncited claim is inadmissible.
+    except _STORE_REFUSALS as exc:
+        # Translation, not enforcement. Every rule above -- the subject lookup, the
+        # per-span verification -- is enforced again inside `write_assertion`, and
+        # THAT is the copy that decides. This tool runs its own first because it can
+        # say more about what to fix (which field, which bytes are really there,
+        # which of the two honest readings of a line range was tried), and a refusal
+        # an agent cannot act on teaches it that the gate is noise. The order matters
+        # in exactly one direction: the richer check may run first, and the store's
+        # must run regardless. `codelearner learn` and every library caller reach the
+        # store without passing here at all, which is the whole reason the rules
+        # moved.
         raise ToolError(
-            "evidence_required",
+            _STORE_REFUSAL_CODES[type(exc)],
             str(exc),
             subject_qualname=subject_qualname,
         ) from exc
@@ -1033,14 +1069,16 @@ def build_server(
         """Store an inference about a symbol, if and only if its citations hold.
 
         This is the inversion: the index does no inference of its own, you do, and
-        this gate decides whether it may be stored. Three rules, all arithmetic.
+        this gate decides whether it may be stored. Every rule is arithmetic.
 
-        An assertion with zero evidence spans is refused ('evidence_required'). A span
-        whose bytes no longer hash to what you cited is refused ('hash_mismatch'), and
-        the refusal returns the observed hash and the text that is actually there, so
-        you can correct the citation rather than guess again. A subject_qualname that
-        names no indexed symbol is refused ('unknown_subject') -- verified spans do
-        not make a claim about a symbol that does not exist accountable to anyone.
+        An assertion with zero evidence spans is refused ('evidence_required'), and so
+        is one with no claim text ('empty_claim') -- correct citations under a blank
+        statement are still nothing anyone can check. A span whose bytes no longer
+        hash to what you cited is refused ('hash_mismatch'), and the refusal returns
+        the observed hash and the text that is actually there, so you can correct the
+        citation rather than guess again. A subject_qualname that names no indexed
+        symbol is refused ('unknown_subject') -- verified spans do not make a claim
+        about a symbol that does not exist accountable to anyone.
 
         Cite what you read: pass the content_hash that search_code or get_symbol
         returned, or the exact source text at those lines. Spans must name files this

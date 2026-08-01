@@ -439,6 +439,41 @@ def test_submit_assertion_rejects_zero_evidence(served):
     conn.close()
 
 
+def test_submit_assertion_rejects_a_perfectly_cited_empty_claim(served):
+    """The same rule as zero evidence, reached through the opposite door: real
+    citations under no statement at all. Nothing this tool checks would catch it --
+    the span exists and hashes correctly -- so before the rule moved into
+    `write_assertion` this stored `active`, reported servable, and came back out of
+    `get_symbol` as an empty string beside the code it was allegedly about.
+
+    Refused by the store rather than by a check here, which is why it is refused for
+    `codelearner learn` and every library caller too."""
+    repo, index_path, server = served
+    good_hash, line_start, line_end = _hash_of(server, "core.frobnicate_widgets")
+    payload = call(
+        server,
+        "submit_assertion",
+        subject_qualname="core.frobnicate_widgets",
+        claim="   \n ",
+        evidence_spans=[
+            {
+                "path": "core.py",
+                "line_start": line_start,
+                "line_end": line_end,
+                "content_hash": good_hash,
+            }
+        ],
+    )
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "empty_claim"
+
+    from codelearner import db
+
+    conn = db.connect(index_path)
+    assert conn.execute("SELECT count(*) FROM assertions").fetchone()[0] == 0
+    conn.close()
+
+
 def test_submit_assertion_rejects_a_hash_mismatch(served):
     """Rule two. The agent read the file, the file changed, and the citation it is
     about to store no longer describes anything. sha256 is not arguable, which is the

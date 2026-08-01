@@ -461,10 +461,33 @@ class _Menu:
 
 
 def _read_source(root: Path, path: str, cache: dict[str, bytes | None]) -> bytes | None:
-    """Read a file once per menu. None if it cannot be read."""
+    """Read a file once per menu. None if it cannot be read.
+
+    The `is_file` test is not redundant with the `except OSError`. OSError covers
+    every way a read fails loudly; a FIFO fails quietly, by blocking inside
+    `read_bytes` until some other process opens the write end. A generation run
+    against a repo holding one would stop building menus and never raise, never log,
+    and never finish -- indistinguishable, from outside, from a slow model.
+    `is_file()` is False for a FIFO, a directory, a socket and a device node, and True
+    for a regular file or a symlink to one, so one test covers the class.
+
+    None drops the offer as `DROP_UNREADABLE`, which is the disposition already given
+    to a file the index disagrees with, and is the right one here: what the guard
+    knows is "these bytes cannot be had", not that anything is corrupt.
+
+    Near-verbatim in `assertions.store._read_source` and `assertions.stale._read_file`,
+    and deliberately not factored out -- a private cross-package import to share four
+    lines is the worse coupling. It also does not close the window between the test
+    and the read; a regular file swapped for a FIFO in between still blocks, and
+    closing that needs an fd-based `os.open(..., O_NONBLOCK)`.
+    """
     if path not in cache:
+        target = root / path
+        if not target.is_file():
+            cache[path] = None
+            return cache[path]
         try:
-            cache[path] = (root / path).read_bytes()
+            cache[path] = target.read_bytes()
         except OSError:
             cache[path] = None
     return cache[path]

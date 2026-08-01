@@ -1156,9 +1156,20 @@ against**: either the `content_hash` retrieval already handed you, or the exact
 | code | when |
 |---|---|
 | `evidence_required` | zero evidence spans. An uncited claim cannot be adjudicated, cannot expire, and cannot be checked by a reader — it is indistinguishable from a good one at every stage after this, so the only place to stop it is the door. |
+| `empty_claim` | correct citations under no statement. A judge has no proposition to adjudicate and a reader finds correct bytes with no reason they were cited. |
 | `hash_mismatch` | the cited bytes no longer hash to what was cited. Returns `observed_hash` and `observed_text`, so the citation can be corrected rather than re-guessed. |
 | `evidence_unverifiable` | a span with neither hash nor text. A location that asserts nothing about what is there can never be found to be wrong. |
+| `invalid_span` | a byte range that is empty, negative or inverted. sha256 of nothing is stable, so a zero-length citation does not merely fail to expire — it reports `fresh` forever, against whatever the file becomes. |
+| `unknown_subject` | a subject qualname this index never parsed. Verified spans do not make a claim about a symbol that does not exist reachable by anyone. |
+| `evidence_stale` | the store's own re-read disagreed with the citation at the moment of writing. A claim whose first verification is guaranteed to fail was never true of this repository. |
 | `bad_range` / `file_missing` / `path_escapes_repo` | the citation does not point at readable bytes inside this repo. |
+
+Every one of those rules is enforced in `assertions.store.write_assertion`, before it
+opens a transaction, so a refused claim leaves no row behind and `codelearner learn`
+and every library caller meet the same gate the MCP tool does. `submit_assertion`
+runs richer versions of two of them first — it can name the offending field and quote
+the bytes that are really there — but as a pre-check for message quality, never as
+the enforcement.
 
 One bad span refuses the whole submission. Admitting the ones that happened to verify
 would leave a claim standing on a subset of the evidence its author thought it had.

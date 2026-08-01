@@ -347,9 +347,8 @@ FAMILIES: dict[str, Family] = {
                     "            \"and cannot be checked by a reader -- it is indistinguishable from a \"\n"
                     "            \"good one at every stage after this.\"\n"
                     "        )\n"
-                    "    with _atomic(conn):"
                 ),
-                new="    spans = tuple(spans)\n    with _atomic(conn):",
+                new="    spans = tuple(spans)\n",
             ),
         ),
     ),
@@ -465,11 +464,24 @@ FAMILIES: dict[str, Family] = {
         attack="a blank line cited as evidence, with the hash of nothing",
         codes=frozenset({"bad_range"}),
         mutation=_mut(
-            "store.span_for refuses an empty byte range",
+            "the store refuses an empty byte range -- in span_for, which builds the "
+            "citation, and again at the write gate, which admits it",
+            # Two edits, one rule, for the reason `absent_file` gives at length: after
+            # WP4 the empty-span rule lives in two places, and a mutation that deleted
+            # only `span_for`'s copy would leave `write_assertion` refusing the attack
+            # with `invalid_span`. That still flips the control -- a code outside this
+            # family's set is not a hold -- but it would be measuring the wrong rule,
+            # and the family would quietly become a test of the write gate under the
+            # name of a test of the constructor.
             Edit(
                 target=STORE_MODULE,
                 old="    if not 0 <= byte_start < byte_end <= len(source):",
                 new="    if not 0 <= byte_start <= byte_end <= len(source):",
+            ),
+            Edit(
+                target=STORE_MODULE,
+                old="        if not 0 <= span.byte_start < span.byte_end:",
+                new="        if False:  # mutated: the write gate's empty-span rule is gone",
             ),
         ),
     ),
@@ -547,7 +559,20 @@ FAMILIES: dict[str, Family] = {
         attack="a perfectly cited claim about a symbol that does not exist",
         codes=frozenset({"unknown_subject"}),
         mutation=_mut(
-            "_submit_body refuses a subject_qualname that names no indexed symbol",
+            "the gate refuses a subject_qualname that names no indexed symbol -- in "
+            "_submit_body, which can say what to search for, and again in "
+            "store.write_assertion, which is the door every caller comes through",
+            # Four edits, one rule, and the fourth is the one WP4 made necessary.
+            # Before it, deleting the server's check left `write_assertion`'s copy
+            # refusing the attack with the SAME code, so this family reported its own
+            # rule as undeletable while the rule it was actually measuring had moved
+            # underneath it. That is precisely the failure the mutation harness exists
+            # to catch, arriving as a false negative in the harness itself.
+            Edit(
+                target=STORE_MODULE,
+                old="    if not allow_unindexed_subject:",
+                new="    if False:  # mutated: the store's subject-existence rule is gone",
+            ),
             Edit(
                 target=GATE_MODULE,
                 old=(

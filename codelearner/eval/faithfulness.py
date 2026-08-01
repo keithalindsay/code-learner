@@ -661,11 +661,26 @@ def render_evidence(root: Path, assertion: store.Assertion) -> str:
     """
     blocks: list[str] = []
     for i, span in enumerate(assertion.spans, start=1):
-        try:
-            source = (root / span.path).read_bytes()
-            text = source[span.byte_start : span.byte_end].decode("utf-8", "replace")
-        except OSError as exc:
-            text = f"<<could not read this span: {exc}>>"
+        target = root / span.path
+        # Kept out of the `except OSError` below because this failure does not raise.
+        # `read_bytes` on a FIFO blocks until some other process opens the write end,
+        # so one cited pipe stalls the whole adjudication -- every later claim
+        # unjudged, no traceback, no partial report, and a judging run that looks like
+        # a slow model rather than a stopped one. `is_file()` is False for a FIFO, a
+        # directory, a socket and a device node, and True for a regular file or a
+        # symlink to one. Labelled like any other unreadable span rather than skipped:
+        # a span the judge cannot see must still be visible to it as a span it cannot
+        # see, or a claim gets judged on the evidence that happened to be readable.
+        # It does not close the window between this test and the read; a regular file
+        # swapped for a FIFO in between still blocks.
+        if not target.is_file():
+            text = "<<could not read this span: not a regular file>>"
+        else:
+            try:
+                source = target.read_bytes()
+                text = source[span.byte_start : span.byte_end].decode("utf-8", "replace")
+            except OSError as exc:
+                text = f"<<could not read this span: {exc}>>"
         blocks.append(f"--- span {i} of {len(assertion.spans)}: {span.citation} ---\n{text}")
     return "\n".join(blocks)
 

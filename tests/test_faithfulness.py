@@ -135,6 +135,14 @@ def _release_span(root):
 
 
 def _admit(conn, spans, claim, *, qualname="leases.acquire"):
+    """Admit one claim, deliberately without an index behind it.
+
+    `allow_unindexed_subject=True` because the fixture is a repo and a bound DB with
+    no symbols in it, and nothing in this file is about the write gate -- the subject
+    of these claims exists on disk, which is what the judge is shown. The flag is the
+    store's explicit escape rather than a weakened rule: it is here so that a reader
+    can see the subject check was skipped on purpose.
+    """
     return store.write_assertion(
         conn,
         subject_qualname=qualname,
@@ -143,6 +151,7 @@ def _admit(conn, spans, claim, *, qualname="leases.acquire"):
         spans=spans,
         generator="claude/test",
         confidence=0.9,
+        allow_unindexed_subject=True,
     )
 
 

@@ -60,6 +60,15 @@ def repo(tmp_path):
 
 
 def _admit(conn, root, *, start=0, end=ACQUIRE_END, qualname="leases.acquire", path="leases.py"):
+    """Admit one claim, deliberately without an index behind it.
+
+    `allow_unindexed_subject=True` because the fixture here is a repo and a bound DB
+    with no symbols in it: nothing in this file is about the write gate, and every
+    test is about what happens to a claim AFTER admission, when the bytes it cites
+    move. The flag is the store's explicit escape rather than a weakened rule, so a
+    reader of this helper can see that the subject check was skipped on purpose --
+    which is the whole reason it is a parameter and not a fallback.
+    """
     span = store.span_for(root, path, start, end)
     return store.write_assertion(
         conn,
@@ -69,6 +78,7 @@ def _admit(conn, root, *, start=0, end=ACQUIRE_END, qualname="leases.acquire", p
         spans=[span],
         generator="test-model/v1",
         confidence=0.9,
+        allow_unindexed_subject=True,
     )
 
 

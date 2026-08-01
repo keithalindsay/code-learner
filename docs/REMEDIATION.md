@@ -3,6 +3,61 @@
 Six independent read-only audits at `93a4084` (architecture, correctness, eval methodology,
 completeness, test quality, security). This is the implementation plan derived from them.
 
+---
+
+## Status
+
+| WP | State | Landed |
+|---|---|---|
+| WP1 git-config RCE | **done** | `31e6c97` |
+| WP2 file-read oracle | **done** | `31e6c97` |
+| WP3 transport + unbounded writes | **done** (schema CHECK deferred to WP8) | `31e6c97` |
+| WP6 pin `Outcome.held` | **done** | `31e6c97` |
+| WP4 consolidate the gate | in flight | |
+| WP19 remaining unguarded reads | in flight | |
+| WP5, WP7–WP18 | not started | |
+
+### Amendments from Wave 0
+
+Three things the plan got wrong or missed. Recorded here rather than silently corrected,
+because a remediation plan that quietly rewrites itself is the same failure as a measurement
+that does.
+
+1. **WP2's refusal code — the plan was wrong.** It specified a distinct `file_not_indexed`
+   code. The implementing agent reused `file_missing` instead, on the grounds that a distinct
+   code *preserves the oracle in reduced form*: submit `.env` and `.envv`, and the difference
+   between the two codes answers "does this file exist on disk". Verified after the fix —
+   both return byte-identical refusals. Take the narrower reading of "close the oracle" as
+   the standing rule for the rest of this plan: **a refusal must not distinguish two states
+   the caller is not entitled to tell apart.**
+
+2. **WP6 understated the defect by half.** The audit found 3 of `held`'s 4 conjuncts
+   deletable with the suite green. The implementing agent found **6 of 7**. The three the
+   audit missed are masked: an accepted outcome carries `code=None`, which is in no family's
+   code set, so the negative branch's `verdict == REFUSED` conjunct cannot be observed
+   failing by any corpus run. These were not dead code — they were **unreachable by the
+   corpus that scores them.** Generalise the lesson: the negative-control apparatus can only
+   ever test itself against situations it already knows how to generate, so its coverage of
+   its own scorer must be established by construction, never by running it.
+
+3. **Defence in depth breaks single-edit mutations.** Adding three guards ahead of the
+   `absent_file` read meant the family's mutation — which deleted one guard — no longer
+   flipped the control, so it silently stopped detecting its own rule. Fixed by extending the
+   mutation to remove all three. **Any WP that adds a guard in front of an existing
+   controlled rule must re-check that rule's mutation still flips it.** This applies directly
+   to WP4.
+
+### WP19 — remaining unguarded reads (added post-Wave-0, not audit-derived)
+
+The WP2 agent found four more unguarded `read_bytes` on repo-relative paths that no auditor
+caught: `assertions/stale.py:261` (`_read_file`), `generate/pipeline.py:467` (`_read_source`),
+`chunk/chunker.py:149`, `eval/faithfulness.py:665`. The first is a **serve-path** read with
+the same shape as the `store._read_source` bug fixed in Wave 0, reachable by the same
+one-FIFO-wedges-the-server route, so Wave 0 closed the demonstrated instance and left an
+equivalent one open. Guard each with `is_file()`, matching each caller's existing disposition
+for an unreadable file, and state the residual check-then-open race rather than implying it
+is closed.
+
 **Provenance markers.** Every finding below is tagged:
 
 - `[V]` — reproduced directly by the synthesising engineer, command and output in hand.

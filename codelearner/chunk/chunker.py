@@ -145,10 +145,28 @@ def build_chunks(conn: sqlite3.Connection, repo_root: Path) -> ChunkStats:
     for row in rows:
         path = row["path"]
         if path not in sources:
-            try:
-                sources[path] = (repo_root / path).read_bytes()
-            except OSError:
+            target = repo_root / path
+            # Not something `except OSError` can catch: a FIFO does not fail this
+            # read, it blocks it, until some other process opens the write end. An
+            # index build over a repo containing one would hang with no traceback and
+            # no log line, which reads as a slow index rather than a stopped one.
+            # `is_file()` is False for a FIFO, a directory, a socket and a device
+            # node, so one test covers the class. The empty-source fallback is the
+            # same disposition an unreadable file already gets: every symbol the
+            # index recorded in that file yields a header-only chunk and is counted
+            # in `skipped_empty` rather than indexed. Sibling guards live in
+            # `assertions.store._read_source`, `assertions.stale._read_file` and
+            # `generate.pipeline._read_source`; duplicated rather than shared,
+            # because a private cross-package import would couple four packages to
+            # save four lines. It does not close the test-then-read window -- a
+            # regular file swapped for a FIFO in between still blocks.
+            if not target.is_file():
                 sources[path] = b""
+            else:
+                try:
+                    sources[path] = target.read_bytes()
+                except OSError:
+                    sources[path] = b""
         source = sources[path]
 
         text, header, truncated = chunk_for_symbol(

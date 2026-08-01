@@ -6,12 +6,26 @@ unaccountable later, and refuse to hand one back once the ground under it has mo
 
 Three rules, and every one of them exists because the failure it prevents is silent:
 
-**1. No citation, no entry.** `write_assertion` raises `EvidenceRequired` before it
-opens a transaction, so an uncited claim leaves no row behind. This is the cheap
-rule and it is the one that matters most: a claim with no spans cannot be checked by
-a judge, cannot be expired by a hash, and cannot be read by a human who wants to see
-for themselves. It is indistinguishable from a good claim at every later stage, so
-the only place to stop it is the door.
+**1. Nothing is admitted that a later reader could not check.** `write_assertion`
+raises before it opens a transaction, so a refused claim leaves no row behind -- not
+a row, not an id, not a gap in the sequence that would need explaining. Six
+conditions are refused there and they are all the same rule wearing different
+clothes: no spans, no claim text, a span that is not a non-empty byte range, a span
+with no hash to check it against, a subject this index has never parsed, and a
+citation that does not match the bytes on disk right now. Each one produces something
+that is *indistinguishable from a good claim at every later stage* -- it stores, it
+serves, and it verifies forever -- which is why none of them can be left to the
+caller. `write_assertion` is the one door, and every lock is on it.
+
+That was not true until recently, and the way it failed is the argument for the
+shape. Hash verification and subject-existence lived in `server/app.py`, so an
+agent reaching the store through the MCP tool met three rules and `codelearner learn`
+-- or any library caller -- met one. A claim with a perfectly valid citation and an
+empty claim string was admitted, stored `active`, and served. A zero-length span was
+admitted and verified forever against any content the file later held, while
+`span_for` refused exactly that, with exactly the right reasoning, in a constructor
+the gate did not require anyone to use. A rule enforced in the caller is a rule the
+next caller does not have.
 
 **2. Servable means re-verified, not merely stored.** `servable_assertions` re-reads
 the cited bytes off disk and re-hashes them on every call. `status = 'active'` alone
@@ -83,6 +97,72 @@ class EvidenceRequired(ValueError):
     uncited claim is not a claim that failed adjudication, it is one that was never
     admissible, and storing it would put an unciteable row in the same table as the
     citeable ones where a later bug could flip it active."""
+
+
+# The five siblings below are the rules that used to live in `server/app.py`, or in
+# nobody at all. Each is its own class rather than one `Inadmissible`, because the
+# caller that has to tell an agent what to fix cannot do it from a single type -- and
+# collapsing them would also collapse the refusal codes, which is how the negative
+# controls in `eval.gate_controls` tell "refused by its own rule" from "refused".
+
+
+class EmptyClaim(ValueError):
+    """The claim text was empty or whitespace, and the assertion was not written.
+
+    Verified evidence carrying no statement. Every arithmetic check the gate makes
+    passes on this submission -- the spans exist, they hash correctly, the subject is
+    real -- so it stores `active`, is reported servable, and is handed back next to
+    the code it is allegedly about, saying nothing. A judge asked to adjudicate it has
+    no proposition to adjudicate; a human following the citation finds correct bytes
+    and no reason they were cited. Absent this rule an empty claim is
+    indistinguishable from a good one at every stage, including the ones designed to
+    catch bad ones."""
+
+
+class InvalidSpan(ValueError):
+    """A cited byte range was empty, negative, or inverted; nothing was written.
+
+    The dangerous case is `byte_start == byte_end`. sha256 of nothing is a perfectly
+    stable hash, so a zero-length citation VERIFIES FOREVER -- against the file as it
+    is, as it becomes, and as it would be after the symbol it pointed at was deleted.
+    It is not merely unfalsifiable; it is a claim that positively reports `fresh` on
+    every re-read, which reads as the strongest possible evidence that the claim still
+    holds. `span_for` has always refused this, with the right reasoning, but a
+    constructor is only a rule for callers who use it."""
+
+
+class EvidenceUnverifiable(ValueError):
+    """A span carried nothing to check it against, or nothing to check it from.
+
+    Two shapes, one failure. A span with no `content_hash` asserts nothing about what
+    is at those bytes, so no future state of the file can contradict it -- the
+    vacuous-truth failure that `servable_assertions` guards against for a whole
+    assertion, one level down at the span. And a write asked to verify against a repo
+    root the index is not bound to has no bytes it is entitled to read, which is the
+    same hole approached from the other side: verification that cannot happen must not
+    be reported as verification that passed."""
+
+
+class UnknownSubject(ValueError):
+    """The subject qualname names no symbol in this index; nothing was written.
+
+    An inference no reader can reach. Every span can hash-match perfectly while the
+    qualname they are attached to was invented, and the result is a row that is
+    `active`, servable, and permanently unreachable, because `get_symbol` answers
+    `no_such_symbol` for the only name that would find it. Indistinguishable from a
+    good claim by inspection -- the evidence is genuinely correct -- and
+    distinguishable from one only by the fact that nothing will ever ask for it."""
+
+
+class EvidenceStale(ValueError):
+    """A cited span did not match the bytes on disk at admission time.
+
+    The claim was never true of this repository, or stopped being true between being
+    drafted and being stored. Admitting it would put a row in the store whose first
+    verification is guaranteed to fail, and the store's own vocabulary would then
+    record that as `stale` -- as though the repository had moved under a claim that
+    was once good. The distinction is worth keeping: `stale` means the world changed,
+    and a claim that never matched anything is a defect in whatever produced it."""
 
 
 @dataclass(frozen=True)
@@ -165,6 +245,44 @@ def _repo_root(conn: sqlite3.Connection, repo_root: db.StrPath | None) -> Path:
             "citations is the one thing this store will not do."
         )
     return Path(stored)
+
+
+def _verification_root(conn: sqlite3.Connection, repo_root: db.StrPath | None) -> Path:
+    """Resolve where `write_assertion` re-reads the cited bytes from. Stricter than
+    `_repo_root`, deliberately.
+
+    The read path prefers a caller's root and falls back to the index's binding. This
+    one refuses a caller's root that DISAGREES with the binding, and the asymmetry is
+    not an oversight. Admission is the moment a claim is bound to this index, and
+    every later verification of it will use the stored root -- so a claim admitted
+    against some other tree would be re-checked tomorrow against bytes it was never
+    compared to. That failure is silent in the worst direction: the write reports
+    verified, and the first serve reports `stale`, naming an edit nobody made.
+
+    Refuses to guess when there is no binding and no argument, for the same reason
+    `_repo_root` does: verification that cannot happen must not be reported as
+    verification that passed. `verify=False` is the way to say that out loud.
+    """
+    stored = db.stored_repo_root(conn)
+    if repo_root is None:
+        if stored is None:
+            raise EvidenceUnverifiable(
+                "this index is not bound to a repo root, so the cited spans cannot be "
+                "re-read and this claim cannot be verified at the door. Pass "
+                "repo_root explicitly, call db.bind_repo_root first, or say "
+                "verify=False and own that nothing checked these citations."
+            )
+        return Path(stored)
+    given = Path(str(repo_root)).resolve()
+    if stored is not None and str(given) != stored:
+        raise EvidenceUnverifiable(
+            f"asked to verify citations against {str(given)!r}, but this index is "
+            f"bound to {stored!r}. Every later verification of this claim will use "
+            "the bound root, so admitting it here would mean it was checked against "
+            "one tree and will be re-checked against another -- which surfaces as an "
+            "expiry blaming an edit nobody made."
+        )
+    return given
 
 
 def span_for(repo_root: db.StrPath, path: str, byte_start: int, byte_end: int) -> EvidenceSpan:
@@ -256,12 +374,43 @@ def write_assertion(
     generator: str | None = None,
     confidence: float | None = None,
     status: str = STATUS_ACTIVE,
+    repo_root: db.StrPath | None = None,
+    verify: bool = True,
+    allow_unindexed_subject: bool = False,
 ) -> int:
     """Admit one claim with its citations. Returns the new assertion id.
 
-    Raises `EvidenceRequired` if `spans` is empty, BEFORE opening a transaction, so
-    a refused claim leaves nothing behind -- not a row, not an id, not a gap in the
-    sequence that would need explaining.
+    THE door. Every admission rule this project has is enforced here and nowhere
+    else that matters, and all of them raise BEFORE the transaction opens, so a
+    refused claim leaves nothing behind -- not a row, not an id, not a gap in the
+    sequence that would need explaining. `server/app.py` still runs richer versions of
+    two of these checks first, and should: it can name the offending field, quote the
+    bytes that are actually there, and accept either honest reading of a line range,
+    none of which a library function with no transport can do. But it runs them as a
+    PRE-check for message quality. Nothing downstream depends on it having run.
+
+    In order, and cheapest first:
+
+    1. `EvidenceRequired` -- no spans.
+    2. `EmptyClaim` -- nothing said about them.
+    3. `InvalidSpan` -- a span that is not a non-empty, non-negative byte range.
+    4. `EvidenceUnverifiable` -- a span with no hash to check it against.
+    5. `UnknownSubject` -- a subject this index has never parsed.
+    6. `EvidenceStale` -- a citation that does not match the bytes on disk NOW.
+
+    `verify=True` is the default and the whole point of (6): the same `_first_failure`
+    that decides tomorrow whether this claim may still be served decides today whether
+    it may be admitted, so the two can never disagree about what verification means.
+    It costs one read per cited file. `verify=False` exists for a caller that has
+    genuinely just hashed the bytes itself and knows the tree cannot have moved --
+    it is a statement that nothing checked these citations, and it should be rare
+    enough to be conspicuous.
+
+    `allow_unindexed_subject=True` is the escape from (5), for fixtures that build an
+    index-shaped database without an index in it. It is a parameter rather than a
+    fallback -- a rule that turns itself off when the `symbols` table happens to be
+    empty is a rule that turns itself off on a fresh index, which is exactly when the
+    first claims get written.
 
     `status` is passed straight through to the CHECK constraint in the schema rather
     than being validated here first. That is on purpose: two validators disagreeing
@@ -275,6 +424,67 @@ def write_assertion(
             "and cannot be checked by a reader -- it is indistinguishable from a "
             "good one at every stage after this."
         )
+    if not claim.strip():
+        raise EmptyClaim(
+            f"assertion about {subject_qualname!r} carries no claim text and was not "
+            "written. Its citations may be perfect; there is still no proposition "
+            "here for a judge to adjudicate or a reader to disagree with, and every "
+            "check after this one would pass."
+        )
+    for span in spans:
+        if not 0 <= span.byte_start < span.byte_end:
+            raise InvalidSpan(
+                f"span {span.path}[{span.byte_start}:{span.byte_end}] is not a "
+                "non-empty byte range, and the assertion was not written. An empty "
+                "range hashes to a stable value and would go on verifying against "
+                "whatever the file becomes -- reporting fresh evidence for a claim "
+                "that points at nothing."
+            )
+        if span.line_start < 1 or span.line_end < span.line_start:
+            raise InvalidSpan(
+                f"span {span.path}[{span.byte_start}:{span.byte_end}] cites lines "
+                f"{span.line_start}-{span.line_end}, which is not a line range a "
+                "reader can open. The bytes are what the verifier checks and the "
+                "lines are what a human follows; a citation whose two halves "
+                "disagree sends them to different places and looks wrong to "
+                "neither."
+            )
+        if not span.content_hash.strip():
+            raise EvidenceUnverifiable(
+                f"span {span.citation} carries no content hash, and the assertion "
+                "was not written. A citation that asserts nothing about what is at "
+                "those bytes can never be found to be wrong -- it is the vacuous "
+                "truth `servable_assertions` guards against for a whole assertion, "
+                "one level down at the span."
+            )
+    if not allow_unindexed_subject:
+        known = conn.execute(
+            "SELECT 1 FROM symbols WHERE qualname = ?", (subject_qualname,)
+        ).fetchone()
+        if known is None:
+            raise UnknownSubject(
+                f"no symbol named {subject_qualname!r} in this index, so the claim "
+                "was not written. Verified spans do not make a claim about a symbol "
+                "that does not exist accountable to anyone: the row would be active, "
+                "servable, and unreachable, because the only name that would find it "
+                "is one nothing can look up."
+            )
+    if verify:
+        # The same function the serve path uses, on purpose. A second implementation
+        # of "does this citation still hold" is a second answer waiting to differ
+        # from the first, and the difference would show up as a claim that was
+        # admitted as verified and expired as stale on its very first read.
+        failure = _first_failure(_verification_root(conn, repo_root), spans, {})
+        if failure is not None:
+            reason, moved, observed = failure
+            raise EvidenceStale(
+                f"span {moved.citation} does not match the bytes on disk "
+                f"({reason}), and the assertion was not written. Cited "
+                f"{moved.content_hash}, found {observed or 'nothing readable'}. This "
+                "claim's first verification would have failed, and the store would "
+                "have recorded that as the repository moving under a good claim "
+                "rather than as a claim that never matched anything."
+            )
     with _atomic(conn):
         cur = conn.execute(
             "INSERT INTO assertions (subject_qualname, subject_symbol_id, kind, "
