@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import db
-from ..assertions import store
+from ..assertions import boundaries, store
 from ..index import Embedder, embed_chunks
 from ..ingest import index_repo, iter_python_files
 from ..retrieve import load_reranker, search, stored_embed_model
@@ -471,6 +471,13 @@ class CarryReport:
     subjects_resolved: int
     subjects_unresolved: int
     expired_by_rebuild: int
+    # Counted apart from `expired_by_rebuild` because the two ask for different
+    # things. That number is claims whose cited bytes moved, which the next
+    # generation run re-derives from a repo that has settled; this one is claims
+    # whose bytes are untouched and whose citation boundary predates the schema this
+    # rebuild just installed, and no amount of re-indexing repairs it. Folding them
+    # together would hand the operator one number and the wrong remedy for half of it.
+    narrowed_citations: int = 0
     recovered: bool = False
 
 
@@ -697,7 +704,6 @@ def _restore_store(conn: sqlite3.Connection, repo: Path, dump: Dump) -> CarryRep
             symbol_id = int(found[0])
         prepared.append((row[0], qualname, symbol_id, *row[3:]))
 
-    before = _scalar(conn, "SELECT count(*) FROM staleness_log")
     with db.transaction(conn):
         for table, columns in _CARRY_TABLES:
             rows = prepared if table == "assertions" else dump.get(table, [])
@@ -710,6 +716,15 @@ def _restore_store(conn: sqlite3.Connection, repo: Path, dump: Dump) -> CarryRep
                 rows,
             )
 
+    # Read AFTER the carried rows have landed, not before. `staleness_log` is one of
+    # the carried tables, so a store arriving with prior expiries would otherwise have
+    # its own history counted as this rebuild's work -- a repo that had never gone
+    # stale reported 0 and one that had gone stale last week reported last week's
+    # number, which is the shape of a count nobody would question until it mattered.
+    # The baseline is what is in the table once the carry is complete and before the
+    # verification below is allowed to add to it.
+    before = _scalar(conn, "SELECT count(*) FROM staleness_log")
+
     # The honest outcome for a claim whose evidence moved while the index was being
     # rebuilt is `stale` with a log row naming the citation that moved -- not a
     # deletion, and not a silent promotion either. `servable_assertions` is the same
@@ -717,6 +732,14 @@ def _restore_store(conn: sqlite3.Connection, repo: Path, dump: Dump) -> CarryRep
     # and the answer the next query gives cannot differ.
     store.servable_assertions(conn, repo)
     expired = _scalar(conn, "SELECT count(*) FROM staleness_log") - before
+
+    # Second, and only after the bytes have had their say. A carried claim can be
+    # perfectly fresh and still be citing a symbol without the decorators that were
+    # added to that symbol's span by the very schema bump this rebuild is applying --
+    # the one shape of wrongness a re-hash cannot see, because the bytes did not move.
+    # See `assertions.boundaries`. Run second so that a claim which is BOTH edited and
+    # narrowed is logged once, as the edit, which is the more urgent of the two.
+    narrowed = boundaries.expire_narrowed_citations(conn, repo)
 
     totals = _dump_totals(dump)
     return CarryReport(
@@ -727,6 +750,7 @@ def _restore_store(conn: sqlite3.Connection, repo: Path, dump: Dump) -> CarryRep
         subjects_resolved=resolved,
         subjects_unresolved=unresolved,
         expired_by_rebuild=expired,
+        narrowed_citations=narrowed,
     )
 
 
@@ -906,6 +930,7 @@ def cmd_index(args: Any, factory: EmbedderFactory) -> int:
             "subjects_resolved": carry_report.subjects_resolved,
             "subjects_unresolved": carry_report.subjects_unresolved,
             "expired_by_rebuild": carry_report.expired_by_rebuild,
+            "narrowed_citations": carry_report.narrowed_citations,
         },
     }
 
@@ -947,6 +972,20 @@ def cmd_index(args: Any, factory: EmbedderFactory) -> int:
                 f"  expired    {carry_report.expired_by_rebuild:>9,}  "
                 "carried claims whose cited bytes have moved -- marked stale, with a "
                 "log row naming the citation, not deleted"
+            )
+        if carry_report.narrowed_citations:
+            # Worded to send the operator somewhere different from the line above.
+            # Re-indexing is the reflex when a rebuild reports a number, and it is
+            # the one thing that cannot help here: the bytes are unchanged and the
+            # symbol table is already correct. The claim was derived from a span that
+            # stopped short of its own decorators, and only re-deriving the claim --
+            # over the whole symbol this time -- repairs that.
+            print(
+                f"  narrowed   {carry_report.narrowed_citations:>9,}  "
+                f"carried claims citing a symbol without its decorators -- marked "
+                f"stale ({store.REASON_DECORATORS_EXCLUDED}). Their bytes are "
+                "unchanged, so re-indexing will not repair them; they have to be "
+                "redrafted against the whole symbol."
             )
     return 0
 

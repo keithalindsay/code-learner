@@ -21,6 +21,7 @@ completeness, test quality, security). This is the implementation plan derived f
 | WP5 controls at both doors | **done** | `243095d` |
 | WP20 repo containment at the chokepoint | **done** (found by WP5) | `243095d` |
 | WP8 decorator span + schema v6 | in flight | |
+| WP21 pre-v6 narrowed citations on carry | **done** (found while verifying WP8) | |
 | WP9 MCP index invalidation | in flight | |
 | WP10.2 tier-0/1 drift detection | in flight | |
 | WP11–WP18 | not started | |
@@ -419,6 +420,48 @@ line-bytes figures that `server/app.py:285` and the README quote three different
 
 **Acceptance.** A test asserting a decorated symbol's span starts at `@`; a `decorator_edit`
 negative-control family (WP5) asserting a decorator rewrite expires the claim.
+
+## WP21 — WP8's fix does not reach the citations WP7 carries (added post-Wave-3, not audit-derived)
+
+**Severity: HIGH. WP8's fail-open defect, surviving inside carried data. Depends on WP7 and WP8.**
+
+WP8 widened the span and bumped the schema; `codelearner index --force --carry-assertions`
+carries the tier-2 store across that rebuild, and a carried claim keeps its pre-v6 citation.
+Those bytes are unchanged on disk, so the claim stays `active` and servable — correctly, by
+the rules as written, and therefore with the exact exposure WP8 existed to close. Measured on
+swarm-sync's upgraded v6 index, 150 carried assertions `[V]`:
+
+```
+active evidence spans                                   143
+strict suffixes of a symbol (pre-v6 narrow citation)     15
+of those, decorator-narrowed                             11   (10 distinct assertions)
+```
+
+One cites a symbol whose missed prefix is `@app.post("/intent", dependencies=[Depends(require_token)])`
+— a live, servable claim about an endpoint, citing bytes that exclude its authentication
+dependency. Strip `Depends(require_token)` and the claim still verifies fresh.
+
+**Change.** On the carry path only, after the ordinary verification, mark such a claim `stale`
+with its own reason (`decorators_excluded`) so it is redrafted rather than silently retained.
+Detection is exact, not heuristic: a span whose end matches a symbol's end and whose start is
+the start of the definition *inside* that symbol's `decorated_definition` node, asked of
+tree-sitter (`python_extract.decorated_body_start`) rather than inferred from the prefix text.
+
+**Precision over coverage, deliberately.** Not every strict suffix of a symbol — the gate
+admits a legitimate sub-range citation, and an agent quoting three lines of a function body is
+making a *narrower and therefore stronger* citation. 4 of the 15 above are exactly that (a
+claim about a class's last method, whose span ends where the class does) and are left alone.
+
+**Never rewritten.** Widening the stored span to match the symbol would fabricate a citation
+the generator never made. See `assertions/boundaries.py`.
+
+**Acceptance.** A claim citing a decorated symbol's old narrow span comes back `stale` with the
+new reason; a sub-range citation of a function body does not; an undecorated symbol's claim is
+untouched; a `rejected` claim keeps its status; the reason reaches the carry summary with
+wording that says a re-index will not repair it.
+
+**What this does NOT fix.** Citations an agent has already been handed. This changes what the
+index publishes from now on; anything already quoted downstream is out of reach.
 
 ## WP9 — A live MCP server serves the deleted index and reports success `[A]`
 

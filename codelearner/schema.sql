@@ -347,6 +347,19 @@ CREATE TABLE IF NOT EXISTS staleness_log (
     --                     write gate holds, and checked anyway, because the failure
     --                     it guards against is serving a claim on the strength of an
     --                     empty evidence set -- which reads as success everywhere.
+    -- 'decorators_excluded'
+    --                  -- the bytes are unchanged and the citation BOUNDARY is wrong:
+    --                     the span ends where its symbol ends and begins at the `def`,
+    --                     excluding decorators the symbol's span has included since
+    --                     v6. Found on the carry path, where a claim written before
+    --                     v6 survives the rebuild that widened its symbol. The only
+    --                     reason here that no re-index repairs -- see
+    --                     `assertions.boundaries`.
+    --
+    -- Free text, and deliberately so: this column has never carried a CHECK, and the
+    -- list above is documentation rather than enforcement. That is what let the sixth
+    -- reason be added without a schema bump -- and it is also why every reader treats
+    -- an unrecognised reason as opaque rather than switching on the set.
     reason        TEXT NOT NULL,
     -- What was cited vs. what is on disk now. Both nullable: a missing file has no
     -- observed hash, and that absence is itself the finding.

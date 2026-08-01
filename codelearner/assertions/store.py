@@ -124,6 +124,26 @@ REASON_NO_EVIDENCE = "no_evidence"
 # `unverifiable` count in `RefreshReport` -- which is where a caller can act on it.
 REASON_UNREADABLE = "unreadable"
 
+# The sixth, and terminal, and the only one that is not a finding about the bytes.
+# `decorators_excluded` says the cited bytes are exactly what they always were and the
+# CITATION BOUNDARY is wrong: the span stops short of the symbol's decorators, so it
+# ends where the symbol ends and begins at its `def`/`class` -- the span pre-v6 code
+# wrote, before WP8 widened a decorated symbol to start at its outermost `@`.
+#
+# It needs its own name because reading it as `hash_mismatch` would send an operator
+# looking for an edit that never happened, and because the repair is different: no
+# re-index can fix it. Re-indexing rebuilds the symbol table, which is already right;
+# the claim itself was derived from bytes that excluded `@app.post("/intent",
+# dependencies=[Depends(require_token)])`, and only re-deriving the claim can fix
+# that. Everything else in this list is repaired by the repository settling down.
+#
+# The exposure it closes is WP8's, surviving inside carried data. Strip a decorator
+# that a narrowed citation never covered and every verifier in this package still
+# reports the claim fresh, forever -- which is the fail-open case WP8 existed to
+# remove, and which `--carry-assertions` walks straight past because the bytes on disk
+# genuinely did not change.
+REASON_DECORATORS_EXCLUDED = "decorators_excluded"
+
 # Status transitions are timestamped by SQLite, not by Python. `created_at` in the
 # schema already uses this expression, and two clocks stamping rows in one table is
 # a way for "created after it went stale" to happen in the data.

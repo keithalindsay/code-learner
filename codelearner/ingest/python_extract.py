@@ -111,6 +111,57 @@ def _span_origin(node: Node) -> Node:
     return node
 
 
+def decorated_body_start(source: bytes, byte_start: int, byte_end: int) -> int | None:
+    """Where the `def`/`class`/`async def` sits inside the decorated definition at
+    exactly `[byte_start, byte_end)`, or None if those bytes are not one.
+
+    This is `_span_origin` read backwards, and it exists because the WP8 fix only
+    reaches spans written after WP8. A citation stored by pre-v6 code started at the
+    inner definition and ended where the wrapper ends; the symbol it cites now starts
+    at the outermost `@`. Given the symbol's bytes, this returns the offset that such
+    a citation WOULD have used, so a caller can compare rather than guess -- and a
+    caller who guesses gets it wrong, because the prefix it would have to recognise is
+    arbitrary Python. `lstrip().startswith("@")` says yes to a symbol whose leading
+    comment quotes an email address and no to `@retry(\\n    attempts=3,\\n)` followed
+    by a comment, and both errors land on the side that leaves a narrowed citation
+    active. The parser already knows the answer exactly; nothing here has to infer it.
+
+    Exact in both directions. `None` means these bytes are not a decorated definition
+    at all -- an undecorated function, a class whose last method happens to end where
+    it does, a module -- and an offset means they are, so `offset == span.byte_start`
+    is a boundary test with no heuristic in it. The range must match a
+    `decorated_definition` node on BOTH ends: a wrapper that merely contains the range
+    is some other symbol, and citing bytes inside it says nothing about decorators.
+
+    Cheap enough to call per candidate: the descent below prunes to the one path
+    through the tree that covers the range, so a 2,000-line module costs a parse and a
+    walk of depth, not of size.
+    """
+    root = _parser().parse(source).root_node
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        # Prune anything that cannot cover the range. A node ending before the range
+        # ends, or starting after it starts, cannot be the wrapper being looked for
+        # and neither can anything beneath it.
+        if node.end_byte < byte_end or node.start_byte > byte_start:
+            continue
+        if (
+            node.type == "decorated_definition"
+            and node.start_byte == byte_start
+            and node.end_byte == byte_end
+        ):
+            inner = node.child_by_field_name("definition")
+            if inner is None:
+                for child in node.children:
+                    if child.type in ("function_definition", "class_definition"):
+                        inner = child
+                        break
+            return None if inner is None else inner.start_byte
+        stack.extend(node.children)
+    return None
+
+
 def _signature(src: bytes, node: Node) -> str | None:
     """Reconstruct `name(params) -> ret` without dragging in the body."""
     name = node.child_by_field_name("name")

@@ -14,6 +14,7 @@ not-a-regular-file. "Every failure mode" was the old wording, and it was doing n
 the list was five states, and the sixth was the one on which the two actually disagreed.
 """
 
+from .boundaries import expire_narrowed_citations
 from .stale import (
     METHOD_HASH,
     METHOD_STAT,
@@ -25,6 +26,7 @@ from .stale import (
     verification_state,
 )
 from .store import (
+    REASON_DECORATORS_EXCLUDED,
     REASON_FILE_MISSING,
     REASON_HASH_MISMATCH,
     REASON_NO_EVIDENCE,
@@ -62,6 +64,7 @@ from .store import (
 __all__ = [
     "METHOD_HASH",
     "METHOD_STAT",
+    "REASON_DECORATORS_EXCLUDED",
     "REASON_FILE_MISSING",
     "REASON_HASH_MISMATCH",
     "REASON_NO_EVIDENCE",
@@ -87,6 +90,7 @@ __all__ = [
     "SpanCheck",
     "UnknownSubject",
     "assertions_with_status",
+    "expire_narrowed_citations",
     "is_servable",
     "mark_stale",
     "record_verdict",
