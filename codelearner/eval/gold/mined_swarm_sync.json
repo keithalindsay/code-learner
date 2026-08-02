@@ -1,0 +1,2629 @@
+{
+  "repo": "swarm-sync",
+  "source": "mined",
+  "generated_by": "codelearner.eval.mined_gold.mine_queries",
+  "mined_at_head": "3119a97bd106776b795357070c04b95ae87f9e89",
+  "commit_note": "MINED from commit prose, not hand-labelled: 81 queries from 125 candidate sentences across 40 of 73 commits, emitted as 162 rows (verbatim + name-blind per query). Snapshot at 3119a97bd1 -- a mined set is a function of history and moves with the next commit; regenerate rather than trusting this file.",
+  "labelling_rule": "Relevant = every symbol named AS CODE by one sentence of a commit message, where that commit also changed the file the symbol lives in. 'As code' is gold_from_history.mentions_symbol: either the identifier is distinctive enough that a bare occurrence cannot be English, or it appears in backticks, called, attribute-accessed, or assigned. The sentence, unmodified, is the query. Excluded: commits with boilerplate subjects, merge commits, sentences under 5 words, code snippets, sentences naming more than 5 symbols, sentences leaving fewer than 3 content tokens once their targets' name tokens are removed, sentences found verbatim (32-char run) in any selected symbol's source, exact duplicates, and any query naming a qualname the index does not hold. NOT excluded: high token overlap with the target's source -- it is measured per query and reported, because the hand-labelled set's own overlap is a median 0.71 and a threshold would reject it too. Every query is emitted twice, verbatim and name-blinded, as separate rows sharing a pair_id -- except where two queries blind to the same text with different relevant sets, where the blind row is dropped as ambiguous and the verbatim row is left unpaired. The two rows of a pair are the same item and must be clustered, not counted twice.",
+  "funnel": {
+    "commits_in_history": 73,
+    "commits_contributing": 40,
+    "commits_skipped": {
+      "boilerplate_subject": 2,
+      "no_live_python_files": 20
+    },
+    "candidates_considered": 125,
+    "rejected": {
+      "copied_into_sibling": 12,
+      "copied_into_source": 29,
+      "name_only": 1,
+      "too_many_relevant": 1,
+      "too_short": 1
+    },
+    "usable_queries": 81,
+    "usable_fraction": 0.648,
+    "distinct_target_symbols": 90,
+    "relevant_set_sizes": {
+      "1": 50,
+      "2": 18,
+      "3": 7,
+      "4": 6
+    },
+    "multi_relevant": 31,
+    "largest_commit_cluster": 5,
+    "blind_rows_dropped": 0,
+    "rows_emitted": 162
+  },
+  "source_overlap": {
+    "definition": "|content tokens of query & content tokens of relevant symbols' source| / |content tokens of query|. Reported, never filtered on.",
+    "mined": {
+      "n": 81,
+      "min": 0.032,
+      "p25": 0.371,
+      "median": 0.583,
+      "p75": 0.75,
+      "max": 0.96,
+      "mean": 0.546,
+      "deciles": {
+        "0-10%": 3,
+        "10-20%": 7,
+        "20-30%": 4,
+        "30-40%": 9,
+        "40-50%": 7,
+        "50-60%": 15,
+        "60-70%": 11,
+        "70-80%": 10,
+        "80-90%": 8,
+        "90-100%": 7
+      }
+    },
+    "hand_labelled_reference": {
+      "gold": "swarm_sync.json (16 hand-written queries)",
+      "min": 0.0,
+      "median": 0.71,
+      "mean": 0.61,
+      "max": 1.0,
+      "at_1.0": 2
+    }
+  },
+  "bias": {
+    "note": "The mention rule selects symbols a commit message happened to name. This set inherits that bias in full; it is measured here, not corrected. 'over_representation' is the selected share of a kind divided by its population share -- 1.0 is neutral, above 1.0 is over-represented.",
+    "population": {
+      "n": 318,
+      "documented": 0.7044025157232704,
+      "private": 0.39622641509433965,
+      "kinds": {
+        "class": 0.13522012578616352,
+        "function": 0.710691823899371,
+        "method": 0.1540880503144654
+      }
+    },
+    "selected": {
+      "n": 90,
+      "documented": 0.8,
+      "private": 0.2,
+      "kinds": {
+        "class": 0.2,
+        "function": 0.6555555555555556,
+        "method": 0.14444444444444443
+      }
+    },
+    "over_representation": {
+      "class": 1.479,
+      "function": 0.922,
+      "method": 0.937
+    }
+  },
+  "queries": [
+    {
+      "id": "swarm-sync:982386a134:6:verbatim",
+      "query": "`release` is now ungated in both the shell guard and `_dispatch`; it is the one subcommand that cannot act on a repo (it deletes only rows whose agent_id is the caller's), so gating it could only ever cause a leak.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.hooks.adapter._dispatch"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:982386a134:6",
+      "commit": "982386a134",
+      "n_relevant": 1,
+      "source_overlap": 0.474
+    },
+    {
+      "id": "swarm-sync:982386a134:6:name_blind",
+      "query": "release is now ungated in both the shell guard and it is the one subcommand that cannot act on a repo it deletes only rows whose agent id is the caller s so gating it could only ever cause a leak",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.hooks.adapter._dispatch"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:982386a134:6",
+      "commit": "982386a134",
+      "n_relevant": 1,
+      "source_overlap": 0.474
+    },
+    {
+      "id": "swarm-sync:7bb35385b5:12:verbatim",
+      "query": "`_reverse_dep_files` walked at PARCEL granularity and projected to files only at the end, so a file-level chain broke whenever the intermediate module was imported by-symbol and the reached symbol was not the imported one.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.coordinator.gate._reverse_dep_files"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:7bb35385b5:12",
+      "commit": "7bb35385b5",
+      "n_relevant": 1,
+      "source_overlap": 0.611
+    },
+    {
+      "id": "swarm-sync:7bb35385b5:12:name_blind",
+      "query": "walked at parcel granularity and projected to only at the end so a file level chain broke whenever the intermediate module was imported by symbol and the reached symbol was not the imported one",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.coordinator.gate._reverse_dep_files"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:7bb35385b5:12",
+      "commit": "7bb35385b5",
+      "n_relevant": 1,
+      "source_overlap": 0.611
+    },
+    {
+      "id": "swarm-sync:7bb35385b5:19:verbatim",
+      "query": "Now reclaimed by `prune_orphan_worktrees`, called from `add_worktree`, using the only reliable liveness signal available: an unheld `flock`, released by the kernel however the owner died.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.worktree.git_ops.add_worktree",
+        "swarmsync.worktree.git_ops.prune_orphan_worktrees"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:7bb35385b5:19",
+      "commit": "7bb35385b5",
+      "n_relevant": 2,
+      "source_overlap": 0.778
+    },
+    {
+      "id": "swarm-sync:7bb35385b5:19:name_blind",
+      "query": "now reclaimed by called from using the only reliable liveness signal available an unheld flock released by the kernel however the owner died",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.worktree.git_ops.add_worktree",
+        "swarmsync.worktree.git_ops.prune_orphan_worktrees"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:7bb35385b5:19",
+      "commit": "7bb35385b5",
+      "n_relevant": 2,
+      "source_overlap": 0.778
+    },
+    {
+      "id": "swarm-sync:7bb35385b5:35:verbatim",
+      "query": "`co_schedulable` is SYMMETRIC and `group_schedulable` is a greedy partition in caller input order, so the most any clause inside it can express is \"not the same wave\" -- never \"this one first\".",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.coordinator.broker.group_schedulable"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:7bb35385b5:35",
+      "commit": "7bb35385b5",
+      "n_relevant": 1,
+      "source_overlap": 0.412
+    },
+    {
+      "id": "swarm-sync:7bb35385b5:35:name_blind",
+      "query": "co is symmetric and is a greedy partition in caller input order so the most any clause inside it can express is not the same wave never this one first",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.coordinator.broker.group_schedulable"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:7bb35385b5:35",
+      "commit": "7bb35385b5",
+      "n_relevant": 1,
+      "source_overlap": 0.412
+    },
+    {
+      "id": "swarm-sync:e6bebc996b:6:verbatim",
+      "query": "Passing `ttl=self._ttl` unconditionally raises TypeError on any client whose `heartbeat` lacks the keyword -- and `_run`'s per-beat `except Exception` SWALLOWS it.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.agent.runner._Heartbeater._run"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:e6bebc996b:6",
+      "commit": "e6bebc996b",
+      "n_relevant": 1,
+      "source_overlap": 0.947
+    },
+    {
+      "id": "swarm-sync:e6bebc996b:6:name_blind",
+      "query": "passing ttl self ttl unconditionally raises type error on any client whose heartbeat lacks the keyword and s per beat except exception swallows it",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.agent.runner._Heartbeater._run"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:e6bebc996b:6",
+      "commit": "e6bebc996b",
+      "n_relevant": 1,
+      "source_overlap": 0.947
+    },
+    {
+      "id": "swarm-sync:8771b21bcf:4:verbatim",
+      "query": "build_graph's ast.ImportFrom branch read `from codelearner import db` as \"the name `db` from module `codelearner`\".",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.classifier.graph.build_graph"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:8771b21bcf:4",
+      "commit": "8771b21bcf",
+      "n_relevant": 1,
+      "source_overlap": 0.9
+    },
+    {
+      "id": "swarm-sync:8771b21bcf:4:name_blind",
+      "query": "s ast import from branch read from codelearner import db as the name db from module codelearner",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.classifier.graph.build_graph"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:8771b21bcf:4",
+      "commit": "8771b21bcf",
+      "n_relevant": 1,
+      "source_overlap": 0.9
+    },
+    {
+      "id": "swarm-sync:8771b21bcf:6:verbatim",
+      "query": "Measured before the fix: codelearner/__init__.py 98 bytes, a docstring and __version__ 29 dependent files, 11 test files, blast_radius 279 -- the HIGHEST in the repo codelearner/db.py the most-imported module in the repo 1 dependent file, 0 test files, blast_radius 3 retrieve/lexical.py imported the ordinary way (control) 27 / 7 / 191 -- correct",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.classifier.graph.blast_radius"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:8771b21bcf:6",
+      "commit": "8771b21bcf",
+      "n_relevant": 1,
+      "source_overlap": 0.074
+    },
+    {
+      "id": "swarm-sync:8771b21bcf:6:name_blind",
+      "query": "measured before the fix codelearner init py bytes a docstring and version dependent files test files the highest in the repo codelearner db py the most imported module in the repo dependent file test files retrieve lexical py imported the ordinary way control correct",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.classifier.graph.blast_radius"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:8771b21bcf:6",
+      "commit": "8771b21bcf",
+      "n_relevant": 1,
+      "source_overlap": 0.074
+    },
+    {
+      "id": "swarm-sync:9a166d9fd6:1:verbatim",
+      "query": "`cmd_precheck` read `GET /leases` first and, on finding another holder, returned a denial from what that read said.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.hooks.adapter.cmd_precheck"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:9a166d9fd6:1",
+      "commit": "9a166d9fd6",
+      "n_relevant": 1,
+      "source_overlap": 0.75
+    },
+    {
+      "id": "swarm-sync:9a166d9fd6:1:name_blind",
+      "query": "read get leases first and on finding another holder returned a denial from what that read said",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.hooks.adapter.cmd_precheck"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:9a166d9fd6:1",
+      "commit": "9a166d9fd6",
+      "n_relevant": 1,
+      "source_overlap": 0.75
+    },
+    {
+      "id": "swarm-sync:077f4ce5fd:6:verbatim",
+      "query": "A failed remove now falls back to the same rmtree-then-prune sequence _prune_stale_worktree already uses, and says so.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.worktree.git_ops._prune_stale_worktree"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:077f4ce5fd:6",
+      "commit": "077f4ce5fd",
+      "n_relevant": 1,
+      "source_overlap": 0.545
+    },
+    {
+      "id": "swarm-sync:077f4ce5fd:6:name_blind",
+      "query": "a failed remove now falls back to the same rmtree then sequence already uses and says so",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.worktree.git_ops._prune_stale_worktree"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:077f4ce5fd:6",
+      "commit": "077f4ce5fd",
+      "n_relevant": 1,
+      "source_overlap": 0.545
+    },
+    {
+      "id": "swarm-sync:077f4ce5fd:11:verbatim",
+      "query": "Routed through emit(); the four stale comments and two test docstrings now say what is actually true.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.blackboard.events.emit"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:077f4ce5fd:11",
+      "commit": "077f4ce5fd",
+      "n_relevant": 1,
+      "source_overlap": 0.167
+    },
+    {
+      "id": "swarm-sync:077f4ce5fd:11:name_blind",
+      "query": "routed through the four stale comments and two test docstrings now say what is actually true",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.blackboard.events.emit"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:077f4ce5fd:11",
+      "commit": "077f4ce5fd",
+      "n_relevant": 1,
+      "source_overlap": 0.167
+    },
+    {
+      "id": "swarm-sync:077f4ce5fd:12:verbatim",
+      "query": "The _rows_to_events fallback stays as a genuine defensive path for foreign rows, with an honest comment.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.blackboard.events._rows_to_events"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:077f4ce5fd:12",
+      "commit": "077f4ce5fd",
+      "n_relevant": 1,
+      "source_overlap": 0.3
+    },
+    {
+      "id": "swarm-sync:077f4ce5fd:12:name_blind",
+      "query": "the fallback stays as a genuine defensive path for foreign with an honest comment",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.blackboard.events._rows_to_events"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:077f4ce5fd:12",
+      "commit": "077f4ce5fd",
+      "n_relevant": 1,
+      "source_overlap": 0.3
+    },
+    {
+      "id": "swarm-sync:8b13e13ea3:1:verbatim",
+      "query": "reconcile_orphaned_integrations set action=\"FAILED\" when reset_hard raised, then fell through to the unconditional DELETE FROM open_integrations.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.coordinator.integrator.reconcile_orphaned_integrations"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:8b13e13ea3:1",
+      "commit": "8b13e13ea3",
+      "n_relevant": 1,
+      "source_overlap": 0.786
+    },
+    {
+      "id": "swarm-sync:8b13e13ea3:1:name_blind",
+      "query": "set action failed when reset hard raised then fell through to the unconditional delete from open",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.coordinator.integrator.reconcile_orphaned_integrations"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:8b13e13ea3:1",
+      "commit": "8b13e13ea3",
+      "n_relevant": 1,
+      "source_overlap": 0.786
+    },
+    {
+      "id": "swarm-sync:13612e07ac:2:verbatim",
+      "query": "It serializes concurrent `POST /integrate` requests inside ONE server and is structurally blind to a SECOND `swarmsync-serve` process on the same `--root` (different port, different DB file), which passes `check_single_root` and `bind_managed_root` alike.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.server.app.check_single_root"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:13612e07ac:2",
+      "commit": "13612e07ac",
+      "n_relevant": 1,
+      "source_overlap": 0.5
+    },
+    {
+      "id": "swarm-sync:13612e07ac:2:name_blind",
+      "query": "it serializes concurrent post integrate requests inside one and is structurally blind to a second serve process on the same different port different db file which passes and bind managed alike",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.server.app.check_single_root"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:13612e07ac:2",
+      "commit": "13612e07ac",
+      "n_relevant": 1,
+      "source_overlap": 0.5
+    },
+    {
+      "id": "swarm-sync:13612e07ac:8:verbatim",
+      "query": "The refusal is `RepoLockHeldError`, the same loud-at-startup posture as `MultiRootError`/`ManagedRootMismatchError`, naming the repo, the lock file and the holding pid.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.repolock.RepoLockHeldError",
+        "swarmsync.server.app.MultiRootError"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:13612e07ac:8",
+      "commit": "13612e07ac",
+      "n_relevant": 2,
+      "source_overlap": 0.625
+    },
+    {
+      "id": "swarm-sync:13612e07ac:8:name_blind",
+      "query": "the refusal is the same loud at startup posture as managed mismatch naming the the file and the holding pid",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.repolock.RepoLockHeldError",
+        "swarmsync.server.app.MultiRootError"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:13612e07ac:8",
+      "commit": "13612e07ac",
+      "n_relevant": 2,
+      "source_overlap": 0.625
+    },
+    {
+      "id": "swarm-sync:13612e07ac:9:verbatim",
+      "query": "`serve.main` pre-flights it so the operator gets a clean SystemExit instead of a traceback out of uvicorn startup.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.cli.main",
+        "swarmsync.server.serve.main"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:13612e07ac:9",
+      "commit": "13612e07ac",
+      "n_relevant": 2,
+      "source_overlap": 0.846
+    },
+    {
+      "id": "swarm-sync:13612e07ac:9:name_blind",
+      "query": "pre flights it so the operator gets a clean system exit instead of a traceback out of uvicorn startup",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.cli.main",
+        "swarmsync.server.serve.main"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:13612e07ac:9",
+      "commit": "13612e07ac",
+      "n_relevant": 2,
+      "source_overlap": 0.846
+    },
+    {
+      "id": "swarm-sync:13612e07ac:12:verbatim",
+      "query": "Deleting the acquire (`return` at the top of `RepoLock.acquire`) fails 6 of the 11.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.repolock.RepoLock",
+        "swarmsync.repolock.RepoLock.acquire"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:13612e07ac:12",
+      "commit": "13612e07ac",
+      "n_relevant": 2,
+      "source_overlap": 0.571
+    },
+    {
+      "id": "swarm-sync:13612e07ac:12:name_blind",
+      "query": "deleting the return at the top of fails of the",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.repolock.RepoLock",
+        "swarmsync.repolock.RepoLock.acquire"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:13612e07ac:12",
+      "commit": "13612e07ac",
+      "n_relevant": 2,
+      "source_overlap": 0.571
+    },
+    {
+      "id": "swarm-sync:1c06aa7c90:1:verbatim",
+      "query": "`cmd_init_hooks` caught OSError AND ValueError from the settings.json read and fell back to `existing = {}`, then wrote the merged result unconditionally.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.cli.cmd_init_hooks"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:1c06aa7c90:1",
+      "commit": "1c06aa7c90",
+      "n_relevant": 1,
+      "source_overlap": 0.588
+    },
+    {
+      "id": "swarm-sync:1c06aa7c90:1:name_blind",
+      "query": "caught os error and value error from the settings json read and fell back to existing then wrote the merged result unconditionally",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.cli.cmd_init_hooks"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:1c06aa7c90:1",
+      "commit": "1c06aa7c90",
+      "n_relevant": 1,
+      "source_overlap": 0.588
+    },
+    {
+      "id": "swarm-sync:1c06aa7c90:4:verbatim",
+      "query": "This defeated `_merge_hooks`, whose only reason to exist is preserving foreign hooks.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.cli._merge_hooks"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:1c06aa7c90:4",
+      "commit": "1c06aa7c90",
+      "n_relevant": 1,
+      "source_overlap": 0.375
+    },
+    {
+      "id": "swarm-sync:1c06aa7c90:4:name_blind",
+      "query": "this defeated whose only reason to exist is preserving foreign",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.cli._merge_hooks"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:1c06aa7c90:4",
+      "commit": "1c06aa7c90",
+      "n_relevant": 1,
+      "source_overlap": 0.375
+    },
+    {
+      "id": "swarm-sync:1c06aa7c90:6:verbatim",
+      "query": "`_read_settings` distinguishes ENOENT (-> `{}`, unchanged behavior) from any other failure -- parse error, decode error, read error, or a top level that is not a JSON object -- which raises `SettingsUnreadable`;",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.cli.SettingsUnreadable",
+        "swarmsync.cli._read_settings"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:1c06aa7c90:6",
+      "commit": "1c06aa7c90",
+      "n_relevant": 2,
+      "source_overlap": 0.765
+    },
+    {
+      "id": "swarm-sync:1c06aa7c90:6:name_blind",
+      "query": "distinguishes enoent unchanged behavior from any other failure parse error decode error error or a top level that is not a json object which raises",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.cli.SettingsUnreadable",
+        "swarmsync.cli._read_settings"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:1c06aa7c90:6",
+      "commit": "1c06aa7c90",
+      "n_relevant": 2,
+      "source_overlap": 0.765
+    },
+    {
+      "id": "swarm-sync:1c06aa7c90:8:verbatim",
+      "query": "`--dry-run` refuses too, so the operator learns before committing to a write;",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.cli.run"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:1c06aa7c90:8",
+      "commit": "1c06aa7c90",
+      "n_relevant": 1,
+      "source_overlap": 0.125
+    },
+    {
+      "id": "swarm-sync:1c06aa7c90:8:name_blind",
+      "query": "dry refuses too so the operator learns before committing to a write",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.cli.run"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:1c06aa7c90:8",
+      "commit": "1c06aa7c90",
+      "n_relevant": 1,
+      "source_overlap": 0.125
+    },
+    {
+      "id": "swarm-sync:e6512a674d:1:verbatim",
+      "query": "U1 version preflight: `config.require_python()` (floor 3.11, mirrors requires-python) fails fast with a readable \"make a 3.11 venv\" message instead of the confusing downstream errors / long silent pip backtrack a wrong interpreter causes -- the worst first-run outcome.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.config.require_python"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:e6512a674d:1",
+      "commit": "e6512a674d",
+      "n_relevant": 1,
+      "source_overlap": 0.414
+    },
+    {
+      "id": "swarm-sync:e6512a674d:1:name_blind",
+      "query": "u 1 version preflight floor mirrors requires fails fast with a readable make a venv message instead of the confusing downstream errors long silent pip backtrack a wrong interpreter causes the worst first run outcome",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.config.require_python"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:e6512a674d:1",
+      "commit": "e6512a674d",
+      "n_relevant": 1,
+      "source_overlap": 0.414
+    },
+    {
+      "id": "swarm-sync:e6512a674d:4:verbatim",
+      "query": "U6 friendly unreachable client: BlackboardClient over a real URL now wraps connection failures as BlackboardUnreachable (\"...is `swarmsync-serve` running?\") -- an httpx.HTTPError subclass, so the CLI/doctor catchers keep working while the broker/runner/demo get one actionable line, not a raw ConnectError traceback.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.agent.client.BlackboardClient",
+        "swarmsync.agent.client.BlackboardUnreachable"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:e6512a674d:4",
+      "commit": "e6512a674d",
+      "n_relevant": 2,
+      "source_overlap": 0.667
+    },
+    {
+      "id": "swarm-sync:e6512a674d:4:name_blind",
+      "query": "u 6 friendly over a real url now wraps connection failures as is serve running an httpx http error subclass so the cli doctor catchers keep working while the broker runner demo get one actionable line not a raw connect error traceback",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.agent.client.BlackboardClient",
+        "swarmsync.agent.client.BlackboardUnreachable"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:e6512a674d:4",
+      "commit": "e6512a674d",
+      "n_relevant": 2,
+      "source_overlap": 0.667
+    },
+    {
+      "id": "swarm-sync:e6512a674d:8:verbatim",
+      "query": "U6/U9 README: `swarmsync init-hooks`/`doctor` as the Setup quick path; a new \"Operating a session \u2014 the `swarmsync` CLI\" section (status/holds/free/events/ doctor) + the Swagger `/docs` pointer.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.agent.client.BlackboardClient.events"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:e6512a674d:8",
+      "commit": "e6512a674d",
+      "n_relevant": 1,
+      "source_overlap": 0.105
+    },
+    {
+      "id": "swarm-sync:e6512a674d:8:name_blind",
+      "query": "u 6 u 9 readme init hooks doctor as the setup quick path a new operating a session the cli section status holds free doctor the swagger docs pointer",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.agent.client.BlackboardClient.events"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:e6512a674d:8",
+      "commit": "e6512a674d",
+      "n_relevant": 1,
+      "source_overlap": 0.105
+    },
+    {
+      "id": "swarm-sync:dd6ca1d868:5:verbatim",
+      "query": "Idempotent (replaces its own prior entries, never duplicates), preserves foreign hooks and other settings, `--dry-run` prints and touches nothing, `--command` overrides the base.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.cli.run"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:dd6ca1d868:5",
+      "commit": "dd6ca1d868",
+      "n_relevant": 1,
+      "source_overlap": 0.111
+    },
+    {
+      "id": "swarm-sync:dd6ca1d868:5:name_blind",
+      "query": "idempotent replaces its own prior entries never duplicates preserves foreign hooks and other settings dry prints and touches nothing command overrides the base",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.cli.run"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:dd6ca1d868:5",
+      "commit": "dd6ca1d868",
+      "n_relevant": 1,
+      "source_overlap": 0.111
+    },
+    {
+      "id": "swarm-sync:329fd0014f:0:verbatim",
+      "query": "WP5.1: operator/agent CLI + GET /health (U2, U5)",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.agent.client.BlackboardClient.health"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:329fd0014f:0",
+      "commit": "329fd0014f",
+      "n_relevant": 1,
+      "source_overlap": 0.5
+    },
+    {
+      "id": "swarm-sync:329fd0014f:0:name_blind",
+      "query": "wp 5 operator cli get u 2 u 5",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.agent.client.BlackboardClient.health"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:329fd0014f:0",
+      "commit": "329fd0014f",
+      "n_relevant": 1,
+      "source_overlap": 0.5
+    },
+    {
+      "id": "swarm-sync:329fd0014f:3:verbatim",
+      "query": "GET /health (models.HealthOut): {version, root, db_path, active_leases, last_event_seq}.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.agent.client.BlackboardClient.health",
+        "swarmsync.blackboard.models.HealthOut"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:329fd0014f:3",
+      "commit": "329fd0014f",
+      "n_relevant": 2,
+      "source_overlap": 0.917
+    },
+    {
+      "id": "swarm-sync:329fd0014f:3:name_blind",
+      "query": "get version root db path active leases last event seq",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.agent.client.BlackboardClient.health",
+        "swarmsync.blackboard.models.HealthOut"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:329fd0014f:3",
+      "commit": "329fd0014f",
+      "n_relevant": 2,
+      "source_overlap": 0.917
+    },
+    {
+      "id": "swarm-sync:329fd0014f:7:verbatim",
+      "query": "`swarmsync` CLI (swarmsync/cli.py, new console script), built on the tested BlackboardClient transport (gains a .health()): status -- up? root? db? active leases (holder + human TTL) + recent events holds -- every active hold: parcel, holder, mode, TTL-remaining free P\u2026 -- of THESE paths, which are free? exit 1 if any held, so an agent can gate work in one line (`swarmsync free foo.py && edit`); a symbol hold makes the whole file read as held (path granularity) events -- recent N (--follow polls ?since= until Ctrl-C) Unreachable/5xx server -> a readable named line + exit 2, never an httpx traceback.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.agent.client.BlackboardClient",
+        "swarmsync.agent.client.BlackboardClient.events",
+        "swarmsync.agent.client.BlackboardClient.health",
+        "swarmsync.agent.client.BlackboardClient.leases"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:329fd0014f:7",
+      "commit": "329fd0014f",
+      "n_relevant": 4,
+      "source_overlap": 0.534
+    },
+    {
+      "id": "swarm-sync:329fd0014f:7:name_blind",
+      "query": "cli cli py new console script built on the tested transport gains a status up root db active holder human ttl recent holds every active hold parcel holder mode ttl remaining free p of these paths which are free exit if any held so an can gate work in one line free foo py edit a symbol hold makes the whole file read as held path granularity recent n follow polls since until ctrl c unreachable xx server a readable named line exit never an httpx traceback",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.agent.client.BlackboardClient",
+        "swarmsync.agent.client.BlackboardClient.events",
+        "swarmsync.agent.client.BlackboardClient.health",
+        "swarmsync.agent.client.BlackboardClient.leases"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:329fd0014f:7",
+      "commit": "329fd0014f",
+      "n_relevant": 4,
+      "source_overlap": 0.534
+    },
+    {
+      "id": "swarm-sync:329fd0014f:10:verbatim",
+      "query": "Tests: test_cli.py (11, driven through the real parser against a TestClient-backed client), /health (2) + OpenAPI-snapshot (1) in test_server.py, deny-pointer assertion in test_hook_adapter.py.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.agent.client.BlackboardClient.health"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:329fd0014f:10",
+      "commit": "329fd0014f",
+      "n_relevant": 1,
+      "source_overlap": 0.143
+    },
+    {
+      "id": "swarm-sync:329fd0014f:10:name_blind",
+      "query": "tests test cli py driven through the real parser against a test backed open api snapshot in test server py deny pointer assertion in test hook adapter py",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.agent.client.BlackboardClient.health"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:329fd0014f:10",
+      "commit": "329fd0014f",
+      "n_relevant": 1,
+      "source_overlap": 0.143
+    },
+    {
+      "id": "swarm-sync:32041f6905:5:verbatim",
+      "query": "Gate-timeout unification: the two copies were verified behaviorally identical (unset/empty/garbage/non-positive/NaN -> 600.0; positive floats accepted), so config.gate_timeout() preserves both; gate.py's explicit early-return spelling was kept.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.config.gate_timeout"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:32041f6905:5",
+      "commit": "32041f6905",
+      "n_relevant": 1,
+      "source_overlap": 0.833
+    },
+    {
+      "id": "swarm-sync:32041f6905:5:name_blind",
+      "query": "unification the two copies were verified behaviorally identical unset empty garbage non positive na n positive floats accepted so preserves both py s explicit early return spelling was kept",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.config.gate_timeout"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:32041f6905:5",
+      "commit": "32041f6905",
+      "n_relevant": 1,
+      "source_overlap": 0.833
+    },
+    {
+      "id": "swarm-sync:32041f6905:8:verbatim",
+      "query": "The hook adapter's C9/C13 clamp/warn logic stays in _hook_lease_ttl, fed the raw string by config.lease_ttl(); serve.py's os.environ WRITE became the documented config.set_roots(); gate.py's whole-environment subprocess passthrough became config.subprocess_env() (the one read that cannot be a named accessor -- centralized, not whitelisted).",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.config.lease_ttl",
+        "swarmsync.config.set_roots",
+        "swarmsync.config.subprocess_env",
+        "swarmsync.hooks.adapter._hook_lease_ttl"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:32041f6905:8",
+      "commit": "32041f6905",
+      "n_relevant": 4,
+      "source_overlap": 0.882
+    },
+    {
+      "id": "swarm-sync:32041f6905:8:name_blind",
+      "query": "the s c 9 c 13 clamp warn logic stays in fed the raw string by serve py s os environ write became the documented gate py s whole environment passthrough became the one read that cannot be a named accessor centralized not whitelisted",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.config.lease_ttl",
+        "swarmsync.config.set_roots",
+        "swarmsync.config.subprocess_env",
+        "swarmsync.hooks.adapter._hook_lease_ttl"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:32041f6905:8",
+      "commit": "32041f6905",
+      "n_relevant": 4,
+      "source_overlap": 0.882
+    },
+    {
+      "id": "swarm-sync:32041f6905:9:verbatim",
+      "query": "ONE launcher (deliberate behavior change): the swarm-sync console script is now an alias of swarmsync-serve (both [project.scripts] entries -> serve:main): port 8787, SWARMSYNC_DB/swarmsync.db, --root/--fresh, boot banner, C13 clock assertion. app.main() and its argparse are deleted; the old port-8000/blackboard.db surface is gone.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.hooks.adapter.main",
+        "swarmsync.server.serve.main"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:32041f6905:9",
+      "commit": "32041f6905",
+      "n_relevant": 2,
+      "source_overlap": 0.677
+    },
+    {
+      "id": "swarm-sync:32041f6905:9:name_blind",
+      "query": "one launcher deliberate behavior change the swarm sync console script is now an alias of both project scripts entries port db db root fresh boot banner c 13 clock assertion app and its argparse are deleted the old port blackboard db surface is gone",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.hooks.adapter.main",
+        "swarmsync.server.serve.main"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:32041f6905:9",
+      "commit": "32041f6905",
+      "n_relevant": 2,
+      "source_overlap": 0.677
+    },
+    {
+      "id": "swarm-sync:32041f6905:11:verbatim",
+      "query": "Mutation-verified: re-adding a direct os.environ.get(\"SWARMSYNC_TOKEN\") in app.py fails the guard naming the line.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.agent.client._HttpLike.get",
+        "swarmsync.agent.client._UnreachableTranslatingHttp.get",
+        "swarmsync.hooks.adapter._ContactRecordingHttp.get"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:32041f6905:11",
+      "commit": "32041f6905",
+      "n_relevant": 3,
+      "source_overlap": 0.062
+    },
+    {
+      "id": "swarm-sync:32041f6905:11:name_blind",
+      "query": "mutation verified re adding a direct os environ token in app py fails the guard naming the line",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.agent.client._HttpLike.get",
+        "swarmsync.agent.client._UnreachableTranslatingHttp.get",
+        "swarmsync.hooks.adapter._ContactRecordingHttp.get"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:32041f6905:11",
+      "commit": "32041f6905",
+      "n_relevant": 3,
+      "source_overlap": 0.062
+    },
+    {
+      "id": "swarm-sync:32041f6905:12:verbatim",
+      "query": "Tests: new tests/test_config.py (26 tests: defaults, garbage fallback, call-time reads, SWARM_SYNC_DB deprecation warning, set_roots, subprocess_env); test_security.py launcher trio now drives serve.main (asserting the same S3 localhost-bind proof, port 8787); test_serve.py gains the pyproject-alias, no-second-launcher, and SWARMSYNC_DB-default tests; test_server.py's two app.main clock tests retired (their invariant is test_serve.py's existing clock pair -- there is no second launcher left to hold to it).",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.config.set_roots",
+        "swarmsync.config.subprocess_env",
+        "swarmsync.hooks.adapter.main",
+        "swarmsync.server.serve.main"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:32041f6905:12",
+      "commit": "32041f6905",
+      "n_relevant": 4,
+      "source_overlap": 0.63
+    },
+    {
+      "id": "swarm-sync:32041f6905:12:name_blind",
+      "query": "tests new tests test py tests defaults garbage fallback call time reads swarm sync db deprecation warning test security py launcher trio now drives asserting the same s 3 localhost bind proof port test py gains the pyproject alias no second launcher and db default tests test py s two app clock tests retired their invariant is test py s existing clock pair there is no second launcher left to hold to it",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.config.set_roots",
+        "swarmsync.config.subprocess_env",
+        "swarmsync.hooks.adapter.main",
+        "swarmsync.server.serve.main"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:32041f6905:12",
+      "commit": "32041f6905",
+      "n_relevant": 4,
+      "source_overlap": 0.63
+    },
+    {
+      "id": "swarm-sync:317782b860:2:verbatim",
+      "query": "IntegrateBody gains expected_read_deps ({parcel_or_contract_id: hash}, optional/opt-in); POST /integrate forwards it into integrator.integrate; BlackboardClient.integrate accepts and sends it; the runner snapshots each read-dependency's hash at plan time and submits it.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.agent.client.BlackboardClient",
+        "swarmsync.agent.client.BlackboardClient.integrate",
+        "swarmsync.blackboard.models.IntegrateBody",
+        "swarmsync.coordinator.broker._SerializingIntegrateClient.integrate"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:317782b860:2",
+      "commit": "317782b860",
+      "n_relevant": 4,
+      "source_overlap": 0.8
+    },
+    {
+      "id": "swarm-sync:317782b860:2:name_blind",
+      "query": "gains expected read deps parcel or contract id hash optional opt in post forwards it into integrator accepts and sends it the runner snapshots each read dependency s hash at plan time and submits it",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.agent.client.BlackboardClient",
+        "swarmsync.agent.client.BlackboardClient.integrate",
+        "swarmsync.blackboard.models.IntegrateBody",
+        "swarmsync.coordinator.broker._SerializingIntegrateClient.integrate"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:317782b860:2",
+      "commit": "317782b860",
+      "n_relevant": 4,
+      "source_overlap": 0.8
+    },
+    {
+      "id": "swarm-sync:317782b860:8:verbatim",
+      "query": "Task C (C17): the runner's read-the-world step fetches the NEWEST events (GET /events?tail=1000 via the client's new tail= mode) instead of the oldest page (since=0), so awareness stays recent once the log outgrows one page.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.agent.client.BlackboardClient.events"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:317782b860:8",
+      "commit": "317782b860",
+      "n_relevant": 1,
+      "source_overlap": 0.375
+    },
+    {
+      "id": "swarm-sync:317782b860:8:name_blind",
+      "query": "task c c 17 the runner s read the world step fetches the newest get tail via the s new tail mode instead of the oldest page since so awareness stays recent once the log outgrows one page",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.agent.client.BlackboardClient.events"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:317782b860:8",
+      "commit": "317782b860",
+      "n_relevant": 1,
+      "source_overlap": 0.375
+    },
+    {
+      "id": "swarm-sync:317782b860:10:verbatim",
+      "query": "Mutations verified: dropping the post_integrate forwarding fails the e2e needs_rebase test (silently merges); reverting the runner to since=0 fails the newest-events test. ruff clean, mypy clean, demo 5/5.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.server.app.create_app.post_integrate"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:317782b860:10",
+      "commit": "317782b860",
+      "n_relevant": 1,
+      "source_overlap": 0.238
+    },
+    {
+      "id": "swarm-sync:317782b860:10:name_blind",
+      "query": "mutations verified dropping the forwarding fails the e 2 e needs rebase test silently merges reverting the runner to since fails the newest events test ruff clean mypy clean demo",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.server.app.create_app.post_integrate"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:317782b860:10",
+      "commit": "317782b860",
+      "n_relevant": 1,
+      "source_overlap": 0.238
+    },
+    {
+      "id": "swarm-sync:7bccf6c47e:0:verbatim",
+      "query": "WP4.5: declare the wire contract (typed /parcels + /leases), error-shape docs, events tail= mode, atomic pheromone decay (C15)",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.blackboard.events.tail"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:7bccf6c47e:0",
+      "commit": "7bccf6c47e",
+      "n_relevant": 1,
+      "source_overlap": 0.118
+    },
+    {
+      "id": "swarm-sync:7bccf6c47e:0:name_blind",
+      "query": "wp 4 declare the wire contract typed parcels leases error shape docs mode atomic pheromone decay c 15",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.blackboard.events.tail"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:7bccf6c47e:0",
+      "commit": "7bccf6c47e",
+      "n_relevant": 1,
+      "source_overlap": 0.118
+    },
+    {
+      "id": "swarm-sync:7bccf6c47e:1:verbatim",
+      "query": "A6 typed responses: GET /leases now declares response_model=list[Lease] (models.Lease matches the leases schema field-for-field) and GET /parcels declares list[ParcelWithLeases] -- the parcel columns plus the active-lease join ({lease_id, agent_id, mode}) the handler has always emitted.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.blackboard.models.Lease",
+        "swarmsync.blackboard.models.ParcelWithLeases"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:7bccf6c47e:1",
+      "commit": "7bccf6c47e",
+      "n_relevant": 2,
+      "source_overlap": 0.68
+    },
+    {
+      "id": "swarm-sync:7bccf6c47e:1:name_blind",
+      "query": "a 6 typed responses get now declares response model list matches the schema field for field and get parcels declares list the columns plus the active join id agent id mode the handler has always emitted",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.blackboard.models.Lease",
+        "swarmsync.blackboard.models.ParcelWithLeases"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:7bccf6c47e:1",
+      "commit": "7bccf6c47e",
+      "n_relevant": 2,
+      "source_overlap": 0.68
+    },
+    {
+      "id": "swarm-sync:d6e029a3a2:2:verbatim",
+      "query": "The pytest-gate machinery -- `run_impact_tests`, impact selection (`_reverse_dep_files`), the timeout parsing (`_gate_timeout` / SWARMSYNC_GATE_TIMEOUT), and the group-kill/drain apparatus (`_kill_process_group`, `_close_streams`) -- moves wholesale to a new `coordinator/gate.py`, unchanged in names, signatures, and behavior.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.coordinator.gate._close_streams",
+        "swarmsync.coordinator.gate._kill_process_group",
+        "swarmsync.coordinator.gate._reverse_dep_files",
+        "swarmsync.coordinator.gate.run_impact_tests"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:d6e029a3a2:2",
+      "commit": "d6e029a3a2",
+      "n_relevant": 4,
+      "source_overlap": 0.786
+    },
+    {
+      "id": "swarm-sync:d6e029a3a2:2:name_blind",
+      "query": "the pytest machinery selection the timeout parsing timeout timeout and the drain apparatus moves wholesale to a new py unchanged in names signatures and behavior",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.coordinator.gate._close_streams",
+        "swarmsync.coordinator.gate._kill_process_group",
+        "swarmsync.coordinator.gate._reverse_dep_files",
+        "swarmsync.coordinator.gate.run_impact_tests"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:d6e029a3a2:2",
+      "commit": "d6e029a3a2",
+      "n_relevant": 4,
+      "source_overlap": 0.786
+    },
+    {
+      "id": "swarm-sync:d6e029a3a2:3:verbatim",
+      "query": "The integrator keeps compatibility aliases (`run_impact_tests = gate.run_impact_tests`, etc.) and calls the module-global name, so every existing monkeypatch path through `integrator.*` still intercepts the gate; `import subprocess` is kept (re-exported) because tests patch `integrator.subprocess.Popen`.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.coordinator.gate.run_impact_tests"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:d6e029a3a2:3",
+      "commit": "d6e029a3a2",
+      "n_relevant": 1,
+      "source_overlap": 0.593
+    },
+    {
+      "id": "swarm-sync:d6e029a3a2:3:name_blind",
+      "query": "the integrator keeps compatibility aliases etc and calls the module global name so every existing monkeypatch path through integrator still intercepts the import subprocess is kept re exported because patch integrator subprocess popen",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.coordinator.gate.run_impact_tests"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:d6e029a3a2:3",
+      "commit": "d6e029a3a2",
+      "n_relevant": 1,
+      "source_overlap": 0.593
+    },
+    {
+      "id": "swarm-sync:d6e029a3a2:6:verbatim",
+      "query": "C16 (P3): every event within one `integrate()` call was stamped with the CALL-ENTRY `ts` threaded through as `ts=now` -- a `merged` emitted after a 600s gate carried a timestamp 10 minutes stale.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.coordinator.integrator.integrate"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:d6e029a3a2:6",
+      "commit": "d6e029a3a2",
+      "n_relevant": 1,
+      "source_overlap": 0.944
+    },
+    {
+      "id": "swarm-sync:d6e029a3a2:6:name_blind",
+      "query": "c 16 p 3 every event within one call was stamped with the call entry ts threaded through as ts now a merged emitted after a s gate carried a timestamp minutes stale",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.coordinator.integrator.integrate"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:d6e029a3a2:6",
+      "commit": "d6e029a3a2",
+      "n_relevant": 1,
+      "source_overlap": 0.944
+    },
+    {
+      "id": "swarm-sync:9e97da8b8f:2:verbatim",
+      "query": "The `<relpath>::<symbol>` scheme (with `<module>` as the whole-file interstitial symbol) was implemented by six scattered duplicates: `MODULE_SYMBOL` hardcoded in classifier/indexer.py, classifier/graph.py, and coordinator/broker.py; hooks/adapter.py building ids via its own f-string; blackboard/leases.py and agent/runner.py parsing ids via raw `partition(\"::\")`.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.agent.client.BlackboardClient.leases"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:9e97da8b8f:2",
+      "commit": "9e97da8b8f",
+      "n_relevant": 1,
+      "source_overlap": 0.032
+    },
+    {
+      "id": "swarm-sync:9e97da8b8f:2:name_blind",
+      "query": "the relpath symbol scheme with module as the whole file interstitial symbol was implemented by six scattered duplicates module symbol hardcoded in classifier indexer py classifier graph py and coordinator broker py hooks adapter py building ids via its own f string py and runner py parsing ids via raw partition",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.agent.client.BlackboardClient.leases"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:9e97da8b8f:2",
+      "commit": "9e97da8b8f",
+      "n_relevant": 1,
+      "source_overlap": 0.032
+    },
+    {
+      "id": "swarm-sync:9e97da8b8f:3:verbatim",
+      "query": "New `blackboard/parcel_id.py` is now the single definition (`MODULE_SYMBOL`, `make_id`, `module_id`, `split`); every site imports from it.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.blackboard.parcel_id.make_id",
+        "swarmsync.blackboard.parcel_id.module_id",
+        "swarmsync.blackboard.parcel_id.split"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:9e97da8b8f:3",
+      "commit": "9e97da8b8f",
+      "n_relevant": 3,
+      "source_overlap": 0.5
+    },
+    {
+      "id": "swarm-sync:9e97da8b8f:3:name_blind",
+      "query": "new py is now the single definition symbol every site imports from it",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.blackboard.parcel_id.make_id",
+        "swarmsync.blackboard.parcel_id.module_id",
+        "swarmsync.blackboard.parcel_id.split"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:9e97da8b8f:3",
+      "commit": "9e97da8b8f",
+      "n_relevant": 3,
+      "source_overlap": 0.5
+    },
+    {
+      "id": "swarm-sync:9e97da8b8f:5:verbatim",
+      "query": "`split` reproduces `partition(\"::\")` byte-for-byte, including the no-separator case (`(whole_id, \"\")`), so this is a pure consolidation -- ids on the wire are unchanged, proven by the full suite passing without modification.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.blackboard.parcel_id.split"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:9e97da8b8f:5",
+      "commit": "9e97da8b8f",
+      "n_relevant": 1,
+      "source_overlap": 0.3
+    },
+    {
+      "id": "swarm-sync:9e97da8b8f:5:name_blind",
+      "query": "reproduces partition byte for byte including the no separator case whole so this is a pure consolidation ids on the wire are unchanged proven by the full suite passing without modification",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.blackboard.parcel_id.split"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:9e97da8b8f:5",
+      "commit": "9e97da8b8f",
+      "n_relevant": 1,
+      "source_overlap": 0.3
+    },
+    {
+      "id": "swarm-sync:9e97da8b8f:8:verbatim",
+      "query": "A8 -- the two formerly-silent swallows in agent/runner.py now leave a trace: `_Heartbeater._run` logs a failed beat at WARNING (a dying blackboard mid-run previously lost every beat invisibly) and `_cleanup_worktree` logs both swallowed GitOpsErrors at DEBUG.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.agent.runner._Heartbeater",
+        "swarmsync.agent.runner._Heartbeater._run",
+        "swarmsync.agent.runner._cleanup_worktree",
+        "swarmsync.coordinator.broker.run"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:9e97da8b8f:8",
+      "commit": "9e97da8b8f",
+      "n_relevant": 4,
+      "source_overlap": 0.679
+    },
+    {
+      "id": "swarm-sync:9e97da8b8f:8:name_blind",
+      "query": "a 8 the two formerly silent swallows in py now leave a trace logs a failed beat at warning a dying blackboard mid previously lost every beat invisibly and logs both swallowed git ops errors at debug",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.agent.runner._Heartbeater",
+        "swarmsync.agent.runner._Heartbeater._run",
+        "swarmsync.agent.runner._cleanup_worktree",
+        "swarmsync.coordinator.broker.run"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:9e97da8b8f:8",
+      "commit": "9e97da8b8f",
+      "n_relevant": 4,
+      "source_overlap": 0.679
+    },
+    {
+      "id": "swarm-sync:9e97da8b8f:10:verbatim",
+      "query": "A5-extra: `client.integrate` no longer smuggles the HTTP transport status into the integrator's domain payload (`result[\"_status_code\"]`).",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.agent.client.BlackboardClient.integrate",
+        "swarmsync.coordinator.broker._SerializingIntegrateClient.integrate"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:9e97da8b8f:10",
+      "commit": "9e97da8b8f",
+      "n_relevant": 2,
+      "source_overlap": 0.538
+    },
+    {
+      "id": "swarm-sync:9e97da8b8f:10:name_blind",
+      "query": "a 5 extra no longer smuggles the http transport status into the integrator s domain payload result status code",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.agent.client.BlackboardClient.integrate",
+        "swarmsync.coordinator.broker._SerializingIntegrateClient.integrate"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:9e97da8b8f:10",
+      "commit": "9e97da8b8f",
+      "n_relevant": 2,
+      "source_overlap": 0.538
+    },
+    {
+      "id": "swarm-sync:2c3529c7be:4:verbatim",
+      "query": "Deprecated re-export shims left at the old paths (explicit names, no import *) for third-party callers; every in-repo importer now uses the new home: coordinator/integrator.py, coordinator/reaper.py, server/app.py, server/serve.py, demo/run_demo.py, tests/test_{broker,connection_model, events,integrator,leases,reaper,server}.py.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "demo.run_demo.run_demo"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:2c3529c7be:4",
+      "commit": "2c3529c7be",
+      "n_relevant": 1,
+      "source_overlap": 0.312
+    },
+    {
+      "id": "swarm-sync:2c3529c7be:4:name_blind",
+      "query": "deprecated re export shims left at the old paths explicit names no import for third party callers every in repo importer now uses the new home coordinator integrator py coordinator reaper py server app py server serve py py tests test broker connection model events integrator leases reaper server py",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "demo.run_demo.run_demo"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:2c3529c7be:4",
+      "commit": "2c3529c7be",
+      "n_relevant": 1,
+      "source_overlap": 0.312
+    },
+    {
+      "id": "swarm-sync:2e1f965c8c:1:verbatim",
+      "query": "Wire db.bind_managed_root into the server lifespan (U8/WP3.4's handoff): first boot stores the managed root in meta; a later boot against a different root refuses to start, naming both roots and the remedies.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.server.app.create_app.lifespan"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:2e1f965c8c:1",
+      "commit": "2e1f965c8c",
+      "n_relevant": 1,
+      "source_overlap": 0.476
+    },
+    {
+      "id": "swarm-sync:2e1f965c8c:1:name_blind",
+      "query": "wire db bind managed root into the u 8 wp 3 s handoff first boot stores the managed root in meta a later boot against a different root refuses to start naming both roots and the remedies",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.server.app.create_app.lifespan"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:2e1f965c8c:1",
+      "commit": "2e1f965c8c",
+      "n_relevant": 1,
+      "source_overlap": 0.476
+    },
+    {
+      "id": "swarm-sync:2e1f965c8c:5:verbatim",
+      "query": "Register events_compacted as a first-class EventType (WP3.1 could not touch models.py); GET /events keeps its widened EventOut as defense.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.server.app.EventOut"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:2e1f965c8c:5",
+      "commit": "2e1f965c8c",
+      "n_relevant": 1,
+      "source_overlap": 0.533
+    },
+    {
+      "id": "swarm-sync:2e1f965c8c:5:name_blind",
+      "query": "register events compacted as a first class type wp 3 could not touch models py get events keeps its widened as defense",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.server.app.EventOut"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:2e1f965c8c:5",
+      "commit": "2e1f965c8c",
+      "n_relevant": 1,
+      "source_overlap": 0.533
+    },
+    {
+      "id": "swarm-sync:2e1f965c8c:6:verbatim",
+      "query": "app.py check_single_root docstring now points at the refuse+rotate migration policy (db.SCHEMA_VERSION) instead of 'no migration system'.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.server.app.check_single_root"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:2e1f965c8c:6",
+      "commit": "2e1f965c8c",
+      "n_relevant": 1,
+      "source_overlap": 0.688
+    },
+    {
+      "id": "swarm-sync:2e1f965c8c:6:name_blind",
+      "query": "py docstring now points at the refuse rotate migration policy db schema version instead of no migration system",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.server.app.check_single_root"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:2e1f965c8c:6",
+      "commit": "2e1f965c8c",
+      "n_relevant": 1,
+      "source_overlap": 0.688
+    },
+    {
+      "id": "swarm-sync:a709ed41fc:4:verbatim",
+      "query": "The integrator's post-land re-index (the fix point store.py's own docstring nominated) now retires parcels whose file vanished and contracts whose symbol no longer exists -- scoped strictly to the merge's changed files, FK dependents (leases, pheromone) deleted first via store.retire_rows, deletes + parcel_retired/contract_retired events in one transaction.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.classifier.store.retire_rows"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:a709ed41fc:4",
+      "commit": "a709ed41fc",
+      "n_relevant": 1,
+      "source_overlap": 0.45
+    },
+    {
+      "id": "swarm-sync:a709ed41fc:4:name_blind",
+      "query": "the integrator s post land re index the fix point py s own docstring nominated now retires parcels whose file vanished and contracts whose symbol no longer exists scoped strictly to the merge s changed files fk dependents leases pheromone deleted first via deletes parcel retired contract retired events in one transaction",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.classifier.store.retire_rows"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:a709ed41fc:4",
+      "commit": "a709ed41fc",
+      "n_relevant": 1,
+      "source_overlap": 0.45
+    },
+    {
+      "id": "swarm-sync:a709ed41fc:6:verbatim",
+      "query": "Root-cause enabler: changed_files() now passes --no-renames, since git's rename detection hid the deleted old path from the changed set entirely.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.worktree.git_ops.changed_files"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:a709ed41fc:6",
+      "commit": "a709ed41fc",
+      "n_relevant": 1,
+      "source_overlap": 0.588
+    },
+    {
+      "id": "swarm-sync:a709ed41fc:6:name_blind",
+      "query": "root cause enabler now passes no renames since s rename detection hid the deleted old path from the set entirely",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.worktree.git_ops.changed_files"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:a709ed41fc:6",
+      "commit": "a709ed41fc",
+      "n_relevant": 1,
+      "source_overlap": 0.588
+    },
+    {
+      "id": "swarm-sync:a709ed41fc:10:verbatim",
+      "query": "Now a committed-but-not-landed run parks its tip under rejected/<name>-<UTC ts> (git_ops.park_branch), and the prune NEVER deletes rejected/* (defense in depth: a stale worktree ON a rejected branch is pruned, the branch survives).",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.worktree.git_ops.park_branch"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:a709ed41fc:10",
+      "commit": "a709ed41fc",
+      "n_relevant": 1,
+      "source_overlap": 0.591
+    },
+    {
+      "id": "swarm-sync:a709ed41fc:10:name_blind",
+      "query": "now a committed but not landed run parks its tip under rejected name utc ts and the prune never deletes rejected defense in depth a stale on a rejected is pruned the survives",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.worktree.git_ops.park_branch"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:a709ed41fc:10",
+      "commit": "a709ed41fc",
+      "n_relevant": 1,
+      "source_overlap": 0.591
+    },
+    {
+      "id": "swarm-sync:02d542e050:9:verbatim",
+      "query": "`events_compacted` is outside the frozen models.py EventType registry (owned by a parallel WP), so compact_events INSERTs it directly, tail() constructs those rows without Literal validation, and GET /events responds via a widened EventOut model instead of 500ing on response validation.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.server.app.EventOut"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:02d542e050:9",
+      "commit": "02d542e050",
+      "n_relevant": 1,
+      "source_overlap": 0.367
+    },
+    {
+      "id": "swarm-sync:02d542e050:9:name_blind",
+      "query": "events compacted is outside the frozen models py type registry owned by a parallel wp so compact events inser ts it directly tail constructs those rows without literal validation and get events responds via a widened model instead of ing on response validation",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.server.app.EventOut"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:02d542e050:9",
+      "commit": "02d542e050",
+      "n_relevant": 1,
+      "source_overlap": 0.367
+    },
+    {
+      "id": "swarm-sync:3381e12013:4:verbatim",
+      "query": "db.py: SCHEMA_VERSION = 2 (v1 = every pre-meta DB; v2 = meta + open_integrations (WP3.2) + idx_leases_reap (WP1.2)). init_db inspects sqlite_master BEFORE running DDL and refuses legacy (app tables, no stamp) and mismatched-version DBs with SchemaVersionError naming the remedy (`swarmsync-serve --fresh` or delete + re-index); fresh DBs are stamped.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.blackboard.db.SchemaVersionError",
+        "swarmsync.blackboard.db.init_db"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:3381e12013:4",
+      "commit": "3381e12013",
+      "n_relevant": 2,
+      "source_overlap": 0.694
+    },
+    {
+      "id": "swarm-sync:3381e12013:4:name_blind",
+      "query": "py v 1 every pre meta v 2 meta open integrations wp 3 idx leases reap wp 1 inspects sqlite master before running ddl and refuses legacy app tables no stamp and mismatched d bs with naming the remedy serve fresh or delete re index fresh d bs are stamped",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.blackboard.db.SchemaVersionError",
+        "swarmsync.blackboard.db.init_db"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:3381e12013:4",
+      "commit": "3381e12013",
+      "n_relevant": 2,
+      "source_overlap": 0.694
+    },
+    {
+      "id": "swarm-sync:3381e12013:6:verbatim",
+      "query": "db.py: bind_managed_root / stored_managed_root pin a DB file to the one repo root it coordinates (finding U8: root-relative parcel ids silently mix across repos); different root raises ManagedRootMismatchError naming both roots and the remedies.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.blackboard.db.ManagedRootMismatchError",
+        "swarmsync.blackboard.db.bind_managed_root",
+        "swarmsync.blackboard.db.stored_managed_root"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:3381e12013:6",
+      "commit": "3381e12013",
+      "n_relevant": 3,
+      "source_overlap": 0.96
+    },
+    {
+      "id": "swarm-sync:3381e12013:6:name_blind",
+      "query": "py pin a file to the one repo it coordinates finding u 8 relative parcel ids silently mix across repos different raises naming both roots and the remedies",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.blackboard.db.ManagedRootMismatchError",
+        "swarmsync.blackboard.db.bind_managed_root",
+        "swarmsync.blackboard.db.stored_managed_root"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:3381e12013:6",
+      "commit": "3381e12013",
+      "n_relevant": 3,
+      "source_overlap": 0.96
+    },
+    {
+      "id": "swarm-sync:f6d6a16019:9:verbatim",
+      "query": "Reproduced first (unfixed code): a raising mutator left its lease ACTIVE post-crash and aborted broker.run, discarding the sibling task's result; --fresh tests failed on the missing flag. 12 new tests across tests/test_agent.py, tests/test_broker.py, tests/test_serve.py.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.coordinator.broker.run"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:f6d6a16019:9",
+      "commit": "f6d6a16019",
+      "n_relevant": 1,
+      "source_overlap": 0.357
+    },
+    {
+      "id": "swarm-sync:f6d6a16019:9:name_blind",
+      "query": "reproduced first unfixed code a raising mutator left its lease active post crash and aborted discarding the sibling task s result fresh tests failed on the missing flag new tests across tests test agent py tests test py tests test serve py",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.coordinator.broker.run"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:f6d6a16019:9",
+      "commit": "f6d6a16019",
+      "n_relevant": 1,
+      "source_overlap": 0.357
+    },
+    {
+      "id": "swarm-sync:1a07a3a8d3:5:verbatim",
+      "query": "integrate(): the projection row is INSERTed in the SAME db.transaction as the integrate_started emit, and DELETEd in the same transaction as each terminal emit (merged; merge_rejected via the single _reject_and_reset sink every rejection route -- conflict, merge_error, red gate, integration_error, BaseException/interrupted -- reaches).",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.coordinator.integrator.integrate",
+        "swarmsync.coordinator.integrator.integrate._reject_and_reset"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:1a07a3a8d3:5",
+      "commit": "1a07a3a8d3",
+      "n_relevant": 2,
+      "source_overlap": 0.903
+    },
+    {
+      "id": "swarm-sync:1a07a3a8d3:5:name_blind",
+      "query": "the projection row is inser ted in the same db transaction as the started emit delet ed in the same transaction as each terminal emit merged merge rejected via the single sink every rejection route conflict merge error red gate integration error base exception interrupted reaches",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.coordinator.integrator.integrate",
+        "swarmsync.coordinator.integrator.integrate._reject_and_reset"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:1a07a3a8d3:5",
+      "commit": "1a07a3a8d3",
+      "n_relevant": 2,
+      "source_overlap": 0.903
+    },
+    {
+      "id": "swarm-sync:64e858c051:4:verbatim",
+      "query": "P2 (activation split): the guard checks the .swarmsync-active marker at $CLAUDE_PROJECT_DIR while the adapter resolved repo_root to the git toplevel -- with a project dir inside a larger git repo, no single marker location activated both halves. _is_active now honors the marker at either location.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.hooks.adapter._is_active"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:64e858c051:4",
+      "commit": "64e858c051",
+      "n_relevant": 1,
+      "source_overlap": 0.833
+    },
+    {
+      "id": "swarm-sync:64e858c051:4:name_blind",
+      "query": "p 2 activation split the guard checks the marker at claude project dir while the resolved repo root to the git toplevel with a project dir inside a larger git repo no single marker location activated both halves now honors the marker at either location",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.hooks.adapter._is_active"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:64e858c051:4",
+      "commit": "64e858c051",
+      "n_relevant": 1,
+      "source_overlap": 0.833
+    },
+    {
+      "id": "swarm-sync:64e858c051:5:verbatim",
+      "query": "Also: deny message no longer claims the blocker's mode or that the hold 'will not lapse on its own' (a crashed holder's TTL does lapse); LEASE_TTL_FLOOR_SECONDS derived from BUSY_TIMEOUT_SECONDS instead of hardcoded; ARCHITECTURE.md documents the managed-root==git-toplevel constraint on the hook path; _maybe_fail_closed documents its any-exception scope.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.hooks.adapter._maybe_fail_closed"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:64e858c051:5",
+      "commit": "64e858c051",
+      "n_relevant": 1,
+      "source_overlap": 0.371
+    },
+    {
+      "id": "swarm-sync:64e858c051:5:name_blind",
+      "query": "also deny message no longer claims the blocker s mode or that the hold will not lapse on its own a crashed holder s ttl does lapse lease ttl floor seconds derived from busy timeout seconds instead of hardcoded architecture md documents the managed root git toplevel constraint on the hook path documents its any exception scope",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.hooks.adapter._maybe_fail_closed"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:64e858c051:5",
+      "commit": "64e858c051",
+      "n_relevant": 1,
+      "source_overlap": 0.371
+    },
+    {
+      "id": "swarm-sync:47d0ffd15a:4:verbatim",
+      "query": "WP2.2 (C12): _repo_root walks UP from cwd to the git toplevel so parcel ids are git-root-relative (matching the server), not cwd-relative.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.hooks.adapter._repo_root"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:47d0ffd15a:4",
+      "commit": "47d0ffd15a",
+      "n_relevant": 1,
+      "source_overlap": 0.846
+    },
+    {
+      "id": "swarm-sync:47d0ffd15a:4:name_blind",
+      "query": "wp 2 c 12 walks up from cwd to the git toplevel so parcel ids are git relative matching the server not cwd relative",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.hooks.adapter._repo_root"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:47d0ffd15a:4",
+      "commit": "47d0ffd15a",
+      "n_relevant": 1,
+      "source_overlap": 0.846
+    },
+    {
+      "id": "swarm-sync:e0ff9fb23c:1:verbatim",
+      "query": "On a denied POST /lease, LeaseResult.reason was a bare string; the server knew the conflicting holder's agent_id and ttl_expires_at but did not return them, forcing the hook adapter into a second /leases round-trip to name the holder.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.blackboard.models.LeaseResult"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:e0ff9fb23c:1",
+      "commit": "e0ff9fb23c",
+      "n_relevant": 1,
+      "source_overlap": 0.708
+    },
+    {
+      "id": "swarm-sync:e0ff9fb23c:1:name_blind",
+      "query": "on a denied post reason was a bare string the server knew the conflicting holder s agent id and ttl expires at but did not return them forcing the hook adapter into a second leases round trip to name the holder",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.blackboard.models.LeaseResult"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:e0ff9fb23c:1",
+      "commit": "e0ff9fb23c",
+      "n_relevant": 1,
+      "source_overlap": 0.708
+    },
+    {
+      "id": "swarm-sync:e0ff9fb23c:2:verbatim",
+      "query": "Add two optional STRUCTURED fields to LeaseResult -- holder and holder_ttl_expires_at -- populated on the deny branch of leases.acquire by a holder lookup that mirrors the CAS conflict predicate exactly but tests liveness against SQLite's own clock (_NOW_SQL), not a Python timestamp, so it cannot reintroduce the C13 clock hazard.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.blackboard.models.LeaseResult"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:e0ff9fb23c:2",
+      "commit": "e0ff9fb23c",
+      "n_relevant": 1,
+      "source_overlap": 0.324
+    },
+    {
+      "id": "swarm-sync:e0ff9fb23c:2:name_blind",
+      "query": "add two optional structured fields to holder and holder ttl expires at populated on the deny branch of leases acquire by a holder lookup that mirrors the cas conflict predicate exactly but tests liveness against sq lite s own clock now sql not a python timestamp so it cannot reintroduce the c 13 clock hazard",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.blackboard.models.LeaseResult"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:e0ff9fb23c:2",
+      "commit": "e0ff9fb23c",
+      "n_relevant": 1,
+      "source_overlap": 0.324
+    },
+    {
+      "id": "swarm-sync:ecb134b4d7:4:verbatim",
+      "query": "blackboard/models.py: LeaseRequest.ttl and HeartbeatBody.ttl now carry pydantic gt=0, le=86400 constraints, so POST /lease {\"ttl\":0} is a 422 rather than a silent double-grant.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.blackboard.models.HeartbeatBody",
+        "swarmsync.blackboard.models.LeaseRequest"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:ecb134b4d7:4",
+      "commit": "ecb134b4d7",
+      "n_relevant": 2,
+      "source_overlap": 0.5
+    },
+    {
+      "id": "swarm-sync:ecb134b4d7:4:name_blind",
+      "query": "py ttl and ttl now carry pydantic gt le constraints so post ttl is a rather than a silent double grant",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.blackboard.models.HeartbeatBody",
+        "swarmsync.blackboard.models.LeaseRequest"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:ecb134b4d7:4",
+      "commit": "ecb134b4d7",
+      "n_relevant": 2,
+      "source_overlap": 0.5
+    },
+    {
+      "id": "swarm-sync:ecb134b4d7:6:verbatim",
+      "query": "hooks/adapter._hook_lease_ttl: a non-float / <=0 / over-ceiling env value now logs a note to stderr and falls back to the safe DEFAULT instead of disabling protection; a sub-floor value is honored but warned about.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.hooks.adapter._hook_lease_ttl"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:ecb134b4d7:6",
+      "commit": "ecb134b4d7",
+      "n_relevant": 1,
+      "source_overlap": 0.72
+    },
+    {
+      "id": "swarm-sync:ecb134b4d7:6:name_blind",
+      "query": "a non float over ceiling env value now logs a note to stderr and falls back to the safe default instead of disabling protection a sub floor value is honored but warned about",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.hooks.adapter._hook_lease_ttl"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:ecb134b4d7:6",
+      "commit": "ecb134b4d7",
+      "n_relevant": 1,
+      "source_overlap": 0.72
+    },
+    {
+      "id": "swarm-sync:ecb134b4d7:8:verbatim",
+      "query": "server/serve.assert_clock_agreement(): compares SQLite's clock (via the same _NOW_SQL leases uses) against time.time() at startup and refuses to serve, naming the problem, if they disagree beyond a 2s tolerance.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.server.serve.assert_clock_agreement"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:ecb134b4d7:8",
+      "commit": "ecb134b4d7",
+      "n_relevant": 1,
+      "source_overlap": 0.75
+    },
+    {
+      "id": "swarm-sync:ecb134b4d7:8:name_blind",
+      "query": "compares sq lite s via the same now sql leases uses against time time at startup and refuses to naming the problem if they disagree beyond a s tolerance",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.server.serve.assert_clock_agreement"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:ecb134b4d7:8",
+      "commit": "ecb134b4d7",
+      "n_relevant": 1,
+      "source_overlap": 0.75
+    },
+    {
+      "id": "swarm-sync:e6cfe293ee:1:verbatim",
+      "query": "The pheromone-decay/lease reaper (coordinator/reaper.py) ran reap_once/ decay_once synchronously on the asyncio loop thread against a connection with busy_timeout=5000, so one contended write could freeze the whole ASGI server for up to 5s per pass.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.coordinator.reaper.decay_once",
+        "swarmsync.coordinator.reaper.reap_once"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:e6cfe293ee:1",
+      "commit": "e6cfe293ee",
+      "n_relevant": 2,
+      "source_overlap": 0.52
+    },
+    {
+      "id": "swarm-sync:e6cfe293ee:1:name_blind",
+      "query": "the pheromone lease py ran synchronously on the asyncio loop thread against a connection with busy timeout so one contended write could freeze the whole asgi server for up to s per pass",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.coordinator.reaper.decay_once",
+        "swarmsync.coordinator.reaper.reap_once"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:e6cfe293ee:1",
+      "commit": "e6cfe293ee",
+      "n_relevant": 2,
+      "source_overlap": 0.52
+    },
+    {
+      "id": "swarm-sync:e6cfe293ee:3:verbatim",
+      "query": "reaper.run: wrap each pass in try/except, log at WARNING with traceback and continue (never die on a transient error); run reap_once/decay_once off the loop thread via asyncio.to_thread.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.coordinator.reaper.decay_once",
+        "swarmsync.coordinator.reaper.reap_once",
+        "swarmsync.coordinator.reaper.run"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:e6cfe293ee:3",
+      "commit": "e6cfe293ee",
+      "n_relevant": 3,
+      "source_overlap": 0.955
+    },
+    {
+      "id": "swarm-sync:e6cfe293ee:3:name_blind",
+      "query": "wrap each pass in try except log at warning with traceback and continue never die on a transient error off the loop thread via asyncio to thread",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.coordinator.reaper.decay_once",
+        "swarmsync.coordinator.reaper.reap_once",
+        "swarmsync.coordinator.reaper.run"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:e6cfe293ee:3",
+      "commit": "e6cfe293ee",
+      "n_relevant": 3,
+      "source_overlap": 0.955
+    },
+    {
+      "id": "swarm-sync:e6cfe293ee:4:verbatim",
+      "query": "The dedicated connection is touched only from those workers, one awaited pass at a time, so at most one thread uses it at once (db.connect opens it check_same_thread=False under SQLite serialized mode) -- same sequential hand-off get_conn relies on.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.server.app.get_conn"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:e6cfe293ee:4",
+      "commit": "e6cfe293ee",
+      "n_relevant": 1,
+      "source_overlap": 0.76
+    },
+    {
+      "id": "swarm-sync:e6cfe293ee:4:name_blind",
+      "query": "the dedicated connection is touched only from those workers one awaited pass at a time so at most one thread uses it at once db connect opens it check same thread false under sq lite serialized mode same sequential hand off relies on",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.server.app.get_conn"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:e6cfe293ee:4",
+      "commit": "e6cfe293ee",
+      "n_relevant": 1,
+      "source_overlap": 0.76
+    },
+    {
+      "id": "swarm-sync:f6b4df4e8e:1:verbatim",
+      "query": "reconcile_orphaned_integrations treated only {merged, merge_rejected, needs_rebase} as terminal for an integrate_started.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.coordinator.integrator.reconcile_orphaned_integrations"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:f6b4df4e8e:1",
+      "commit": "f6b4df4e8e",
+      "n_relevant": 1,
+      "source_overlap": 0.583
+    },
+    {
+      "id": "swarm-sync:f6b4df4e8e:1:name_blind",
+      "query": "treated only merged merge rejected needs rebase as terminal for an integrate started",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.coordinator.integrator.reconcile_orphaned_integrations"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:f6b4df4e8e:1",
+      "commit": "f6b4df4e8e",
+      "n_relevant": 1,
+      "source_overlap": 0.583
+    },
+    {
+      "id": "swarm-sync:609bb61505:8:verbatim",
+      "query": "Added SymbolModeError + check_file_granularity(mode): returns \"file\", raises SymbolModeError on \"symbol\", ValueError on anything else.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.classifier.graph.SymbolModeError",
+        "swarmsync.classifier.graph.check_file_granularity"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:609bb61505:8",
+      "commit": "609bb61505",
+      "n_relevant": 2,
+      "source_overlap": 0.833
+    },
+    {
+      "id": "swarm-sync:609bb61505:8:name_blind",
+      "query": "added returns raises on value on anything else",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.classifier.graph.SymbolModeError",
+        "swarmsync.classifier.graph.check_file_granularity"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:609bb61505:8",
+      "commit": "609bb61505",
+      "n_relevant": 2,
+      "source_overlap": 0.833
+    },
+    {
+      "id": "swarm-sync:609bb61505:9:verbatim",
+      "query": "Wired at the TOP of every public entry point -- co_schedulable, resolve_task, schedulable, group_schedulable, run -- so refusal precedes any DB read or lease.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.classifier.graph.co_schedulable",
+        "swarmsync.coordinator.broker.group_schedulable",
+        "swarmsync.coordinator.broker.resolve_task"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:609bb61505:9",
+      "commit": "609bb61505",
+      "n_relevant": 3,
+      "source_overlap": 0.412
+    },
+    {
+      "id": "swarm-sync:609bb61505:9:name_blind",
+      "query": "wired at the top of every public entry point run so refusal precedes any db read or lease",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.classifier.graph.co_schedulable",
+        "swarmsync.coordinator.broker.group_schedulable",
+        "swarmsync.coordinator.broker.resolve_task"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:609bb61505:9",
+      "commit": "609bb61505",
+      "n_relevant": 3,
+      "source_overlap": 0.412
+    },
+    {
+      "id": "swarm-sync:609bb61505:11:verbatim",
+      "query": "Verified independently: all four broker entry points + co_schedulable refuse symbol (incl. the empty-list sweep that reaches neither resolve_task nor schedulable); the error is actionable; symbol-level PARCELS are still indexed and contract DETECTION still ships.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.classifier.graph.co_schedulable",
+        "swarmsync.coordinator.broker.resolve_task"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:609bb61505:11",
+      "commit": "609bb61505",
+      "n_relevant": 2,
+      "source_overlap": 0.414
+    },
+    {
+      "id": "swarm-sync:609bb61505:11:name_blind",
+      "query": "verified independently all four entry points refuse symbol incl the empty list sweep that reaches neither nor the error is actionable symbol level parcels are still indexed and contract detection still ships",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.classifier.graph.co_schedulable",
+        "swarmsync.coordinator.broker.resolve_task"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:609bb61505:11",
+      "commit": "609bb61505",
+      "n_relevant": 2,
+      "source_overlap": 0.414
+    },
+    {
+      "id": "swarm-sync:609bb61505:12:verbatim",
+      "query": "Mutation check (my own, not the agents'): neuter the guard -> 7 tests RED; restore -> green.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "demo.run_demo._Reporter.check"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:609bb61505:12",
+      "commit": "609bb61505",
+      "n_relevant": 1,
+      "source_overlap": 0.1
+    },
+    {
+      "id": "swarm-sync:609bb61505:12:name_blind",
+      "query": "mutation my own not the agents neuter the guard tests red restore green",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "demo.run_demo._Reporter.check"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:609bb61505:12",
+      "commit": "609bb61505",
+      "n_relevant": 1,
+      "source_overlap": 0.1
+    },
+    {
+      "id": "swarm-sync:609bb61505:24:verbatim",
+      "query": "Tests: renamed/re-expressed the tests that drove parked behavior to assert the REFUSAL instead (each reasoned per-test, not deleted for convenience); the parked exclusive-upgrade mechanism keeps a failing-on-delete test via _run_task_once so its SYMBOL_MODE_DESIGN.md revival stays covered.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.coordinator.broker._run_task_once"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:609bb61505:24",
+      "commit": "609bb61505",
+      "n_relevant": 1,
+      "source_overlap": 0.25
+    },
+    {
+      "id": "swarm-sync:609bb61505:24:name_blind",
+      "query": "tests renamed re expressed the tests that drove parked behavior to assert the refusal instead each reasoned per test not deleted for convenience the parked exclusive upgrade mechanism keeps a failing on delete test via so its symbol mode design md revival stays covered",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.coordinator.broker._run_task_once"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:609bb61505:24",
+      "commit": "609bb61505",
+      "n_relevant": 1,
+      "source_overlap": 0.25
+    },
+    {
+      "id": "swarm-sync:f71919a0d6:4:verbatim",
+      "query": "Root cause is a class-level defect, not a hook one. build_graph subscripted `local_symbols[def_node.name]`, where local_symbols comes from the passed-in DB parcels but def_node comes from the file on disk.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.classifier.graph.build_graph"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:f71919a0d6:4",
+      "commit": "f71919a0d6",
+      "n_relevant": 1,
+      "source_overlap": 0.85
+    },
+    {
+      "id": "swarm-sync:f71919a0d6:4:name_blind",
+      "query": "root cause is a class level defect not a hook one subscripted local symbols def node name where local symbols comes from the passed in db parcels but def node comes from the file on disk",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.classifier.graph.build_graph"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:f71919a0d6:4",
+      "commit": "f71919a0d6",
+      "n_relevant": 1,
+      "source_overlap": 0.85
+    },
+    {
+      "id": "swarm-sync:f71919a0d6:13:verbatim",
+      "query": "Tests rewritten to cover the shapes that actually break: a new .py file with a top-level def, a new top-level class, and build_graph tolerating a symbol on disk with no parcel row.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.classifier.graph.build_graph"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:f71919a0d6:13",
+      "commit": "f71919a0d6",
+      "n_relevant": 1,
+      "source_overlap": 0.632
+    },
+    {
+      "id": "swarm-sync:f71919a0d6:13:name_blind",
+      "query": "tests rewritten to cover the shapes that actually break a new py file with a top level def a new top level class and tolerating a symbol on disk with no parcel row",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.classifier.graph.build_graph"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:f71919a0d6:13",
+      "commit": "f71919a0d6",
+      "n_relevant": 1,
+      "source_overlap": 0.632
+    },
+    {
+      "id": "swarm-sync:08d79632ea:4:verbatim",
+      "query": "P0-1 runner.py: heartbeater.stop() sat in the INNER finally, so /parcel_update and /integrate ran with zero beats against a 30s TTL.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.agent.client.BlackboardClient.parcel_update",
+        "swarmsync.agent.runner._Heartbeater.stop"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:08d79632ea:4",
+      "commit": "08d79632ea",
+      "n_relevant": 2,
+      "source_overlap": 0.2
+    },
+    {
+      "id": "swarm-sync:08d79632ea:4:name_blind",
+      "query": "p 0 py sat in the inner finally so and integrate ran with zero beats against a s ttl",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.agent.client.BlackboardClient.parcel_update",
+        "swarmsync.agent.runner._Heartbeater.stop"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:08d79632ea:4",
+      "commit": "08d79632ea",
+      "n_relevant": 2,
+      "source_overlap": 0.2
+    },
+    {
+      "id": "swarm-sync:08d79632ea:17:verbatim",
+      "query": "P1-5 integrator.py: rollback reset git but not the blackboard, leaving content_hash derived from the merge that was thrown away -- which _check_read_deps reads. _reject_and_reset now re-indexes the restored trunk.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.coordinator.integrator._check_read_deps",
+        "swarmsync.coordinator.integrator.integrate._reject_and_reset"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:08d79632ea:17",
+      "commit": "08d79632ea",
+      "n_relevant": 2,
+      "source_overlap": 0.727
+    },
+    {
+      "id": "swarm-sync:08d79632ea:17:name_blind",
+      "query": "p 1 py rollback git but not the blackboard leaving content hash derived from the merge that was thrown away which reads now re indexes the restored trunk",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.coordinator.integrator._check_read_deps",
+        "swarmsync.coordinator.integrator.integrate._reject_and_reset"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:08d79632ea:17",
+      "commit": "08d79632ea",
+      "n_relevant": 2,
+      "source_overlap": 0.727
+    },
+    {
+      "id": "swarm-sync:92c64a2a7f:1:verbatim",
+      "query": "Concurrency: serialize POST /integrate (process-wide asyncio.Lock) + make integrate() atomic (reset-hard-to-pre_merge on failure, structured rejection); reaper reap via atomic UPDATE...RETURNING (no reaping renewed leases); events seq via RETURNING; classifier per-file parse guard; git arg-injection guards.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.agent.client.BlackboardClient.integrate",
+        "swarmsync.coordinator.broker._SerializingIntegrateClient.integrate",
+        "swarmsync.coordinator.integrator.integrate"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:92c64a2a7f:1",
+      "commit": "92c64a2a7f",
+      "n_relevant": 3,
+      "source_overlap": 0.611
+    },
+    {
+      "id": "swarm-sync:92c64a2a7f:1:name_blind",
+      "query": "concurrency serialize post process wide asyncio lock make atomic reset hard to pre merge on failure structured rejection reaper reap via atomic update returning no reaping renewed leases events seq via returning classifier per file parse guard git arg injection guards",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.agent.client.BlackboardClient.integrate",
+        "swarmsync.coordinator.broker._SerializingIntegrateClient.integrate",
+        "swarmsync.coordinator.integrator.integrate"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:92c64a2a7f:1",
+      "commit": "92c64a2a7f",
+      "n_relevant": 3,
+      "source_overlap": 0.611
+    },
+    {
+      "id": "swarm-sync:92c64a2a7f:2:verbatim",
+      "query": "Security: optional token auth (hmac.compare_digest) on mutating routes; realpath managed-roots allow-list on /index+/integrate (no symlink escape) + walk caps; bind 127.0.0.1 + argparse; sandbox integrate pytest.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "swarmsync.agent.client.BlackboardClient.integrate",
+        "swarmsync.coordinator.broker._SerializingIntegrateClient.integrate",
+        "swarmsync.coordinator.integrator.integrate"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:92c64a2a7f:2",
+      "commit": "92c64a2a7f",
+      "n_relevant": 3,
+      "source_overlap": 0.208
+    },
+    {
+      "id": "swarm-sync:92c64a2a7f:2:name_blind",
+      "query": "security optional token auth hmac compare digest on mutating routes realpath managed roots allow list on index no symlink escape walk caps bind argparse sandbox pytest",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "swarmsync.agent.client.BlackboardClient.integrate",
+        "swarmsync.coordinator.broker._SerializingIntegrateClient.integrate",
+        "swarmsync.coordinator.integrator.integrate"
+      ],
+      "repo": "swarm-sync",
+      "pair_id": "swarm-sync:92c64a2a7f:2",
+      "commit": "92c64a2a7f",
+      "n_relevant": 3,
+      "source_overlap": 0.208
+    }
+  ]
+}

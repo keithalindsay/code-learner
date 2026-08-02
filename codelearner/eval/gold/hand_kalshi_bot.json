@@ -1,0 +1,1285 @@
+{
+  "schema_version": 2,
+  "source": "hand",
+  "repo": "kalshi-bot",
+  "repo_path": "/home/keith/projects/kalshi-bot",
+  "index_path": "/home/keith/projects/kalshi-bot/.codelearner/index.db",
+  "commit_note": "Hand-written against kalshi-bot @ 340 indexed files, 7535 symbols (.codelearner/index.db, 2026-08-02). 66.3% of symbols carry a docstring, so this repo is close to the population average rather than the heavily-documented swarm-sync.",
+  "labelling_rule": "Relevant = a symbol a competent engineer would want to READ to answer the question. Tests are listed only where the question is about behaviour under test. Implementations are listed even when tests describe them better, because the question asks how the code works.",
+  "authoring_rule": "Every query is phrased from what the code DOES, in a newcomer's domain words, NOT by echoing the target's identifiers. Drafted from the source, then measured for token overlap against the target's chunk text (the exact text BM25 indexes) and against the target's own symbol name; queries whose wording leaked a target identifier are flagged name_bearing so they can be scored as a separate row instead of silently inflating the lexical modality.",
+  "repo_note": "This repo is unusually rich in DUPLICATED concepts -- two Kelly sizers, two fee formulas, two bias trackers, two Sharpe implementations, two orderbook parsers, two polling-tier schemes, two `_chicago_today` helpers. Many of the hard negatives below exploit that: the query names the behaviour, and the wrong-but-lexically-obvious twin is the trap.",
+  "overlap_method": {
+    "tokenizer": "lowercase, split on non-alphanumeric and camelCase boundaries, drop <3 chars, drop a 100-word English stoplist",
+    "corpus": "chunks.text for every symbol in this repo's index (the field chunks_fts indexes, i.e. exactly what BM25 scores)",
+    "name_overlap": "fraction of distinct query tokens that appear in some relevant symbol's OWN name (symbols.name / last dotted component)",
+    "source_overlap": "fraction of distinct query tokens that appear in some relevant symbol's chunk text",
+    "rare_source_overlap": "fraction of distinct query tokens that appear in a relevant symbol's chunk text AND have document frequency <= 2% of chunks -- the high-IDF terms BM25 actually ranks on",
+    "idf_weighted_source_overlap": "sum of idf over query tokens present in a relevant chunk, divided by sum of idf over all query tokens",
+    "name_bearing": "true iff name_overlap > 0, i.e. the query names the target. Not automatically wrong (real users do sometimes know the name) but must be scored as its own row."
+  },
+  "coverage_codes": {
+    "undocumented": "target symbol has no docstring in the index",
+    "private": "target is a _-prefixed helper, a nested function, or a dunder",
+    "generic_name": "target's name is generic or misleading (run, main, get, detect, compute) so the name carries no query signal",
+    "cross_module": "answering requires reading symbols in 2+ modules",
+    "error_path": "the question is about a failure, edge case, or refusal rather than the happy path",
+    "hard_negative": "the obvious keyword match in this repo is the WRONG symbol; a lexical-only retriever is actively penalised"
+  },
+  "queries": [
+    {
+      "query": "proving who we are on every call by signing it with a private key",
+      "relevant": [
+        "src.client.KalshiClient._sign",
+        "src.client.KalshiClient._headers",
+        "src.realtime.ws_client.WSPollerClient._build_auth_headers"
+      ],
+      "coverage": [
+        "cross_module",
+        "hard_negative",
+        "private"
+      ],
+      "hard_negative": true,
+      "note": "The same signing routine is written twice, in the REST client and in the socket client; a retriever that stops at the first lexical match returns half the answer.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.333,
+        "rare_source_overlap": 0.167,
+        "idf_weighted_source_overlap": 0.251
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "waiting progressively longer before trying again when the exchange tells us to slow down",
+      "relevant": [
+        "src.client.KalshiClient._request",
+        "src.client.KalshiClient._parse_rate_limit_headers"
+      ],
+      "coverage": [
+        "error_path",
+        "private"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.0,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.0
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "we never guess what a contract means from its symbol, we read the exchange's own wording",
+      "relevant": [
+        "src.market_direction.parse_market_direction",
+        "src.market_direction.should_buy_yes"
+      ],
+      "coverage": [
+        "cross_module"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.143,
+        "rare_source_overlap": 0.143,
+        "idf_weighted_source_overlap": 0.125
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "blocking a purchase whose side contradicts what our own model expects to happen",
+      "relevant": [
+        "src.market_direction.validate_trade",
+        "src.market_direction.should_buy_yes",
+        "src.client.KalshiClient.place_order"
+      ],
+      "coverage": [
+        "cross_module",
+        "error_path"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.444,
+        "rare_source_overlap": 0.222,
+        "idf_weighted_source_overlap": 0.301
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "something priced at one or two cents is nearly always going to lose, so refuse it",
+      "relevant": [
+        "src.market_direction.validate_trade"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.625,
+        "rare_source_overlap": 0.5,
+        "idf_weighted_source_overlap": 0.568
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "how much of the bankroll to stake given our estimate versus the quoted price",
+      "relevant": [
+        "src.risk.kelly.size_position",
+        "src.risk.kelly.kelly_size_for_signal"
+      ],
+      "coverage": [
+        "cross_module",
+        "hard_negative"
+      ],
+      "hard_negative": true,
+      "note": "There are at least five stake-sizing implementations in this repo (a legacy one under paper_trading, plus per-strategy inline copies); only the risk/ pair is the current one.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.5,
+        "rare_source_overlap": 0.25,
+        "idf_weighted_source_overlap": 0.294
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "shrinking the order when the book is too thin for it to fill, and declining outright when it is hopeless",
+      "relevant": [
+        "src.risk.kelly.size_position"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.5,
+        "rare_source_overlap": 0.25,
+        "idf_weighted_source_overlap": 0.408
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "what the venue takes out of each contract, computed two different ways in two places",
+      "relevant": [
+        "src.risk.kelly._kalshi_fee_cents",
+        "src.risk.tca.calculate_kalshi_fee"
+      ],
+      "coverage": [
+        "cross_module",
+        "hard_negative",
+        "private"
+      ],
+      "hard_negative": true,
+      "note": "The two implementations genuinely disagree (a ceil of a proportional charge vs a per-contract value clamped between 1 and 7). Retrieving only one is retrieving the wrong half of a real inconsistency.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.143,
+        "rare_source_overlap": 0.143,
+        "idf_weighted_source_overlap": 0.095
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "cutting stake sizes in half after a bad session and stopping altogether after a worse one",
+      "relevant": [
+        "src.risk.circuit_breaker.CircuitBreaker._evaluate",
+        "src.risk.circuit_breaker.CircuitBreaker.position_size_multiplier",
+        "src.risk.circuit_breaker.CircuitBreaker.allow_trade"
+      ],
+      "coverage": [
+        "cross_module",
+        "error_path",
+        "private"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.111,
+        "rare_source_overlap": 0.111,
+        "idf_weighted_source_overlap": 0.07
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "a shutdown so severe that only a human being can clear it",
+      "relevant": [
+        "src.risk.circuit_breaker.CircuitBreaker.reset_black",
+        "src.risk.circuit_breaker.CircuitBreaker._evaluate"
+      ],
+      "coverage": [
+        "error_path",
+        "private"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.2,
+        "rare_source_overlap": 0.2,
+        "idf_weighted_source_overlap": 0.163
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "counters that roll over at midnight in one fixed part of the world",
+      "relevant": [
+        "src.risk.circuit_breaker._chicago_today",
+        "src.risk.circuit_breaker.CircuitBreaker._maybe_reset_day",
+        "src.trading.auto_trader.DailyBudget._chicago_today"
+      ],
+      "coverage": [
+        "cross_module",
+        "hard_negative",
+        "private"
+      ],
+      "hard_negative": true,
+      "note": "The identical private helper is defined twice in two unrelated modules; both are the answer, and no single lexical hit covers them.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.167,
+        "rare_source_overlap": 0.167,
+        "idf_weighted_source_overlap": 0.171
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "put the new content in a scratch file then move it over, so an interruption never leaves half a document behind",
+      "relevant": [
+        "src.risk.circuit_breaker.CircuitBreaker._save",
+        "src.weather.forecast_history._atomic_write_json"
+      ],
+      "coverage": [
+        "cross_module",
+        "error_path",
+        "private",
+        "undocumented"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.091,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.046
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "a saved file we cannot make sense of should start over rather than take the program down",
+      "relevant": [
+        "src.risk.circuit_breaker.CircuitBreaker._load"
+      ],
+      "coverage": [
+        "error_path",
+        "private"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.1,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.06
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "keeping only the most recent entries so the on-disk record cannot grow without bound",
+      "relevant": [
+        "src.risk.circuit_breaker.CircuitBreaker._append_event",
+        "src.price_action.store.PriceActionStore.cleanup_old_data"
+      ],
+      "coverage": [
+        "cross_module",
+        "private"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.222,
+        "rare_source_overlap": 0.111,
+        "idf_weighted_source_overlap": 0.174
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "judging how well we traded rather than merely whether we came out ahead",
+      "relevant": [
+        "src.risk.trade_scoring.TradeScore",
+        "src.risk.trade_scoring.TradeScore.composite_score"
+      ],
+      "coverage": [],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.0,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.0
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "charging a position for the money it ties up while it sits open",
+      "relevant": [
+        "src.risk.trade_scoring.compute_time_decay_cost"
+      ],
+      "coverage": [],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.333,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.15
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "measuring how close our advantage estimate turned out to be against what actually happened",
+      "relevant": [
+        "src.risk.trade_scoring.compute_edge_quality"
+      ],
+      "coverage": [],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.0,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.0
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "did the price drift against us between deciding to act and actually being filled",
+      "relevant": [
+        "src.risk.tca.TCALogger.implementation_shortfall_report",
+        "src.risk.tca.TCALogger.log_fill"
+      ],
+      "coverage": [
+        "cross_module"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.333,
+        "rare_source_overlap": 0.222,
+        "idf_weighted_source_overlap": 0.248
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "checking that the two places we write every record agree on how many there are",
+      "relevant": [
+        "src.risk.tca.TCALogger.reconcile"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.429,
+        "rare_source_overlap": 0.143,
+        "idf_weighted_source_overlap": 0.316
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "look more often while things are moving and ease off once they settle down again",
+      "relevant": [
+        "src.realtime.adaptive_poller.AdaptivePoller._update_tier",
+        "src.realtime.volatility_detector.VolatilityDetector.get_poll_tier_suggestion"
+      ],
+      "coverage": [
+        "cross_module",
+        "hard_negative",
+        "private"
+      ],
+      "hard_negative": true,
+      "note": "Two unrelated tier schemes exist (HOT/WARM/COLD in the collector, IDLE..CRITICAL here). The collector's is the lexically louder one and is the wrong answer.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.125,
+        "rare_source_overlap": 0.125,
+        "idf_weighted_source_overlap": 0.093
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "when we are out of allowance we skip the call entirely instead of sleeping until we can make it",
+      "relevant": [
+        "src.price_action.collector.TokenBucket.consume",
+        "src.price_action.collector.OrderbookCollector.run_collection_cycle",
+        "src.realtime.adaptive_poller.AdaptivePoller._run_tick"
+      ],
+      "coverage": [
+        "cross_module",
+        "private"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.25,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.182
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "a sharp fall followed immediately by a bounce, which is someone hunting other people's stops",
+      "relevant": [
+        "src.realtime.volatility_detector.VolatilityDetector.detect_shakeout"
+      ],
+      "coverage": [
+        "generic_name",
+        "hard_negative"
+      ],
+      "hard_negative": true,
+      "note": "An entire backtest module is named after this pattern and dominates any keyword match; the live detector is a single method elsewhere.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.222,
+        "rare_source_overlap": 0.222,
+        "idf_weighted_source_overlap": 0.199
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "combining several separate measurements into one label for how agitated a market is",
+      "relevant": [
+        "src.realtime.volatility_detector.VolatilityDetector._classify_state",
+        "src.realtime.volatility_detector.VolatilityDetector.analyze"
+      ],
+      "coverage": [
+        "private"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.143,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.029
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "the offer side has to be worked out backwards because the venue only publishes bids for both outcomes",
+      "relevant": [
+        "src.price_action.collector.parse_orderbook_response",
+        "src.realtime.ws_client._ws_orderbook_to_snapshot"
+      ],
+      "coverage": [
+        "cross_module",
+        "hard_negative",
+        "private"
+      ],
+      "hard_negative": true,
+      "note": "Two near-identical parsers, one for the polled feed and one for the streamed feed; whichever a lexical match picks, it has half the answer.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.111,
+        "rare_source_overlap": 0.111,
+        "idf_weighted_source_overlap": 0.097
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "a live stream takes over from repeated fetching, and fetching resumes if the stream drops",
+      "relevant": [
+        "src.realtime.ws_client.WSPollerClient.start",
+        "src.realtime.ws_client.WSPollerClient._connect_and_listen"
+      ],
+      "coverage": [
+        "error_path",
+        "private"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.0,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.0
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "each failed reconnection waits twice as long as the last, up to a ceiling",
+      "relevant": [
+        "src.realtime.ws_client.WSPollerClient.start"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.0,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.0
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "holding only the last hundred observations per market in memory and dropping the oldest",
+      "relevant": [
+        "src.realtime.adaptive_poller.SnapshotRingBuffer",
+        "src.realtime.adaptive_poller.SnapshotRingBuffer.add"
+      ],
+      "coverage": [],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.444,
+        "rare_source_overlap": 0.222,
+        "idf_weighted_source_overlap": 0.369
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "catching the interrupt so the long running loop finishes tidily instead of being cut off",
+      "relevant": [
+        "src.realtime.adaptive_poller.AdaptivePoller.run_daemon"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.2,
+        "rare_source_overlap": 0.1,
+        "idf_weighted_source_overlap": 0.132
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "we try again when the network hiccups but not when the far side says our input was wrong",
+      "relevant": [
+        "src.utils.retry._is_retryable",
+        "src.utils.retry.retry_request"
+      ],
+      "coverage": [
+        "error_path",
+        "private"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.111,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.061
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "a readable complaint when someone hands us the name of an HTTP verb instead of the callable itself",
+      "relevant": [
+        "src.utils.retry.retry_request"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.4,
+        "rare_source_overlap": 0.3,
+        "idf_weighted_source_overlap": 0.311
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "wrapping a fetcher so transient failures are handled without editing its body",
+      "relevant": [
+        "src.utils.retry.with_retry",
+        "src.utils.retry.with_retry.deco.wrapper"
+      ],
+      "coverage": [
+        "private",
+        "undocumented"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.0,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.0
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "the venue moved from whole pennies to dollar strings and everything downstream still expects pennies",
+      "relevant": [
+        "src.utils.market_compat.normalise_market",
+        "src.utils.market_compat.normalise_markets",
+        "src.client.KalshiClient._request"
+      ],
+      "coverage": [
+        "cross_module",
+        "private"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.111,
+        "rare_source_overlap": 0.111,
+        "idf_weighted_source_overlap": 0.099
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "one table saying which family of strategies owns each symbol prefix",
+      "relevant": [
+        "src.utils.market_type.classify_market_type",
+        "src.trading.auto_trader.classify_market_type"
+      ],
+      "coverage": [
+        "cross_module",
+        "hard_negative"
+      ],
+      "hard_negative": true,
+      "note": "The same name is bound in two modules (one is a re-export); a name-matching retriever cannot tell which is the definition.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.143,
+        "rare_source_overlap": 0.143,
+        "idf_weighted_source_overlap": 0.112
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "unimportant messages are dropped when one went out only moments ago",
+      "relevant": [
+        "src.utils.notify.notify",
+        "src.utils.notify._send_whatsapp"
+      ],
+      "coverage": [
+        "private"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.167,
+        "rare_source_overlap": 0.167,
+        "idf_weighted_source_overlap": 0.128
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "every outbound message is appended to a daily file whether or not it was actually delivered",
+      "relevant": [
+        "src.utils.notify._log_notification"
+      ],
+      "coverage": [
+        "private"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.333,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.202
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "picking up an edited configuration file while running, without a restart",
+      "relevant": [
+        "src.trading.rules_engine.TradingRulesEngine._maybe_reload",
+        "src.trading.rules_engine.TradingRulesEngine.reload_rules"
+      ],
+      "coverage": [
+        "private"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.143,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.077
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "once the strongest recommendation has been reached a milder one must not walk it back",
+      "relevant": [
+        "src.trading.rules_engine.TradingRulesEngine._escalate_action"
+      ],
+      "coverage": [
+        "private"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.111,
+        "rare_source_overlap": 0.111,
+        "idf_weighted_source_overlap": 0.092
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "sorting a quoted price into one of the named bands the strategy treats differently",
+      "relevant": [
+        "src.trading.rules_engine.TradingRulesEngine.classify_lane"
+      ],
+      "coverage": [],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.125,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.029
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "refusing to run at all when the settings document is missing a whole section",
+      "relevant": [
+        "src.trading.rules_engine.TradingRulesEngine._validate",
+        "src.trading.rules_engine.RulesValidationError"
+      ],
+      "coverage": [
+        "error_path",
+        "private"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.143,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.101
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "how much money is already committed across everything that has not yet resolved",
+      "relevant": [
+        "src.trading.auto_trader.AutoTrader._get_open_exposure",
+        "src.trading.auto_trader.DailyBudget.spent_today",
+        "src.trading.auto_trader.DailyBudget.can_trade"
+      ],
+      "coverage": [
+        "cross_module",
+        "private"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.143,
+        "rare_source_overlap": 0.143,
+        "idf_weighted_source_overlap": 0.115
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "the reading would have to climb faster than is physically plausible for this bet to come good",
+      "relevant": [
+        "src.trading.exit_engine.ExitEngine._check_metar_impossible_pace"
+      ],
+      "coverage": [
+        "private"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.111,
+        "rare_source_overlap": 0.111,
+        "idf_weighted_source_overlap": 0.128
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "pulling the city and the number out of a market symbol, with a fallback parser when the main one fails",
+      "relevant": [
+        "src.trading.exit_engine.parse_ticker"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.444,
+        "rare_source_overlap": 0.222,
+        "idf_weighted_source_overlap": 0.339
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "giving each forecast source a share proportional to how accurate it has recently been",
+      "relevant": [
+        "src.weather.bias_tracker.BiasTracker.get_model_weights"
+      ],
+      "coverage": [],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.125,
+        "rare_source_overlap": 0.125,
+        "idf_weighted_source_overlap": 0.133
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "widening the lookback when the recent sample is too small to trust, and giving up if it still is",
+      "relevant": [
+        "src.weather.bias_tracker.BiasTracker.get_bias_correction"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.143,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.089
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "learning how far off in one direction each forecast source tends to run",
+      "relevant": [
+        "src.weather.bias_tracker.BiasTracker.get_bias_correction",
+        "src.paper_trading.bias_tracker.BiasTracker.get_correction"
+      ],
+      "coverage": [
+        "cross_module",
+        "hard_negative"
+      ],
+      "hard_negative": true,
+      "note": "Two whole classes with the same name in different packages do this; they are not the same code and both are live.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.143,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.073
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "scaling a risk adjusted return up to a yearly figure, done differently in two places",
+      "relevant": [
+        "src.backtest.metrics.MetricsEngine._sharpe",
+        "src.paper_trading.ledger.PaperLedger._compute_sharpe"
+      ],
+      "coverage": [
+        "cross_module",
+        "hard_negative",
+        "private"
+      ],
+      "hard_negative": true,
+      "note": "One annualises from per-trade returns and a trades-per-day estimate, the other from daily aggregates and a 252 factor. There are three more copies elsewhere in backtest/.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.111,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.02
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "only the losing observations count towards the spread when measuring how bumpy results were",
+      "relevant": [
+        "src.backtest.metrics.MetricsEngine._sortino"
+      ],
+      "coverage": [
+        "private"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.0,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.0
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "walking the running balance to find the deepest fall from a high point",
+      "relevant": [
+        "src.backtest.metrics.MetricsEngine.compute"
+      ],
+      "coverage": [
+        "generic_name",
+        "undocumented"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.0,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.0
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "declining a new position because we already hold this one, or hold too many, or cannot afford it",
+      "relevant": [
+        "src.backtest.portfolio.PortfolioSimulator.can_open"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.333,
+        "rare_source_overlap": 0.111,
+        "idf_weighted_source_overlap": 0.227
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "the charge applies going in and again coming out, so both have to be subtracted",
+      "relevant": [
+        "src.backtest.portfolio.PortfolioSimulator.execute_sell",
+        "src.backtest.portfolio.Position.unrealized_pnl"
+      ],
+      "coverage": [
+        "cross_module"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.0,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.0
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "when nobody is buying we book the exit at nothing rather than pretend it did not happen",
+      "relevant": [
+        "src.backtest.portfolio.PortfolioSimulator.execute_sell"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.111,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.059
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "keeping a note of the ones we looked at and passed on, and why",
+      "relevant": [
+        "src.paper_trading.ledger.PaperLedger.record_skip",
+        "src.paper_trading.ledger.PaperLedger._skip_reasons"
+      ],
+      "coverage": [
+        "private",
+        "undocumented"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.0,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.0
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "working out the result differently depending on which side of the contract we took",
+      "relevant": [
+        "src.paper_trading.ledger.PaperLedger.settle_trade"
+      ],
+      "coverage": [],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.143,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.062
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "asking the venue which of the things we are still waiting on have finished",
+      "relevant": [
+        "src.paper_trading.ledger.PaperLedger.settle_from_api"
+      ],
+      "coverage": [],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.0,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.0
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "the lopsidedness has to hold across most of the recent window before we believe it",
+      "relevant": [
+        "src.price_action.detectors.smart_money.SmartMoneyDetector.detect"
+      ],
+      "coverage": [
+        "generic_name"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.5,
+        "rare_source_overlap": 0.167,
+        "idf_weighted_source_overlap": 0.343
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "the quote has barely moved even though we have newer information than it does",
+      "relevant": [
+        "src.price_action.detectors.stale_pricing.StalePricingDetector.detect"
+      ],
+      "coverage": [
+        "generic_name"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.0,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.0
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "a component that needs extra context must answer with nothing rather than raise when it is absent",
+      "relevant": [
+        "src.price_action.detectors.base.SignalDetector.detect",
+        "src.price_action.detectors.stale_pricing.StalePricingDetector.detect"
+      ],
+      "coverage": [
+        "cross_module",
+        "error_path",
+        "generic_name"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.3,
+        "rare_source_overlap": 0.2,
+        "idf_weighted_source_overlap": 0.297
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "the price ladder is stored as one text column and has to be rebuilt on the way back out",
+      "relevant": [
+        "src.price_action.store._row_to_snapshot",
+        "src.price_action.store._row_to_snapshot._parse_levels",
+        "src.price_action.store.PriceActionStore.save_snapshot"
+      ],
+      "coverage": [
+        "private",
+        "undocumented"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.125,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.034
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "the safety switch starts in the harmless position and has to be turned off on purpose",
+      "relevant": [
+        "src.config.Settings.is_dry_run",
+        "src.config.Settings"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.286,
+        "rare_source_overlap": 0.143,
+        "idf_weighted_source_overlap": 0.13
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "a flat typed object replaced a thirty key dictionary but still answers to square brackets",
+      "relevant": [
+        "src.models.TradeSignal.__getitem__",
+        "src.models.TradeSignal.get",
+        "src.models.TradeSignal.__contains__"
+      ],
+      "coverage": [
+        "generic_name",
+        "private"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.1,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.047
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "translating an older result object into the shared shape everything now speaks",
+      "relevant": [
+        "src.signals.from_trade_signal",
+        "src.signals.from_financial_opportunity"
+      ],
+      "coverage": [
+        "cross_module"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.125,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.082
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "deciding whether a suggestion is worth acting on at all, and how firmly it is held",
+      "relevant": [
+        "src.signals.BaseSignal.is_actionable",
+        "src.signals.BaseSignal.strength"
+      ],
+      "coverage": [],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.143,
+        "rare_source_overlap": 0.143,
+        "idf_weighted_source_overlap": 0.107
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    }
+  ]
+}

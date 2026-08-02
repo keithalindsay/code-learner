@@ -1,0 +1,335 @@
+{
+  "repo": "TradingAgents",
+  "source": "mined",
+  "generated_by": "codelearner.eval.mined_gold.mine_queries",
+  "mined_at_head": "f362a160c309a680cac460aa9de217ec63e434e6",
+  "commit_note": "MINED from commit prose, not hand-labelled: 8 queries from 11 candidate sentences across 9 of 86 commits, emitted as 16 rows (verbatim + name-blind per query). Snapshot at f362a160c3 -- a mined set is a function of history and moves with the next commit; regenerate rather than trusting this file.",
+  "labelling_rule": "Relevant = every symbol named AS CODE by one sentence of a commit message, where that commit also changed the file the symbol lives in. 'As code' is gold_from_history.mentions_symbol: either the identifier is distinctive enough that a bare occurrence cannot be English, or it appears in backticks, called, attribute-accessed, or assigned. The sentence, unmodified, is the query. Excluded: commits with boilerplate subjects, merge commits, sentences under 5 words, code snippets, sentences naming more than 5 symbols, sentences leaving fewer than 3 content tokens once their targets' name tokens are removed, sentences found verbatim (32-char run) in any selected symbol's source, exact duplicates, and any query naming a qualname the index does not hold. NOT excluded: high token overlap with the target's source -- it is measured per query and reported, because the hand-labelled set's own overlap is a median 0.71 and a threshold would reject it too. Every query is emitted twice, verbatim and name-blinded, as separate rows sharing a pair_id -- except where two queries blind to the same text with different relevant sets, where the blind row is dropped as ambiguous and the verbatim row is left unpaired. The two rows of a pair are the same item and must be clustered, not counted twice.",
+  "funnel": {
+    "commits_in_history": 86,
+    "commits_contributing": 9,
+    "commits_skipped": {
+      "boilerplate_subject": 30,
+      "empty_prose": 12,
+      "no_live_python_files": 13
+    },
+    "candidates_considered": 11,
+    "rejected": {
+      "copied_into_source": 2,
+      "name_only": 1
+    },
+    "usable_queries": 8,
+    "usable_fraction": 0.727,
+    "distinct_target_symbols": 11,
+    "relevant_set_sizes": {
+      "1": 6,
+      "2": 1,
+      "3": 1
+    },
+    "multi_relevant": 2,
+    "largest_commit_cluster": 1,
+    "blind_rows_dropped": 0,
+    "rows_emitted": 16
+  },
+  "source_overlap": {
+    "definition": "|content tokens of query & content tokens of relevant symbols' source| / |content tokens of query|. Reported, never filtered on.",
+    "mined": {
+      "n": 8,
+      "min": 0.3,
+      "p25": 0.625,
+      "median": 0.714,
+      "p75": 0.75,
+      "max": 0.8,
+      "mean": 0.617,
+      "deciles": {
+        "30-40%": 2,
+        "60-70%": 2,
+        "70-80%": 3,
+        "80-90%": 1
+      }
+    },
+    "hand_labelled_reference": {
+      "gold": "swarm_sync.json (16 hand-written queries)",
+      "min": 0.0,
+      "median": 0.71,
+      "mean": 0.61,
+      "max": 1.0,
+      "at_1.0": 2
+    }
+  },
+  "bias": {
+    "note": "The mention rule selects symbols a commit message happened to name. This set inherits that bias in full; it is measured here, not corrected. 'over_representation' is the selected share of a kind divided by its population share -- 1.0 is neutral, above 1.0 is over-represented.",
+    "population": {
+      "n": 197,
+      "documented": 0.6598984771573604,
+      "private": 0.15228426395939088,
+      "kinds": {
+        "class": 0.1065989847715736,
+        "function": 0.5532994923857868,
+        "method": 0.3401015228426396
+      }
+    },
+    "selected": {
+      "n": 11,
+      "documented": 1.0,
+      "private": 0.09090909090909091,
+      "kinds": {
+        "class": 0.45454545454545453,
+        "function": 0.5454545454545454
+      }
+    },
+    "over_representation": {
+      "class": 4.264,
+      "function": 0.986,
+      "method": 0.0
+    }
+  },
+  "queries": [
+    {
+      "id": "TradingAgents:64f07671b9:2:verbatim",
+      "query": "OpenAIClient, GoogleClient, AnthropicClient now support custom httpx clients",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "tradingagents.llm_clients.anthropic_client.AnthropicClient",
+        "tradingagents.llm_clients.google_client.GoogleClient",
+        "tradingagents.llm_clients.openai_client.OpenAIClient"
+      ],
+      "repo": "TradingAgents",
+      "pair_id": "TradingAgents:64f07671b9:2",
+      "commit": "64f07671b9",
+      "n_relevant": 3,
+      "source_overlap": 0.667
+    },
+    {
+      "id": "TradingAgents:64f07671b9:2:name_blind",
+      "query": "now support custom httpx",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "tradingagents.llm_clients.anthropic_client.AnthropicClient",
+        "tradingagents.llm_clients.google_client.GoogleClient",
+        "tradingagents.llm_clients.openai_client.OpenAIClient"
+      ],
+      "repo": "TradingAgents",
+      "pair_id": "TradingAgents:64f07671b9:2",
+      "commit": "64f07671b9",
+      "n_relevant": 3,
+      "source_overlap": 0.667
+    },
+    {
+      "id": "TradingAgents:551fd7f074:5:verbatim",
+      "query": "Simplify UnifiedChatOpenAI GPT-5 temperature handling",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "tradingagents.llm_clients.openai_client.UnifiedChatOpenAI"
+      ],
+      "repo": "TradingAgents",
+      "pair_id": "TradingAgents:551fd7f074:5",
+      "commit": "551fd7f074",
+      "n_relevant": 1,
+      "source_overlap": 0.75
+    },
+    {
+      "id": "TradingAgents:551fd7f074:5:name_blind",
+      "query": "simplify gpt temperature handling",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "tradingagents.llm_clients.openai_client.UnifiedChatOpenAI"
+      ],
+      "repo": "TradingAgents",
+      "pair_id": "TradingAgents:551fd7f074:5",
+      "commit": "551fd7f074",
+      "n_relevant": 1,
+      "source_overlap": 0.75
+    },
+    {
+      "id": "TradingAgents:b0f9d180f9:1:verbatim",
+      "query": "Add _clean_dataframe() to normalize stock DataFrames before stockstats: coerce invalid dates/prices, drop rows missing Close, fill price gaps.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "tradingagents.dataflows.stockstats_utils._clean_dataframe"
+      ],
+      "repo": "TradingAgents",
+      "pair_id": "TradingAgents:b0f9d180f9:1",
+      "commit": "b0f9d180f9",
+      "n_relevant": 1,
+      "source_overlap": 0.75
+    },
+    {
+      "id": "TradingAgents:b0f9d180f9:1:name_blind",
+      "query": "add to normalize stock data frames before coerce invalid dates prices drop rows missing close fill price gaps",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "tradingagents.dataflows.stockstats_utils._clean_dataframe"
+      ],
+      "repo": "TradingAgents",
+      "pair_id": "TradingAgents:b0f9d180f9:1",
+      "commit": "b0f9d180f9",
+      "n_relevant": 1,
+      "source_overlap": 0.75
+    },
+    {
+      "id": "TradingAgents:fe9c8d5d31:0:verbatim",
+      "query": "fix: handle comma-separated indicators in get_indicators tool",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "tradingagents.agents.utils.technical_indicators_tools.get_indicators"
+      ],
+      "repo": "TradingAgents",
+      "pair_id": "TradingAgents:fe9c8d5d31:0",
+      "commit": "fe9c8d5d31",
+      "n_relevant": 1,
+      "source_overlap": 0.714
+    },
+    {
+      "id": "TradingAgents:fe9c8d5d31:0:name_blind",
+      "query": "fix handle comma separated in tool",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "tradingagents.agents.utils.technical_indicators_tools.get_indicators"
+      ],
+      "repo": "TradingAgents",
+      "pair_id": "TradingAgents:fe9c8d5d31:0",
+      "commit": "fe9c8d5d31",
+      "n_relevant": 1,
+      "source_overlap": 0.714
+    },
+    {
+      "id": "TradingAgents:93b87d5119:1:verbatim",
+      "query": "Add update_analyst_statuses() for unified status logic (pending/in_progress/completed)",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "cli.main.update_analyst_statuses"
+      ],
+      "repo": "TradingAgents",
+      "pair_id": "TradingAgents:93b87d5119:1",
+      "commit": "93b87d5119",
+      "n_relevant": 1,
+      "source_overlap": 0.8
+    },
+    {
+      "id": "TradingAgents:93b87d5119:1:name_blind",
+      "query": "add for unified status logic pending in progress completed",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "cli.main.update_analyst_statuses"
+      ],
+      "repo": "TradingAgents",
+      "pair_id": "TradingAgents:93b87d5119:1",
+      "commit": "93b87d5119",
+      "n_relevant": 1,
+      "source_overlap": 0.8
+    },
+    {
+      "id": "TradingAgents:54cdb146d0:2:verbatim",
+      "query": "Integrate callbacks into TradingAgentsGraph and all LLM clients",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "tradingagents.graph.trading_graph.TradingAgentsGraph"
+      ],
+      "repo": "TradingAgents",
+      "pair_id": "TradingAgents:54cdb146d0:2",
+      "commit": "54cdb146d0",
+      "n_relevant": 1,
+      "source_overlap": 0.625
+    },
+    {
+      "id": "TradingAgents:54cdb146d0:2:name_blind",
+      "query": "integrate callbacks into and all llm clients",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "tradingagents.graph.trading_graph.TradingAgentsGraph"
+      ],
+      "repo": "TradingAgents",
+      "pair_id": "TradingAgents:54cdb146d0:2",
+      "commit": "54cdb146d0",
+      "n_relevant": 1,
+      "source_overlap": 0.625
+    },
+    {
+      "id": "TradingAgents:b06936f420:2:verbatim",
+      "query": "Fix get_insider_transactions signature (remove unused curr_date param)",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "tradingagents.agents.utils.news_data_tools.get_insider_transactions",
+        "tradingagents.dataflows.alpha_vantage_news.get_insider_transactions"
+      ],
+      "repo": "TradingAgents",
+      "pair_id": "TradingAgents:b06936f420:2",
+      "commit": "b06936f420",
+      "n_relevant": 2,
+      "source_overlap": 0.3
+    },
+    {
+      "id": "TradingAgents:b06936f420:2:name_blind",
+      "query": "fix signature remove unused curr date param",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "tradingagents.agents.utils.news_data_tools.get_insider_transactions",
+        "tradingagents.dataflows.alpha_vantage_news.get_insider_transactions"
+      ],
+      "repo": "TradingAgents",
+      "pair_id": "TradingAgents:b06936f420:2",
+      "commit": "b06936f420",
+      "n_relevant": 2,
+      "source_overlap": 0.3
+    },
+    {
+      "id": "TradingAgents:79051580b8:3:verbatim",
+      "query": "Replace direct LLM imports in trading_graph.py with create_llm_client()",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "tradingagents.llm_clients.factory.create_llm_client"
+      ],
+      "repo": "TradingAgents",
+      "pair_id": "TradingAgents:79051580b8:3",
+      "commit": "79051580b8",
+      "n_relevant": 1,
+      "source_overlap": 0.333
+    },
+    {
+      "id": "TradingAgents:79051580b8:3:name_blind",
+      "query": "replace direct imports in trading graph py with",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "tradingagents.llm_clients.factory.create_llm_client"
+      ],
+      "repo": "TradingAgents",
+      "pair_id": "TradingAgents:79051580b8:3",
+      "commit": "79051580b8",
+      "n_relevant": 1,
+      "source_overlap": 0.333
+    }
+  ]
+}

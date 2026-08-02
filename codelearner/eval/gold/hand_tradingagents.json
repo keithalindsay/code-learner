@@ -1,0 +1,789 @@
+{
+  "schema_version": 2,
+  "source": "hand",
+  "repo": "TradingAgents",
+  "repo_path": "/home/keith/projects/TradingAgents",
+  "index_path": "/home/keith/projects/TradingAgents/.codelearner/index.db",
+  "commit_note": "Hand-written against TradingAgents @ 58 indexed files, 255 symbols (.codelearner/index.db, 2026-08-02). Smallest of the three repos and the terse-docstring extreme: most docstrings are a single sentence restating the name ('Determine if debate should continue.'), which is the opposite of swarm-sync and the harder case for dense retrieval.",
+  "labelling_rule": "Relevant = a symbol a competent engineer would want to READ to answer the question. Tests are listed only where the question is about behaviour under test. Implementations are listed even when tests describe them better, because the question asks how the code works.",
+  "authoring_rule": "Every query is phrased from what the code DOES, in a newcomer's domain words, NOT by echoing the target's identifiers. Drafted from the source, then measured for token overlap against the target's chunk text (the exact text BM25 indexes) and against the target's own symbol name; queries whose wording leaked a target identifier are flagged name_bearing so they can be scored as a separate row instead of silently inflating the lexical modality.",
+  "repo_note": "The dominant structure here is the closure: `create_<role>` returns a `<role>_node` function, so the behaviour a question is about lives in a NESTED function whose name the caller never writes. That shape is a large share of the private/undocumented coverage below and is exactly what commit-prose mining cannot name.",
+  "overlap_method": {
+    "tokenizer": "lowercase, split on non-alphanumeric and camelCase boundaries, drop <3 chars, drop a 100-word English stoplist",
+    "corpus": "chunks.text for every symbol in this repo's index (the field chunks_fts indexes, i.e. exactly what BM25 scores)",
+    "name_overlap": "fraction of distinct query tokens that appear in some relevant symbol's OWN name (symbols.name / last dotted component)",
+    "source_overlap": "fraction of distinct query tokens that appear in some relevant symbol's chunk text",
+    "rare_source_overlap": "fraction of distinct query tokens that appear in a relevant symbol's chunk text AND have document frequency <= 2% of chunks -- the high-IDF terms BM25 actually ranks on",
+    "idf_weighted_source_overlap": "sum of idf over query tokens present in a relevant chunk, divided by sum of idf over all query tokens",
+    "name_bearing": "true iff name_overlap > 0, i.e. the query names the target. Not automatically wrong (real users do sometimes know the name) but must be scored as its own row."
+  },
+  "coverage_codes": {
+    "undocumented": "target symbol has no docstring in the index",
+    "private": "target is a _-prefixed helper, a nested function, or a dunder",
+    "generic_name": "target's name is generic or misleading (get_llm, invoke, main, node) so the name carries no query signal",
+    "cross_module": "answering requires reading symbols in 2+ modules",
+    "error_path": "the question is about a failure, edge case, or refusal rather than the happy path",
+    "hard_negative": "the obvious keyword match in this repo is the WRONG symbol; a lexical-only retriever is actively penalised"
+  },
+  "queries": [
+    {
+      "query": "picking which vendor wrapper to build from a string in the settings, and refusing an unknown one",
+      "relevant": [
+        "tradingagents.llm_clients.factory.create_llm_client"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.0,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.0
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "TradingAgents"
+    },
+    {
+      "query": "one family of models rejects the sampling knobs the library sets by default, so they are removed first",
+      "relevant": [
+        "tradingagents.llm_clients.openai_client.UnifiedChatOpenAI",
+        "tradingagents.llm_clients.openai_client.UnifiedChatOpenAI.__init__"
+      ],
+      "coverage": [
+        "error_path",
+        "private",
+        "undocumented"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.3,
+        "rare_source_overlap": 0.2,
+        "idf_weighted_source_overlap": 0.28
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "TradingAgents"
+    },
+    {
+      "query": "one supplier hands back a list of blocks where the others hand back plain text, so it is flattened",
+      "relevant": [
+        "tradingagents.llm_clients.google_client.NormalizedChatGoogleGenerativeAI._normalize_content",
+        "tradingagents.llm_clients.google_client.NormalizedChatGoogleGenerativeAI.invoke"
+      ],
+      "coverage": [
+        "generic_name",
+        "private",
+        "undocumented"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.2,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.115
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "TradingAgents"
+    },
+    {
+      "query": "the depth of deliberation setting means something different on each generation of the same family",
+      "relevant": [
+        "tradingagents.llm_clients.google_client.GoogleClient.get_llm",
+        "tradingagents.graph.trading_graph.TradingAgentsGraph._get_provider_kwargs"
+      ],
+      "coverage": [
+        "cross_module",
+        "generic_name",
+        "private"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.0,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.0
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "TradingAgents"
+    },
+    {
+      "query": "names are checked against a fixed list, except for the self-hosted options where anything goes",
+      "relevant": [
+        "tradingagents.llm_clients.validators.validate_model"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.0,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.0
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "TradingAgents"
+    },
+    {
+      "query": "the abstract shape every supplier wrapper has to satisfy before it can be plugged in",
+      "relevant": [
+        "tradingagents.llm_clients.base_client.BaseLLMClient",
+        "tradingagents.llm_clients.base_client.BaseLLMClient.get_llm",
+        "tradingagents.llm_clients.base_client.BaseLLMClient.validate_model"
+      ],
+      "coverage": [
+        "generic_name"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.143,
+        "rare_source_overlap": 0.143,
+        "idf_weighted_source_overlap": 0.127
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "TradingAgents"
+    },
+    {
+      "query": "credentials come out of the surrounding environment rather than the settings object",
+      "relevant": [
+        "tradingagents.llm_clients.openai_client.OpenAIClient.get_llm",
+        "tradingagents.dataflows.alpha_vantage_common.get_api_key"
+      ],
+      "coverage": [
+        "cross_module",
+        "generic_name",
+        "hard_negative"
+      ],
+      "hard_negative": true,
+      "note": "Two unrelated modules read from the environment for different services; the settings dictionary, which is what a keyword match reaches for first, is not where this lives.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.143,
+        "rare_source_overlap": 0.143,
+        "idf_weighted_source_overlap": 0.148
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "TradingAgents"
+    },
+    {
+      "query": "asking a second supplier the same question when the first one says we are out of quota",
+      "relevant": [
+        "tradingagents.dataflows.interface.route_to_vendor",
+        "tradingagents.dataflows.alpha_vantage_common.AlphaVantageRateLimitError"
+      ],
+      "coverage": [
+        "cross_module",
+        "error_path"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.143,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.093
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "TradingAgents"
+    },
+    {
+      "query": "a setting for one specific call beats the broader setting for its whole family",
+      "relevant": [
+        "tradingagents.dataflows.interface.get_vendor",
+        "tradingagents.dataflows.interface.get_category_for_method"
+      ],
+      "coverage": [],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.143,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.071
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "TradingAgents"
+    },
+    {
+      "query": "a module level dictionary any part of the program can replace while it runs",
+      "relevant": [
+        "tradingagents.dataflows.config.set_config",
+        "tradingagents.dataflows.config.initialize_config",
+        "tradingagents.dataflows.config.get_config"
+      ],
+      "coverage": [
+        "hard_negative"
+      ],
+      "hard_negative": true,
+      "note": "Every module in the repo mentions settings; the three functions that actually own the mutable global are a tiny, lexically unremarkable file.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.0,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.0
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "TradingAgents"
+    },
+    {
+      "query": "handing back a duplicate so a caller cannot change the shared settings by accident",
+      "relevant": [
+        "tradingagents.dataflows.config.get_config"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.0,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.0
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "TradingAgents"
+    },
+    {
+      "query": "deciding whether the argument goes another round or is handed to whoever rules on it",
+      "relevant": [
+        "tradingagents.graph.conditional_logic.ConditionalLogic.should_continue_debate",
+        "tradingagents.graph.conditional_logic.ConditionalLogic.should_continue_risk_analysis"
+      ],
+      "coverage": [],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.0,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.0
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "TradingAgents"
+    },
+    {
+      "query": "whose turn it is next is worked out purely from who spoke last",
+      "relevant": [
+        "tradingagents.graph.conditional_logic.ConditionalLogic.should_continue_risk_analysis"
+      ],
+      "coverage": [],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.0,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.0
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "TradingAgents"
+    },
+    {
+      "query": "if the model asked for outside data we hand over to the fetchers, otherwise we move on",
+      "relevant": [
+        "tradingagents.graph.conditional_logic.ConditionalLogic.should_continue_market",
+        "tradingagents.graph.conditional_logic.ConditionalLogic.should_continue_news",
+        "tradingagents.graph.conditional_logic.ConditionalLogic.should_continue_social",
+        "tradingagents.graph.conditional_logic.ConditionalLogic.should_continue_fundamentals"
+      ],
+      "coverage": [
+        "hard_negative"
+      ],
+      "hard_negative": true,
+      "note": "Four byte-for-byte parallel methods differing only in a literal; all four are the answer, and a top-1 lexical hit is 25% of it.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.0,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.0
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "TradingAgents"
+    },
+    {
+      "query": "stitching the participants into a runnable flow, inserting only the ones that were chosen and in order",
+      "relevant": [
+        "tradingagents.graph.setup.GraphSetup.setup_graph"
+      ],
+      "coverage": [],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.0,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.0
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "TradingAgents"
+    },
+    {
+      "query": "refusing to build anything at all when nobody was selected to take part",
+      "relevant": [
+        "tradingagents.graph.setup.GraphSetup.setup_graph"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.143,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.091
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "TradingAgents"
+    },
+    {
+      "query": "the empty record every field gets written into as the run proceeds",
+      "relevant": [
+        "tradingagents.graph.propagation.Propagator.create_initial_state"
+      ],
+      "coverage": [],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.0,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.0
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "TradingAgents"
+    },
+    {
+      "query": "a ceiling on how many steps the whole thing may take before it is abandoned",
+      "relevant": [
+        "tradingagents.graph.propagation.Propagator.get_graph_args"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.0,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.0
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "TradingAgents"
+    },
+    {
+      "query": "once the outcome is known each participant writes a lesson into a store of its own",
+      "relevant": [
+        "tradingagents.graph.reflection.Reflector.reflect_bull_researcher",
+        "tradingagents.graph.reflection.Reflector.reflect_trader",
+        "tradingagents.graph.reflection.Reflector.reflect_risk_manager",
+        "tradingagents.graph.trading_graph.TradingAgentsGraph.reflect_and_remember"
+      ],
+      "coverage": [
+        "cross_module"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.0,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.0
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "TradingAgents"
+    },
+    {
+      "query": "the four written summaries are pasted together into one description of where things stand",
+      "relevant": [
+        "tradingagents.graph.reflection.Reflector._extract_current_situation",
+        "tradingagents.agents.researchers.bull_researcher.create_bull_researcher.bull_node",
+        "tradingagents.agents.trader.trader.create_trader.trader_node"
+      ],
+      "coverage": [
+        "cross_module",
+        "hard_negative",
+        "private",
+        "undocumented"
+      ],
+      "hard_negative": true,
+      "note": "The same four-way concatenation is copy-pasted into every participant closure; only one of them is a named helper, and the copies live in nested functions whose names nobody writes.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.0,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.0
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "TradingAgents"
+    },
+    {
+      "query": "boiling a long written argument down to a single word of instruction",
+      "relevant": [
+        "tradingagents.graph.signal_processing.SignalProcessor.process_signal",
+        "tradingagents.graph.trading_graph.TradingAgentsGraph.process_signal"
+      ],
+      "coverage": [
+        "cross_module"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.0,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.0
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "TradingAgents"
+    },
+    {
+      "query": "earlier lessons are found by shared wording rather than by meaning, so nothing has to be called out to",
+      "relevant": [
+        "tradingagents.agents.utils.memory.FinancialSituationMemory.get_memories",
+        "tradingagents.agents.utils.memory.FinancialSituationMemory._tokenize"
+      ],
+      "coverage": [
+        "private"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.0,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.0
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "TradingAgents"
+    },
+    {
+      "query": "the whole lookup structure is thrown away and built again every time something is added",
+      "relevant": [
+        "tradingagents.agents.utils.memory.FinancialSituationMemory.add_situations",
+        "tradingagents.agents.utils.memory.FinancialSituationMemory._rebuild_index"
+      ],
+      "coverage": [
+        "private"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.0,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.0
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "TradingAgents"
+    },
+    {
+      "query": "results are divided through by the biggest one so they all land between nothing and one",
+      "relevant": [
+        "tradingagents.agents.utils.memory.FinancialSituationMemory.get_memories"
+      ],
+      "coverage": [],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.167,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.108
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "TradingAgents"
+    },
+    {
+      "query": "one supplier's conversation format needs a stand-in left behind when the history is wiped",
+      "relevant": [
+        "tradingagents.agents.utils.agent_utils.create_msg_delete",
+        "tradingagents.agents.utils.agent_utils.create_msg_delete.delete_messages"
+      ],
+      "coverage": [
+        "error_path",
+        "private",
+        "undocumented"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.0,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.0
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "TradingAgents"
+    },
+    {
+      "query": "callers sometimes cram several names into one comma separated string, so they get split and run one by one",
+      "relevant": [
+        "tradingagents.agents.utils.technical_indicators_tools.get_indicators"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.5,
+        "rare_source_overlap": 0.3,
+        "idf_weighted_source_overlap": 0.476
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "TradingAgents"
+    },
+    {
+      "query": "fifteen years of prices are pulled down once and kept on disk so the next run does not repeat it",
+      "relevant": [
+        "tradingagents.dataflows.stockstats_utils.StockstatsUtils.get_stock_stats",
+        "tradingagents.dataflows.y_finance._get_stock_stats_bulk"
+      ],
+      "coverage": [
+        "cross_module",
+        "hard_negative",
+        "private",
+        "undocumented"
+      ],
+      "hard_negative": true,
+      "note": "Two near-duplicate implementations of the same download-and-cache block in different modules; one is private and one is a static method, and neither name says 'cache'.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.182,
+        "rare_source_overlap": 0.182,
+        "idf_weighted_source_overlap": 0.171
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "TradingAgents"
+    },
+    {
+      "query": "rows whose dates cannot be understood are dropped, and gaps in the numbers are filled from both directions",
+      "relevant": [
+        "tradingagents.dataflows.stockstats_utils._clean_dataframe"
+      ],
+      "coverage": [
+        "private"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.3,
+        "rare_source_overlap": 0.3,
+        "idf_weighted_source_overlap": 0.25
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "TradingAgents"
+    },
+    {
+      "query": "asking about a weekend or a public holiday returns a plain sentence rather than a number",
+      "relevant": [
+        "tradingagents.dataflows.stockstats_utils.StockstatsUtils.get_stock_stats"
+      ],
+      "coverage": [
+        "error_path",
+        "undocumented"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.222,
+        "rare_source_overlap": 0.222,
+        "idf_weighted_source_overlap": 0.234
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "TradingAgents"
+    },
+    {
+      "query": "the newer payload buries everything one level deeper, with the old flat arrangement kept as a fallback",
+      "relevant": [
+        "tradingagents.dataflows.yfinance_news._extract_article_data"
+      ],
+      "coverage": [
+        "error_path",
+        "private"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.182,
+        "rare_source_overlap": 0.091,
+        "idf_weighted_source_overlap": 0.145
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "TradingAgents"
+    },
+    {
+      "query": "nudging a date forward when it happens to land on a Saturday or a Sunday",
+      "relevant": [
+        "tradingagents.dataflows.utils.get_next_weekday"
+      ],
+      "coverage": [
+        "undocumented"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.143,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.045
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "TradingAgents"
+    },
+    {
+      "query": "applying one wrapper to every callable attribute of a type in a single sweep",
+      "relevant": [
+        "tradingagents.dataflows.utils.decorate_all_methods",
+        "tradingagents.dataflows.utils.decorate_all_methods.class_decorator"
+      ],
+      "coverage": [
+        "private",
+        "undocumented"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.125,
+        "rare_source_overlap": 0.125,
+        "idf_weighted_source_overlap": 0.123
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "TradingAgents"
+    },
+    {
+      "query": "cutting a long argument list short so it still fits on one line of the terminal",
+      "relevant": [
+        "cli.main.format_tool_args"
+      ],
+      "coverage": [],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.125,
+        "rare_source_overlap": 0.125,
+        "idf_weighted_source_overlap": 0.149
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "TradingAgents"
+    },
+    {
+      "query": "a value that is really just a bracketed nothing spelled out should be treated as absent",
+      "relevant": [
+        "cli.main.extract_content_string",
+        "cli.main.extract_content_string.is_empty"
+      ],
+      "coverage": [
+        "error_path",
+        "private"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.143,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.062
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "TradingAgents"
+    },
+    {
+      "query": "sorting each turn by who produced it, and spotting the filler turn that is not really from a person",
+      "relevant": [
+        "cli.main.classify_message_type"
+      ],
+      "coverage": [],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.0,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.0
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "TradingAgents"
+    },
+    {
+      "query": "what the user types is checked against both the pattern and the calendar before it is accepted",
+      "relevant": [
+        "cli.utils.get_analysis_date",
+        "cli.utils.get_analysis_date.validate_date"
+      ],
+      "coverage": [
+        "error_path",
+        "private",
+        "undocumented"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.143,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.095
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "TradingAgents"
+    },
+    {
+      "query": "counting how many calls went out and how much they consumed, safely from more than one thread",
+      "relevant": [
+        "cli.stats_handler.StatsCallbackHandler.on_llm_end",
+        "cli.stats_handler.StatsCallbackHandler.get_stats",
+        "cli.stats_handler.StatsCallbackHandler.on_tool_start"
+      ],
+      "coverage": [],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.143,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.065
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "TradingAgents"
+    },
+    {
+      "query": "the finished write-up is split into numbered folders with one file per contributor",
+      "relevant": [
+        "cli.main.save_report_to_disk"
+      ],
+      "coverage": [],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.125,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.075
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "TradingAgents"
+    }
+  ]
+}

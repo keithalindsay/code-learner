@@ -1,0 +1,1377 @@
+{
+  "repo": "code-learner",
+  "source": "mined",
+  "generated_by": "codelearner.eval.mined_gold.mine_queries",
+  "mined_at_head": "1021a143995e8cccc35165b72b3002615bd3289c",
+  "commit_note": "MINED from commit prose, not hand-labelled: 42 queries from 53 candidate sentences across 11 of 16 commits, emitted as 84 rows (verbatim + name-blind per query). Snapshot at 1021a14399 -- a mined set is a function of history and moves with the next commit; regenerate rather than trusting this file.",
+  "labelling_rule": "Relevant = every symbol named AS CODE by one sentence of a commit message, where that commit also changed the file the symbol lives in. 'As code' is gold_from_history.mentions_symbol: either the identifier is distinctive enough that a bare occurrence cannot be English, or it appears in backticks, called, attribute-accessed, or assigned. The sentence, unmodified, is the query. Excluded: commits with boilerplate subjects, merge commits, sentences under 5 words, code snippets, sentences naming more than 5 symbols, sentences leaving fewer than 3 content tokens once their targets' name tokens are removed, sentences found verbatim (32-char run) in any selected symbol's source, exact duplicates, and any query naming a qualname the index does not hold. NOT excluded: high token overlap with the target's source -- it is measured per query and reported, because the hand-labelled set's own overlap is a median 0.71 and a threshold would reject it too. Every query is emitted twice, verbatim and name-blinded, as separate rows sharing a pair_id -- except where two queries blind to the same text with different relevant sets, where the blind row is dropped as ambiguous and the verbatim row is left unpaired. The two rows of a pair are the same item and must be clustered, not counted twice.",
+  "funnel": {
+    "commits_in_history": 16,
+    "commits_contributing": 11,
+    "commits_skipped": {
+      "no_live_python_files": 1
+    },
+    "candidates_considered": 53,
+    "rejected": {
+      "copied_into_sibling": 4,
+      "copied_into_source": 5,
+      "too_many_relevant": 1,
+      "too_short": 1
+    },
+    "usable_queries": 42,
+    "usable_fraction": 0.792,
+    "distinct_target_symbols": 44,
+    "relevant_set_sizes": {
+      "1": 31,
+      "2": 11
+    },
+    "multi_relevant": 11,
+    "largest_commit_cluster": 10,
+    "blind_rows_dropped": 0,
+    "rows_emitted": 84
+  },
+  "source_overlap": {
+    "definition": "|content tokens of query & content tokens of relevant symbols' source| / |content tokens of query|. Reported, never filtered on.",
+    "mined": {
+      "n": 42,
+      "min": 0.0,
+      "p25": 0.172,
+      "median": 0.429,
+      "p75": 0.583,
+      "max": 0.929,
+      "mean": 0.395,
+      "deciles": {
+        "0-10%": 7,
+        "10-20%": 5,
+        "20-30%": 4,
+        "30-40%": 4,
+        "40-50%": 5,
+        "50-60%": 8,
+        "60-70%": 5,
+        "70-80%": 1,
+        "80-90%": 2,
+        "90-100%": 1
+      }
+    },
+    "hand_labelled_reference": {
+      "gold": "swarm_sync.json (16 hand-written queries)",
+      "min": 0.0,
+      "median": 0.71,
+      "mean": 0.61,
+      "max": 1.0,
+      "at_1.0": 2
+    }
+  },
+  "bias": {
+    "note": "The mention rule selects symbols a commit message happened to name. This set inherits that bias in full; it is measured here, not corrected. 'over_representation' is the selected share of a kind divided by its population share -- 1.0 is neutral, above 1.0 is over-represented.",
+    "population": {
+      "n": 655,
+      "documented": 0.7053435114503817,
+      "private": 0.2931297709923664,
+      "kinds": {
+        "class": 0.15419847328244274,
+        "function": 0.48854961832061067,
+        "method": 0.35725190839694654
+      }
+    },
+    "selected": {
+      "n": 44,
+      "documented": 0.75,
+      "private": 0.045454545454545456,
+      "kinds": {
+        "class": 0.13636363636363635,
+        "function": 0.45454545454545453,
+        "method": 0.4090909090909091
+      }
+    },
+    "over_representation": {
+      "class": 0.884,
+      "function": 0.93,
+      "method": 1.145
+    }
+  },
+  "queries": [
+    {
+      "id": "code-learner:1021a14399:3:verbatim",
+      "query": "WP12 -- the leak boundary. score_purposes checked each view against its OWN label only, so cross-symbol leakage was invisible to every gate that ran during a scored run, and audit_leak_boundary -- the only thing that checks the cross product -- was called by no code path.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "codelearner.eval.gold_from_history.audit_leak_boundary",
+        "codelearner.eval.gold_from_history.score_purposes"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:1021a14399:3",
+      "commit": "1021a14399",
+      "n_relevant": 2,
+      "source_overlap": 0.615
+    },
+    {
+      "id": "code-learner:1021a14399:3:name_blind",
+      "query": "wp 12 the checked each view against its own label only so cross symbol leakage was invisible to every gate that ran during a scored run and the only thing that checks the cross product was called by no code path",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "codelearner.eval.gold_from_history.audit_leak_boundary",
+        "codelearner.eval.gold_from_history.score_purposes"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:1021a14399:3",
+      "commit": "1021a14399",
+      "n_relevant": 2,
+      "source_overlap": 0.615
+    },
+    {
+      "id": "code-learner:1021a14399:4:verbatim",
+      "query": "It now runs inside run_purpose_eval and fails the run on any finding.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "codelearner.eval.gold_from_history.run_purpose_eval"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:1021a14399:4",
+      "commit": "1021a14399",
+      "n_relevant": 1,
+      "source_overlap": 0.75
+    },
+    {
+      "id": "code-learner:1021a14399:4:name_blind",
+      "query": "it now runs inside and fails the on any finding",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "codelearner.eval.gold_from_history.run_purpose_eval"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:1021a14399:4",
+      "commit": "1021a14399",
+      "n_relevant": 1,
+      "source_overlap": 0.75
+    },
+    {
+      "id": "code-learner:1021a14399:10:verbatim",
+      "query": "It was filterable, and find_leaks could already see it.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "codelearner.eval.gold_from_history.find_leaks"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:1021a14399:10",
+      "commit": "1021a14399",
+      "n_relevant": 1,
+      "source_overlap": 0.6
+    },
+    {
+      "id": "code-learner:1021a14399:10:name_blind",
+      "query": "it was filterable and could already see it",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "codelearner.eval.gold_from_history.find_leaks"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:1021a14399:10",
+      "commit": "1021a14399",
+      "n_relevant": 1,
+      "source_overlap": 0.6
+    },
+    {
+      "id": "code-learner:1021a14399:12:verbatim",
+      "query": "WP13 -- four statistical corrections, no model needed. lift was a single draw from the null, and the shipped draw sat +2.28sd (body identifiers) and -1.24sd (name+signature) from the 500-draw mean: opposite directions on the same table.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "codelearner.eval.gold_from_history.PurposeScorecard.lift"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:1021a14399:12",
+      "commit": "1021a14399",
+      "n_relevant": 1,
+      "source_overlap": 0.045
+    },
+    {
+      "id": "code-learner:1021a14399:12:name_blind",
+      "query": "wp 13 four statistical corrections no model needed was a single draw the null and the shipped draw sat sd body identifiers and sd name signature the draw mean opposite directions on the same table",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "codelearner.eval.gold_from_history.PurposeScorecard.lift"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:1021a14399:12",
+      "commit": "1021a14399",
+      "n_relevant": 1,
+      "source_overlap": 0.045
+    },
+    {
+      "id": "code-learner:1021a14399:22:verbatim",
+      "query": "Both previously-surviving mutations (recall_at ignoring k, mrr returning raw rank) now fail.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "codelearner.eval.ablation.QueryResult.recall_at",
+        "codelearner.eval.ablation.Scorecard.recall_at"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:1021a14399:22",
+      "commit": "1021a14399",
+      "n_relevant": 2,
+      "source_overlap": 0.1
+    },
+    {
+      "id": "code-learner:1021a14399:22:name_blind",
+      "query": "both previously surviving mutations ignoring k mrr returning raw rank now fail",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "codelearner.eval.ablation.QueryResult.recall_at",
+        "codelearner.eval.ablation.Scorecard.recall_at"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:1021a14399:22",
+      "commit": "1021a14399",
+      "n_relevant": 2,
+      "source_overlap": 0.1
+    },
+    {
+      "id": "code-learner:1021a14399:28:verbatim",
+      "query": "A 40%-parse-failure run would report a healthy 0.55 with the badness parked in a counter nobody reads. supported/n also needs only \"an undecided claim is at worst unfaithful\", where the alternative assumes the undecided set is random -- which this module has already measured it is not, since the salvage bug fires on claims about code containing quotes.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "codelearner.eval.faithfulness.Adjudication.supported",
+        "codelearner.eval.faithfulness.Judgement.supported"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:1021a14399:28",
+      "commit": "1021a14399",
+      "n_relevant": 2,
+      "source_overlap": 0.031
+    },
+    {
+      "id": "code-learner:1021a14399:28:name_blind",
+      "query": "a parse failure run would report a healthy with the badness parked in a counter nobody reads n also needs only an undecided claim is at worst unfaithful where the alternative assumes the undecided set is random which this module has already measured it is not since the salvage bug fires on claims about code containing quotes",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "codelearner.eval.faithfulness.Adjudication.supported",
+        "codelearner.eval.faithfulness.Judgement.supported"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:1021a14399:28",
+      "commit": "1021a14399",
+      "n_relevant": 2,
+      "source_overlap": 0.031
+    },
+    {
+      "id": "code-learner:1021a14399:29:verbatim",
+      "query": "JudgeMisbehaving aborts past a 20% instrument-failure rate, deliberately not a JudgeUnavailable subclass because retrying does not fix a model emitting an unreadable shape.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "codelearner.eval.faithfulness.JudgeMisbehaving",
+        "codelearner.eval.faithfulness.JudgeUnavailable"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:1021a14399:29",
+      "commit": "1021a14399",
+      "n_relevant": 2,
+      "source_overlap": 0.824
+    },
+    {
+      "id": "code-learner:1021a14399:29:name_blind",
+      "query": "aborts past a instrument failure rate deliberately not a subclass because retrying does not fix a model emitting an unreadable shape",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "codelearner.eval.faithfulness.JudgeMisbehaving",
+        "codelearner.eval.faithfulness.JudgeUnavailable"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:1021a14399:29",
+      "commit": "1021a14399",
+      "n_relevant": 2,
+      "source_overlap": 0.824
+    },
+    {
+      "id": "code-learner:1021a14399:32:verbatim",
+      "query": "0.544 becomes 0.54 [0.46, 0.62] (Wilson), with cluster_correction returning None -- never 1.0 -- when it cannot estimate, because 1.0 would assert measured independence.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "codelearner.eval.faithfulness.FaithfulnessReport.cluster_correction",
+        "codelearner.eval.faithfulness.cluster_correction"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:1021a14399:32",
+      "commit": "1021a14399",
+      "n_relevant": 2,
+      "source_overlap": 0.538
+    },
+    {
+      "id": "code-learner:1021a14399:32:name_blind",
+      "query": "becomes wilson with returning none never when it cannot estimate because would assert measured independence",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "codelearner.eval.faithfulness.FaithfulnessReport.cluster_correction",
+        "codelearner.eval.faithfulness.cluster_correction"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:1021a14399:32",
+      "commit": "1021a14399",
+      "n_relevant": 2,
+      "source_overlap": 0.538
+    },
+    {
+      "id": "code-learner:1021a14399:34:verbatim",
+      "query": "Built but not run: a prompt-stability harness that re-adjudicates under named perturbations of render_evidence and reports a label-flip rate with an interval, and a BLIND export/score-back pair for human calibration.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "codelearner.eval.faithfulness.render_evidence"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:1021a14399:34",
+      "commit": "1021a14399",
+      "n_relevant": 1,
+      "source_overlap": 0.261
+    },
+    {
+      "id": "code-learner:1021a14399:34:name_blind",
+      "query": "built but not run a prompt stability harness that re adjudicates under named perturbations of and reports a label flip rate with an interval and a blind export score back pair for human calibration",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "codelearner.eval.faithfulness.render_evidence"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:1021a14399:34",
+      "commit": "1021a14399",
+      "n_relevant": 1,
+      "source_overlap": 0.261
+    },
+    {
+      "id": "code-learner:1021a14399:47:verbatim",
+      "query": "MutationCensus counts rules and never says \"detected\", pinned by a test, because conflating the two is how the old number drifted.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "codelearner.eval.gate_controls.MutationCensus"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:1021a14399:47",
+      "commit": "1021a14399",
+      "n_relevant": 1,
+      "source_overlap": 0.467
+    },
+    {
+      "id": "code-learner:1021a14399:47:name_blind",
+      "query": "counts rules and never says detected pinned by a test because conflating the two is how the old number drifted",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "codelearner.eval.gate_controls.MutationCensus"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:1021a14399:47",
+      "commit": "1021a14399",
+      "n_relevant": 1,
+      "source_overlap": 0.467
+    },
+    {
+      "id": "code-learner:2f299c822f:17:verbatim",
+      "query": "The window between connect() and commit cannot be closed from here -- sqlite will not say whether the file under an open handle was unlinked, and there is no lock shared with the indexing process.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "codelearner.db.connect",
+        "codelearner.server.app.IndexSource.connect"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:2f299c822f:17",
+      "commit": "2f299c822f",
+      "n_relevant": 2,
+      "source_overlap": 0.5
+    },
+    {
+      "id": "code-learner:2f299c822f:17:name_blind",
+      "query": "the window between and commit cannot be closed from here sqlite will not say whether the file under an open handle was unlinked and there is no lock shared with the indexing process",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "codelearner.db.connect",
+        "codelearner.server.app.IndexSource.connect"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:2f299c822f:17",
+      "commit": "2f299c822f",
+      "n_relevant": 2,
+      "source_overlap": 0.5
+    },
+    {
+      "id": "code-learner:243095d00b:10:verbatim",
+      "query": "These rows were already admitted; sending them back through the door would refuse exactly the ones worth keeping -- a rejected claim re-admitted as active, a stale one refused as EvidenceStale so the machinery that records what went wrong destroys the record, a claim whose subject the rebuild no longer parses refused when the schema is shaped to keep it with a NULL link.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "codelearner.assertions.store.EvidenceStale"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:243095d00b:10",
+      "commit": "243095d00b",
+      "n_relevant": 1,
+      "source_overlap": 0.2
+    },
+    {
+      "id": "code-learner:243095d00b:10:name_blind",
+      "query": "these rows were already admitted sending them back through the door would refuse exactly the ones worth keeping a rejected claim re admitted as active a one refused as so the machinery that records what went wrong destroys the record a claim whose subject the rebuild no longer parses refused when the schema is shaped to keep it with a null link",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "codelearner.assertions.store.EvidenceStale"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:243095d00b:10",
+      "commit": "243095d00b",
+      "n_relevant": 1,
+      "source_overlap": 0.2
+    },
+    {
+      "id": "code-learner:243095d00b:21:verbatim",
+      "query": "`reinstate` is the way back and is evidence-driven, with no override, because a promotion that skipped the re-read would be that same verdict entered by hand.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "codelearner.assertions.store.reinstate"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:243095d00b:21",
+      "commit": "243095d00b",
+      "n_relevant": 1,
+      "source_overlap": 0.929
+    },
+    {
+      "id": "code-learner:243095d00b:21:name_blind",
+      "query": "is the way back and is evidence driven with no override because a promotion that skipped the re read would be that same verdict entered by hand",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "codelearner.assertions.store.reinstate"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:243095d00b:21",
+      "commit": "243095d00b",
+      "n_relevant": 1,
+      "source_overlap": 0.929
+    },
+    {
+      "id": "code-learner:243095d00b:23:verbatim",
+      "query": "The two verifiers already disagreed on unreadable-but-present -- the stat fast path served it fresh while the reference verifier expired it -- so `serve_assertions()` and `serve_assertions(force_hash=True)` contradicted each other on one index in one second.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "codelearner.assertions.stale.serve_assertions"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:243095d00b:23",
+      "commit": "243095d00b",
+      "n_relevant": 1,
+      "source_overlap": 0.682
+    },
+    {
+      "id": "code-learner:243095d00b:23:name_blind",
+      "query": "the two verifiers already disagreed on unreadable but present the stat fast path served it fresh while the reference verifier expired it so and force hash true contradicted each other on one index in one second",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "codelearner.assertions.stale.serve_assertions"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:243095d00b:23",
+      "commit": "243095d00b",
+      "n_relevant": 1,
+      "source_overlap": 0.682
+    },
+    {
+      "id": "code-learner:243095d00b:27:verbatim",
+      "query": "It now runs at both, and the second door had no repo-containment rule: a claim citing `../outside_the_repo.py` with that file's real hash was admitted by `write_assertion`, stored active, and reported servable.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "codelearner.assertions.store.write_assertion",
+        "codelearner.generate.pipeline.LearnResult.admitted"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:243095d00b:27",
+      "commit": "243095d00b",
+      "n_relevant": 2,
+      "source_overlap": 0.85
+    },
+    {
+      "id": "code-learner:243095d00b:27:name_blind",
+      "query": "it now runs at both and the second door had no repo containment rule a claim citing outside the repo py with that file s real hash was by stored active and reported servable",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "codelearner.assertions.store.write_assertion",
+        "codelearner.generate.pipeline.LearnResult.admitted"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:243095d00b:27",
+      "commit": "243095d00b",
+      "n_relevant": 2,
+      "source_overlap": 0.85
+    },
+    {
+      "id": "code-learner:243095d00b:28:verbatim",
+      "query": "`path_escapes_repo` lived solely in `_verify_span`, so the MCP caller met it and `codelearner learn` did not.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "codelearner.generate.pipeline.learn",
+        "codelearner.server.app._verify_span"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:243095d00b:28",
+      "commit": "243095d00b",
+      "n_relevant": 2,
+      "source_overlap": 0.667
+    },
+    {
+      "id": "code-learner:243095d00b:28:name_blind",
+      "query": "path escapes repo lived solely in so the mcp caller met it and did not",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "codelearner.generate.pipeline.learn",
+        "codelearner.server.app._verify_span"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:243095d00b:28",
+      "commit": "243095d00b",
+      "n_relevant": 2,
+      "source_overlap": 0.667
+    },
+    {
+      "id": "code-learner:243095d00b:33:verbatim",
+      "query": "`unknown_subject` was a duplicated rule and `unverifiable_span` a bypassed one; `escaping_path` at the server is STACKED -- deleting the containment check drops the attack onto WP2's index-membership guard, and the two cannot be separated by any submission, because every path that escapes the repository is by construction a path the index did not parse.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "codelearner.eval.gate_controls.Family.rule"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:243095d00b:33",
+      "commit": "243095d00b",
+      "n_relevant": 1,
+      "source_overlap": 0.065
+    },
+    {
+      "id": "code-learner:243095d00b:33:name_blind",
+      "query": "unknown subject was a duplicated and unverifiable span a bypassed one escaping path at the server is stacked deleting the containment check drops the attack onto wp 2 s index membership guard and the two cannot be separated by any submission because every path that escapes the repository is by construction a path the index did not parse",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "codelearner.eval.gate_controls.Family.rule"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:243095d00b:33",
+      "commit": "243095d00b",
+      "n_relevant": 1,
+      "source_overlap": 0.065
+    },
+    {
+      "id": "code-learner:243095d00b:37:verbatim",
+      "query": "`differently_named()` records the seven families the doors refuse under different names, so rate agreement is not misread as the two doors having become one gate.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "codelearner.eval.gate_controls.SurfaceComparison.differently_named"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:243095d00b:37",
+      "commit": "243095d00b",
+      "n_relevant": 1,
+      "source_overlap": 0.5
+    },
+    {
+      "id": "code-learner:243095d00b:37:name_blind",
+      "query": "records the seven families the doors refuse under different names so rate agreement is not misread as the two doors having become one",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "codelearner.eval.gate_controls.SurfaceComparison.differently_named"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:243095d00b:37",
+      "commit": "243095d00b",
+      "n_relevant": 1,
+      "source_overlap": 0.5
+    },
+    {
+      "id": "code-learner:243095d00b:39:verbatim",
+      "query": "Also: removed outside_the_repo.py, a generated control fixture containing fake credentials that a careless `git add -A` swept into 72e5a0c, and gitignored it.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "codelearner.eval.gate_controls.build_corpus.add"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:243095d00b:39",
+      "commit": "243095d00b",
+      "n_relevant": 1,
+      "source_overlap": 0.133
+    },
+    {
+      "id": "code-learner:243095d00b:39:name_blind",
+      "query": "also removed outside the repo py a generated control fixture containing fake credentials that a careless git a swept into e 5 a 0 c and gitignored it",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "codelearner.eval.gate_controls.build_corpus.add"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:243095d00b:39",
+      "commit": "243095d00b",
+      "n_relevant": 1,
+      "source_overlap": 0.133
+    },
+    {
+      "id": "code-learner:72e5a0c359:0:verbatim",
+      "query": "Wave 1: make write_assertion the whole gate, and guard the reads Wave 0 missed",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "codelearner.assertions.store.write_assertion"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:72e5a0c359:0",
+      "commit": "72e5a0c359",
+      "n_relevant": 1,
+      "source_overlap": 0.444
+    },
+    {
+      "id": "code-learner:72e5a0c359:0:name_blind",
+      "query": "wave make the whole gate and guard the reads wave missed",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "codelearner.assertions.store.write_assertion"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:72e5a0c359:0",
+      "commit": "72e5a0c359",
+      "n_relevant": 1,
+      "source_overlap": 0.444
+    },
+    {
+      "id": "code-learner:72e5a0c359:1:verbatim",
+      "query": "WP4 -- the gate was three rules in three places and only one was at the chokepoint. write_assertion is documented as \"exactly one place in the project that can decide an uncited claim is inadmissible\" and enforced exactly one rule: spans is non-empty.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "codelearner.assertions.store.write_assertion"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:72e5a0c359:1",
+      "commit": "72e5a0c359",
+      "n_relevant": 1,
+      "source_overlap": 0.571
+    },
+    {
+      "id": "code-learner:72e5a0c359:1:name_blind",
+      "query": "wp 4 the gate was three rules in three places and only one was at the chokepoint is documented as exactly one place in the project that can decide an uncited claim is inadmissible and enforced exactly one rule spans is non empty",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "codelearner.assertions.store.write_assertion"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:72e5a0c359:1",
+      "commit": "72e5a0c359",
+      "n_relevant": 1,
+      "source_overlap": 0.571
+    },
+    {
+      "id": "code-learner:72e5a0c359:3:verbatim",
+      "query": "Two consequences were reproduced during the audit: an empty claim with a perfectly valid citation was admitted, stored active and served; and a zero-length span was admitted and verified forever against any file content -- span_for refuses that with exactly the right reasoning, but the guard sat in a constructor the gate did not require.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "codelearner.assertions.store.span_for"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:72e5a0c359:3",
+      "commit": "72e5a0c359",
+      "n_relevant": 1,
+      "source_overlap": 0.219
+    },
+    {
+      "id": "code-learner:72e5a0c359:3:name_blind",
+      "query": "two consequences were reproduced during the audit an empty claim with a perfectly valid citation was admitted stored active and served and a zero length was admitted and verified forever against any file content refuses that with exactly the right reasoning but the guard sat in a constructor the gate did not require",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "codelearner.assertions.store.span_for"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:72e5a0c359:3",
+      "commit": "72e5a0c359",
+      "n_relevant": 1,
+      "source_overlap": 0.219
+    },
+    {
+      "id": "code-learner:72e5a0c359:6:verbatim",
+      "query": "The root comes from a new repo_root parameter falling back to the index's stored binding, through a helper that is deliberately stricter than the read path's: it refuses a caller root that disagrees with the binding, because admission is the moment a claim is bound to this index and every later check uses the stored root -- so a claim admitted against a different tree would be re-checked tomorrow against bytes it was never compared to, surfacing as an expiry blaming an edit nobody made.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "codelearner.server.app.IndexSource.repo_root"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:72e5a0c359:6",
+      "commit": "72e5a0c359",
+      "n_relevant": 1,
+      "source_overlap": 0.195
+    },
+    {
+      "id": "code-learner:72e5a0c359:6:name_blind",
+      "query": "the comes from a new parameter falling back to the s stored binding through a helper that is deliberately stricter than the read path s it refuses a caller that disagrees with the binding because admission is the moment a claim is bound to this and every later check uses the stored so a claim admitted against a different tree would be re checked tomorrow against bytes it was never compared to surfacing as an expiry blaming an edit nobody made",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "codelearner.server.app.IndexSource.repo_root"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:72e5a0c359:6",
+      "commit": "72e5a0c359",
+      "n_relevant": 1,
+      "source_overlap": 0.195
+    },
+    {
+      "id": "code-learner:72e5a0c359:9:verbatim",
+      "query": "No family's expected refusal code changed -- but unknown_subject's mutation stopped working: it deletes the server's subject check, and write_assertion's copy then refused the same attack with the same code, so the family held at 1.0 and reported its own rule as undeletable.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "codelearner.assertions.store.write_assertion"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:72e5a0c359:9",
+      "commit": "72e5a0c359",
+      "n_relevant": 1,
+      "source_overlap": 0.364
+    },
+    {
+      "id": "code-learner:72e5a0c359:9:name_blind",
+      "query": "no family s expected refusal code changed but unknown subject s mutation stopped working it deletes the server s subject check and s copy then refused the same attack with the same code so the family held at and reported its own rule as undeletable",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "codelearner.assertions.store.write_assertion"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:72e5a0c359:9",
+      "commit": "72e5a0c359",
+      "n_relevant": 1,
+      "source_overlap": 0.364
+    },
+    {
+      "id": "code-learner:72e5a0c359:12:verbatim",
+      "query": "blank_range got a second edit by choice rather than necessity -- it still detected, but via the write gate refusing with invalid_span, which would have measured the new rule under the name of a test of span_for.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "codelearner.assertions.store.span_for"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:72e5a0c359:12",
+      "commit": "72e5a0c359",
+      "n_relevant": 1,
+      "source_overlap": 0.25
+    },
+    {
+      "id": "code-learner:72e5a0c359:12:name_blind",
+      "query": "blank range got a second edit by choice rather than necessity it still detected but via the write gate refusing with invalid which would have measured the new rule under the name of a test of",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "codelearner.assertions.store.span_for"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:72e5a0c359:12",
+      "commit": "72e5a0c359",
+      "n_relevant": 1,
+      "source_overlap": 0.25
+    },
+    {
+      "id": "code-learner:72e5a0c359:20:verbatim",
+      "query": "Left open deliberately, both recorded for later waves: the new rules gate the door and do not sweep the room, so a zero-length span admitted before this change still verifies and is still served; and pipeline.py still catches only EvidenceRequired, so the five new exceptions propagate out of its _admit.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "codelearner.assertions.store.EvidenceRequired"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:72e5a0c359:20",
+      "commit": "72e5a0c359",
+      "n_relevant": 1,
+      "source_overlap": 0.172
+    },
+    {
+      "id": "code-learner:72e5a0c359:20:name_blind",
+      "query": "left open deliberately both recorded for later waves the new rules gate the door and do not sweep the room so a zero length span admitted before this change still verifies and is still served and pipeline py still catches only so the five new exceptions propagate out of its admit",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "codelearner.assertions.store.EvidenceRequired"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:72e5a0c359:20",
+      "commit": "72e5a0c359",
+      "n_relevant": 1,
+      "source_overlap": 0.172
+    },
+    {
+      "id": "code-learner:31e6c97678:7:verbatim",
+      "query": "WP2/WP3 -- the gate's refusal was the exfiltration channel. submit_assertion refused paths escaping the repo root correctly, but inside the root it read any file, indexed or not, and echoed the bytes back as observed_text, uncapped.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "codelearner.server.app.build_server.submit_assertion"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:31e6c97678:7",
+      "commit": "31e6c97678",
+      "n_relevant": 1,
+      "source_overlap": 0.583
+    },
+    {
+      "id": "code-learner:31e6c97678:7:name_blind",
+      "query": "wp 2 wp 3 the gate s refusal was the exfiltration channel refused paths escaping the repo root correctly but inside the root it read any file indexed or not and echoed the bytes back as observed text uncapped",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "codelearner.server.app.build_server.submit_assertion"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:31e6c97678:7",
+      "commit": "31e6c97678",
+      "n_relevant": 1,
+      "source_overlap": 0.583
+    },
+    {
+      "id": "code-learner:31e6c97678:9:verbatim",
+      "query": "Reads are now restricted to files the index actually parsed, quoted text is capped, and an oversized file is refused by stat() before it is read.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "codelearner.eval.gate_controls.GateReport.stat"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:31e6c97678:9",
+      "commit": "31e6c97678",
+      "n_relevant": 1,
+      "source_overlap": 0.067
+    },
+    {
+      "id": "code-learner:31e6c97678:9:name_blind",
+      "query": "reads are now restricted to files the index actually parsed quoted text is capped and an oversized file is refused by before it is read",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "codelearner.eval.gate_controls.GateReport.stat"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:31e6c97678:9",
+      "commit": "31e6c97678",
+      "n_relevant": 1,
+      "source_overlap": 0.067
+    },
+    {
+      "id": "code-learner:31e6c97678:16:verbatim",
+      "query": "WP6 -- Outcome.held is the predicate every gate number is computed through, and the audit found three of its conjuncts deletable with the suite green.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "codelearner.eval.gate_controls.Outcome.held"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:31e6c97678:16",
+      "commit": "31e6c97678",
+      "n_relevant": 1,
+      "source_overlap": 0.133
+    },
+    {
+      "id": "code-learner:31e6c97678:16:name_blind",
+      "query": "wp 6 is the predicate every number is computed through and the audit found three of its conjuncts deletable with the suite green",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "codelearner.eval.gate_controls.Outcome.held"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:31e6c97678:16",
+      "commit": "31e6c97678",
+      "n_relevant": 1,
+      "source_overlap": 0.133
+    },
+    {
+      "id": "code-learner:93a40843b0:22:verbatim",
+      "query": "The generator's default model is not a Qwen model because the judge is one, and collides_with_judge() makes that checkable rather than remembered: a colliding model runs fine, breaks no test, and silently turns faithfulness from an audit into two relatives agreeing.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "codelearner.generate.llm.collides_with_judge"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:93a40843b0:22",
+      "commit": "93a40843b0",
+      "n_relevant": 1,
+      "source_overlap": 0.391
+    },
+    {
+      "id": "code-learner:93a40843b0:22:name_blind",
+      "query": "the generator s default model is not a qwen model because the is one and makes that checkable rather than remembered a colliding model runs fine breaks no test and silently turns faithfulness from an audit into two relatives agreeing",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "codelearner.generate.llm.collides_with_judge"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:93a40843b0:22",
+      "commit": "93a40843b0",
+      "n_relevant": 1,
+      "source_overlap": 0.391
+    },
+    {
+      "id": "code-learner:a58e4d3918:13:verbatim",
+      "query": "Two drop partially rather than to zero, correctly: removing `_symbol_bytes_at` falsely rejects only symbols whose stored bytes are not their lines' bytes.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "codelearner.server.app._symbol_bytes_at"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:a58e4d3918:13",
+      "commit": "a58e4d3918",
+      "n_relevant": 1,
+      "source_overlap": 0.4
+    },
+    {
+      "id": "code-learner:a58e4d3918:13:name_blind",
+      "query": "two drop partially rather than to zero correctly removing falsely rejects only symbols whose stored are not their lines",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "codelearner.server.app._symbol_bytes_at"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:a58e4d3918:13",
+      "commit": "a58e4d3918",
+      "n_relevant": 1,
+      "source_overlap": 0.4
+    },
+    {
+      "id": "code-learner:a58e4d3918:17:verbatim",
+      "query": "Refute-first prompt, fail-closed everywhere except an unreachable judge (which raises, because recording `uncertain` would reject every claim in the store and blame the claims).",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "codelearner.eval.faithfulness.Judge.judge",
+        "codelearner.eval.faithfulness.OllamaJudge.judge"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:a58e4d3918:17",
+      "commit": "a58e4d3918",
+      "n_relevant": 2,
+      "source_overlap": 0.389
+    },
+    {
+      "id": "code-learner:a58e4d3918:17:name_blind",
+      "query": "refute first prompt fail closed everywhere except an unreachable which raises because recording uncertain would reject every claim in the store and blame the claims",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "codelearner.eval.faithfulness.Judge.judge",
+        "codelearner.eval.faithfulness.OllamaJudge.judge"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:a58e4d3918:17",
+      "commit": "a58e4d3918",
+      "n_relevant": 2,
+      "source_overlap": 0.389
+    },
+    {
+      "id": "code-learner:a58e4d3918:23:verbatim",
+      "query": "AND status = ?` clause that makes it true lives in `_TOUCH_STATUS` at line 72, and the word `status` never appears in the cited span.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "codelearner.eval.gate_controls.Family.at"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:a58e4d3918:23",
+      "commit": "a58e4d3918",
+      "n_relevant": 1,
+      "source_overlap": 0.0
+    },
+    {
+      "id": "code-learner:a58e4d3918:23:name_blind",
+      "query": "and status clause that makes it true lives in touch status line and the word status never appears in the cited span",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "codelearner.eval.gate_controls.Family.at"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:a58e4d3918:23",
+      "commit": "a58e4d3918",
+      "n_relevant": 1,
+      "source_overlap": 0.0
+    },
+    {
+      "id": "code-learner:a58e4d3918:26:verbatim",
+      "query": "Also found by running it rather than testing it: qwen emitted unescaped `\"` inside its own JSON when quoting code containing quotes, so the verdict was lost and failed closed to `uncertain` -- correct behaviour, wrong diagnosis, and systematically biased against claims about code containing quotes.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "codelearner.eval.faithfulness.Judgement.verdict"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:a58e4d3918:26",
+      "commit": "a58e4d3918",
+      "n_relevant": 1,
+      "source_overlap": 0.037
+    },
+    {
+      "id": "code-learner:a58e4d3918:26:name_blind",
+      "query": "also found by running it rather than testing it qwen emitted unescaped inside its own json when quoting code containing quotes so the was lost and failed closed to uncertain correct behaviour wrong diagnosis and systematically biased against claims about code containing quotes",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "codelearner.eval.faithfulness.Judgement.verdict"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:a58e4d3918:26",
+      "commit": "a58e4d3918",
+      "n_relevant": 1,
+      "source_overlap": 0.037
+    },
+    {
+      "id": "code-learner:a58e4d3918:41:verbatim",
+      "query": "`assert_view_is_source_only` unwired from `score_purposes` broke nothing, because in normal operation every view is legitimate -- an unwired guard reading as a working one; a test now forges a view at the seam",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "codelearner.eval.gold_from_history.assert_view_is_source_only",
+        "codelearner.eval.gold_from_history.score_purposes"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:a58e4d3918:41",
+      "commit": "a58e4d3918",
+      "n_relevant": 2,
+      "source_overlap": 0.444
+    },
+    {
+      "id": "code-learner:a58e4d3918:41:name_blind",
+      "query": "unwired broke nothing because in normal operation every legitimate an unwired guard reading as a working one a test now forges a at the seam",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "codelearner.eval.gold_from_history.assert_view_is_source_only",
+        "codelearner.eval.gold_from_history.score_purposes"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:a58e4d3918:41",
+      "commit": "a58e4d3918",
+      "n_relevant": 2,
+      "source_overlap": 0.444
+    },
+    {
+      "id": "code-learner:dccc2ebdfb:0:verbatim",
+      "query": "Fix: connect() opened a schema-mismatched index silently",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "codelearner.db.connect"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:dccc2ebdfb:0",
+      "commit": "dccc2ebdfb",
+      "n_relevant": 1,
+      "source_overlap": 0.571
+    },
+    {
+      "id": "code-learner:dccc2ebdfb:0:name_blind",
+      "query": "fix opened a schema mismatched index silently",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "codelearner.db.connect"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:dccc2ebdfb:0",
+      "commit": "dccc2ebdfb",
+      "n_relevant": 1,
+      "source_overlap": 0.571
+    },
+    {
+      "id": "code-learner:dccc2ebdfb:8:verbatim",
+      "query": "`connect(path)` now validates by default and raises `SchemaVersionError`, closing the connection first so a refused open leaks nothing.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "codelearner.db.SchemaVersionError",
+        "codelearner.db.connect"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:dccc2ebdfb:8",
+      "commit": "dccc2ebdfb",
+      "n_relevant": 2,
+      "source_overlap": 0.6
+    },
+    {
+      "id": "code-learner:dccc2ebdfb:8:name_blind",
+      "query": "path now validates by default and raises closing the connection first so a refused open leaks nothing",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "codelearner.db.SchemaVersionError",
+        "codelearner.db.connect"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:dccc2ebdfb:8",
+      "commit": "dccc2ebdfb",
+      "n_relevant": 2,
+      "source_overlap": 0.6
+    },
+    {
+      "id": "code-learner:dccc2ebdfb:9:verbatim",
+      "query": "A file with no application tables is fresh rather than stale and passes through, which is what `init_db` is about to fill.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "codelearner.db.init_db"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:dccc2ebdfb:9",
+      "commit": "dccc2ebdfb",
+      "n_relevant": 1,
+      "source_overlap": 0.583
+    },
+    {
+      "id": "code-learner:dccc2ebdfb:9:name_blind",
+      "query": "a file with no application tables is fresh rather than stale and passes through which is what is about to fill",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "codelearner.db.init_db"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:dccc2ebdfb:9",
+      "commit": "dccc2ebdfb",
+      "n_relevant": 1,
+      "source_overlap": 0.583
+    },
+    {
+      "id": "code-learner:748e3cbe1f:17:verbatim",
+      "query": "STALENESS ENGINE (codelearner/assertions/stale.py, schema v5) Two-stage check: stat() on mtime+size, falling through to a full re-hash.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "codelearner.assertions.stale._Pass.stat"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:748e3cbe1f:17",
+      "commit": "748e3cbe1f",
+      "n_relevant": 1,
+      "source_overlap": 0.056
+    },
+    {
+      "id": "code-learner:748e3cbe1f:17:name_blind",
+      "query": "staleness engine py schema v 5 two stage check on mtime size falling through to a full re hash",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "codelearner.assertions.stale._Pass.stat"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:748e3cbe1f:17",
+      "commit": "748e3cbe1f",
+      "n_relevant": 1,
+      "source_overlap": 0.056
+    },
+    {
+      "id": "code-learner:748e3cbe1f:22:verbatim",
+      "query": "The inversion: this tool never calls a model; an agent calls it and supplies inference through submit_assertion, where a deterministic gate validates it.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "codelearner.server.app.build_server.submit_assertion"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:748e3cbe1f:22",
+      "commit": "748e3cbe1f",
+      "n_relevant": 1,
+      "source_overlap": 0.429
+    },
+    {
+      "id": "code-learner:748e3cbe1f:22:name_blind",
+      "query": "the inversion this tool never calls a model an agent calls it and supplies inference through where a deterministic gate validates it",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "codelearner.server.app.build_server.submit_assertion"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:748e3cbe1f:22",
+      "commit": "748e3cbe1f",
+      "n_relevant": 1,
+      "source_overlap": 0.429
+    },
+    {
+      "id": "code-learner:d19fb4a7d9:3:verbatim",
+      "query": "ASSERTION STORE (codelearner/assertions/) -- schema v4 Tier-2 storage that enforces the four accountability properties. write_assertion raises before opening a transaction, so a refused claim leaves no row.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "codelearner.assertions.store.write_assertion"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:d19fb4a7d9:3",
+      "commit": "d19fb4a7d9",
+      "n_relevant": 1,
+      "source_overlap": 0.55
+    },
+    {
+      "id": "code-learner:d19fb4a7d9:3:name_blind",
+      "query": "schema v 4 tier storage that enforces the four accountability properties raises before opening a transaction so a refused claim leaves no row",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "codelearner.assertions.store.write_assertion"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:d19fb4a7d9:3",
+      "commit": "d19fb4a7d9",
+      "n_relevant": 1,
+      "source_overlap": 0.55
+    },
+    {
+      "id": "code-learner:d19fb4a7d9:13:verbatim",
+      "query": "CLI (codelearner/cli/) index / search / stats. main(argv, embedder_factory) takes both as parameters rather than reading sys.argv and constructing a model -- the seam that keeps tests off the GPU.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "codelearner.cli.main.main"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:d19fb4a7d9:13",
+      "commit": "d19fb4a7d9",
+      "n_relevant": 1,
+      "source_overlap": 0.381
+    },
+    {
+      "id": "code-learner:d19fb4a7d9:13:name_blind",
+      "query": "index search stats argv embedder factory takes both as parameters rather than reading sys argv and constructing a model the seam that keeps tests off the gpu",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "codelearner.cli.main.main"
+      ],
+      "repo": "code-learner",
+      "pair_id": "code-learner:d19fb4a7d9:13",
+      "commit": "d19fb4a7d9",
+      "n_relevant": 1,
+      "source_overlap": 0.381
+    }
+  ]
+}

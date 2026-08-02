@@ -1,0 +1,2734 @@
+{
+  "repo": "kalshi-bot",
+  "source": "mined",
+  "generated_by": "codelearner.eval.mined_gold.mine_queries",
+  "mined_at_head": "8a2e9b5315ecbe5052dfd79bd5d73d2c364e2096",
+  "commit_note": "MINED from commit prose, not hand-labelled: 86 queries from 105 candidate sentences across 43 of 98 commits, emitted as 172 rows (verbatim + name-blind per query). Snapshot at 8a2e9b5315 -- a mined set is a function of history and moves with the next commit; regenerate rather than trusting this file.",
+  "labelling_rule": "Relevant = every symbol named AS CODE by one sentence of a commit message, where that commit also changed the file the symbol lives in. 'As code' is gold_from_history.mentions_symbol: either the identifier is distinctive enough that a bare occurrence cannot be English, or it appears in backticks, called, attribute-accessed, or assigned. The sentence, unmodified, is the query. Excluded: commits with boilerplate subjects, merge commits, sentences under 5 words, code snippets, sentences naming more than 5 symbols, sentences leaving fewer than 3 content tokens once their targets' name tokens are removed, sentences found verbatim (32-char run) in any selected symbol's source, exact duplicates, and any query naming a qualname the index does not hold. NOT excluded: high token overlap with the target's source -- it is measured per query and reported, because the hand-labelled set's own overlap is a median 0.71 and a threshold would reject it too. Every query is emitted twice, verbatim and name-blinded, as separate rows sharing a pair_id -- except where two queries blind to the same text with different relevant sets, where the blind row is dropped as ambiguous and the verbatim row is left unpaired. The two rows of a pair are the same item and must be clustered, not counted twice.",
+  "funnel": {
+    "commits_in_history": 98,
+    "commits_contributing": 43,
+    "commits_skipped": {
+      "boilerplate_subject": 1,
+      "empty_prose": 14,
+      "no_live_python_files": 16
+    },
+    "candidates_considered": 105,
+    "rejected": {
+      "code_like": 1,
+      "copied_into_sibling": 4,
+      "copied_into_source": 3,
+      "name_only": 2,
+      "too_short": 9
+    },
+    "usable_queries": 86,
+    "usable_fraction": 0.819,
+    "distinct_target_symbols": 81,
+    "relevant_set_sizes": {
+      "1": 68,
+      "2": 11,
+      "3": 5,
+      "4": 2
+    },
+    "multi_relevant": 18,
+    "largest_commit_cluster": 8,
+    "blind_rows_dropped": 0,
+    "rows_emitted": 172
+  },
+  "source_overlap": {
+    "definition": "|content tokens of query & content tokens of relevant symbols' source| / |content tokens of query|. Reported, never filtered on.",
+    "mined": {
+      "n": 86,
+      "min": 0.091,
+      "p25": 0.5,
+      "median": 0.643,
+      "p75": 0.833,
+      "max": 1.0,
+      "mean": 0.624,
+      "deciles": {
+        "0-10%": 1,
+        "10-20%": 2,
+        "20-30%": 7,
+        "30-40%": 6,
+        "40-50%": 5,
+        "50-60%": 16,
+        "60-70%": 15,
+        "70-80%": 8,
+        "80-90%": 18,
+        "90-100%": 8
+      }
+    },
+    "hand_labelled_reference": {
+      "gold": "swarm_sync.json (16 hand-written queries)",
+      "min": 0.0,
+      "median": 0.71,
+      "mean": 0.61,
+      "max": 1.0,
+      "at_1.0": 2
+    }
+  },
+  "bias": {
+    "note": "The mention rule selects symbols a commit message happened to name. This set inherits that bias in full; it is measured here, not corrected. 'over_representation' is the selected share of a kind divided by its population share -- 1.0 is neutral, above 1.0 is over-represented.",
+    "population": {
+      "n": 2471,
+      "documented": 0.7883447996762445,
+      "private": 0.3342776203966006,
+      "kinds": {
+        "class": 0.12666936462970457,
+        "function": 0.38526912181303113,
+        "method": 0.4880615135572643
+      }
+    },
+    "selected": {
+      "n": 81,
+      "documented": 0.9506172839506173,
+      "private": 0.24691358024691357,
+      "kinds": {
+        "class": 0.2345679012345679,
+        "function": 0.32098765432098764,
+        "method": 0.4444444444444444
+      }
+    },
+    "over_representation": {
+      "class": 1.852,
+      "function": 0.833,
+      "method": 0.911
+    }
+  },
+  "queries": [
+    {
+      "id": "kalshi-bot:8a2e9b5315:3:verbatim",
+      "query": "src/watcher/: BarFeed (yfinance 15m, ~15min delayed, RTH-filtered), explicit RSI/SMA/ATR, and the modular core: SetupDetector ABC + SetupAlert dataclass + @register_setup registry, so a new setup is one subclass + one decorator + a config block.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.watcher.bars.BarFeed",
+        "src.watcher.detector.SetupAlert",
+        "src.watcher.detector.SetupDetector",
+        "src.watcher.detector.register_setup"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:8a2e9b5315:3",
+      "commit": "8a2e9b5315",
+      "n_relevant": 4,
+      "source_overlap": 0.615
+    },
+    {
+      "id": "kalshi-bot:8a2e9b5315:3:name_blind",
+      "query": "yfinance m min delayed rth filtered explicit rsi sma atr and the modular core abc dataclass registry so a new is one subclass one decorator a config block",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.watcher.bars.BarFeed",
+        "src.watcher.detector.SetupAlert",
+        "src.watcher.detector.SetupDetector",
+        "src.watcher.detector.register_setup"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:8a2e9b5315:3",
+      "commit": "8a2e9b5315",
+      "n_relevant": 4,
+      "source_overlap": 0.615
+    },
+    {
+      "id": "kalshi-bot:8a2e9b5315:4:verbatim",
+      "query": "MarketContext caches bars/indicators across detectors.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.watcher.detector.MarketContext"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:8a2e9b5315:4",
+      "commit": "8a2e9b5315",
+      "n_relevant": 1,
+      "source_overlap": 0.857
+    },
+    {
+      "id": "kalshi-bot:8a2e9b5315:4:name_blind",
+      "query": "caches bars indicators across detectors",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.watcher.detector.MarketContext"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:8a2e9b5315:4",
+      "commit": "8a2e9b5315",
+      "n_relevant": 1,
+      "source_overlap": 0.857
+    },
+    {
+      "id": "kalshi-bot:8a2e9b5315:10:verbatim",
+      "query": "This is the modular layer's first real second use case -- the SetupDetector registry is the plug-in contract the owner's real setups drop into.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.watcher.detector.SetupDetector"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:8a2e9b5315:10",
+      "commit": "8a2e9b5315",
+      "n_relevant": 1,
+      "source_overlap": 0.214
+    },
+    {
+      "id": "kalshi-bot:8a2e9b5315:10:name_blind",
+      "query": "this is the modular layer s first real second use case the registry is the plug in contract the owner s real setups drop into",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.watcher.detector.SetupDetector"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:8a2e9b5315:10",
+      "commit": "8a2e9b5315",
+      "n_relevant": 1,
+      "source_overlap": 0.214
+    },
+    {
+      "id": "kalshi-bot:d9443208e9:8:verbatim",
+      "query": "Lone flicker: CycleFinder long on GSPC (80% win, n=330) -- worth an isolated walk-forward, not a green light.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.strategies.wavetech_suite.CycleFinder"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:d9443208e9:8",
+      "commit": "d9443208e9",
+      "n_relevant": 1,
+      "source_overlap": 0.231
+    },
+    {
+      "id": "kalshi-bot:d9443208e9:8:name_blind",
+      "query": "lone flicker long on gspc win n worth an isolated walk forward not a green light",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.strategies.wavetech_suite.CycleFinder"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:d9443208e9:8",
+      "commit": "d9443208e9",
+      "n_relevant": 1,
+      "source_overlap": 0.231
+    },
+    {
+      "id": "kalshi-bot:90c7e589e2:3:verbatim",
+      "query": "Cron-installed (09:55 daily, flock). analyze.py scores hypothetical taker fills at stale quotes (with fees) against settlement; verdict gated on >=100 trigger events.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.latency_probe.analyze.analyze"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:90c7e589e2:3",
+      "commit": "90c7e589e2",
+      "n_relevant": 1,
+      "source_overlap": 0.316
+    },
+    {
+      "id": "kalshi-bot:90c7e589e2:3:name_blind",
+      "query": "cron installed daily flock py scores hypothetical taker fills at stale quotes with fees against settlement verdict gated on trigger events",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.latency_probe.analyze.analyze"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:90c7e589e2:3",
+      "commit": "90c7e589e2",
+      "n_relevant": 1,
+      "source_overlap": 0.316
+    },
+    {
+      "id": "kalshi-bot:ef4f00db7d:1:verbatim",
+      "query": "Phase 3 (part 2) -- the intraday scanner's ad-hoc gates are now a first-class trading_lanes.intraday_lane block in trading_rules.json (v1.6.0), validated by TradingRulesEngine.validate_entry on every opportunity; engine rejections logged to the signals JSONL with the engine's reject reason.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.trading.rules_engine.TradingRulesEngine",
+        "src.trading.rules_engine.TradingRulesEngine.validate_entry"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:ef4f00db7d:1",
+      "commit": "ef4f00db7d",
+      "n_relevant": 2,
+      "source_overlap": 0.885
+    },
+    {
+      "id": "kalshi-bot:ef4f00db7d:1:name_blind",
+      "query": "phase part the intraday scanner s ad hoc gates are now a first class lanes intraday lane block in json v 1 validated by on every opportunity rejections logged to the signals jsonl with the s reject reason",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.trading.rules_engine.TradingRulesEngine",
+        "src.trading.rules_engine.TradingRulesEngine.validate_entry"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:ef4f00db7d:1",
+      "commit": "ef4f00db7d",
+      "n_relevant": 2,
+      "source_overlap": 0.885
+    },
+    {
+      "id": "kalshi-bot:72b8c62f03:6:verbatim",
+      "query": "Live-verified: BOS daily_low 63.0F vs current 87.1F.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.weather.metar_signals.DailyTracker.daily_low"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:72b8c62f03:6",
+      "commit": "72b8c62f03",
+      "n_relevant": 1,
+      "source_overlap": 0.286
+    },
+    {
+      "id": "kalshi-bot:72b8c62f03:6:name_blind",
+      "query": "live verified bos f vs current f",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.weather.metar_signals.DailyTracker.daily_low"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:72b8c62f03:6",
+      "commit": "72b8c62f03",
+      "n_relevant": 1,
+      "source_overlap": 0.286
+    },
+    {
+      "id": "kalshi-bot:4b11ae74e6:6:verbatim",
+      "query": "HRRR fetch fixed: retry_request was called with \"GET\" string instead of a callable, so 100% of HRRR fetches failed silently for weeks (hrrr_agrees always false). retry utils now raise actionable TypeErrors on misuse.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.utils.retry.retry_request"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:4b11ae74e6:6",
+      "commit": "4b11ae74e6",
+      "n_relevant": 1,
+      "source_overlap": 0.348
+    },
+    {
+      "id": "kalshi-bot:4b11ae74e6:6:name_blind",
+      "query": "hrrr fetch fixed was called with get string instead of a callable so of hrrr fetches failed silently for weeks hrrr agrees always false now raise actionable type errors on misuse",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.utils.retry.retry_request"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:4b11ae74e6:6",
+      "commit": "4b11ae74e6",
+      "n_relevant": 1,
+      "source_overlap": 0.348
+    },
+    {
+      "id": "kalshi-bot:f006627729:10:verbatim",
+      "query": "Intraday signals currently bypass TradingRulesEngine.validate_entry() because the precision_edge lane requires an EdgeReport that intraday does not produce.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.trading.rules_engine.TradingRulesEngine",
+        "src.trading.rules_engine.TradingRulesEngine.validate_entry"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:f006627729:10",
+      "commit": "f006627729",
+      "n_relevant": 2,
+      "source_overlap": 0.812
+    },
+    {
+      "id": "kalshi-bot:f006627729:10:name_blind",
+      "query": "intraday signals currently bypass because the precision edge lane requires an edge report that intraday does not produce",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.trading.rules_engine.TradingRulesEngine",
+        "src.trading.rules_engine.TradingRulesEngine.validate_entry"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:f006627729:10",
+      "commit": "f006627729",
+      "n_relevant": 2,
+      "source_overlap": 0.812
+    },
+    {
+      "id": "kalshi-bot:f006627729:17:verbatim",
+      "query": "get_intraday_params() added to TradingRulesEngine to surface the new intraday config block.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.trading.rules_engine.TradingRulesEngine",
+        "src.trading.rules_engine.TradingRulesEngine.get_intraday_params"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:f006627729:17",
+      "commit": "f006627729",
+      "n_relevant": 2,
+      "source_overlap": 0.8
+    },
+    {
+      "id": "kalshi-bot:f006627729:17:name_blind",
+      "query": "added to to surface the new config block",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.trading.rules_engine.TradingRulesEngine",
+        "src.trading.rules_engine.TradingRulesEngine.get_intraday_params"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:f006627729:17",
+      "commit": "f006627729",
+      "n_relevant": 2,
+      "source_overlap": 0.8
+    },
+    {
+      "id": "kalshi-bot:6fe967c445:8:verbatim",
+      "query": "is_excluded_setup() called in both run() and _run_on_dates() loops",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "scripts.final_integrated_backtest_2026_03_29.run",
+        "src.backtest.engine.BacktestEngine._run_on_dates",
+        "src.backtest.engine.BacktestEngine.run"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:6fe967c445:8",
+      "commit": "6fe967c445",
+      "n_relevant": 3,
+      "source_overlap": 0.667
+    },
+    {
+      "id": "kalshi-bot:6fe967c445:8:name_blind",
+      "query": "is excluded setup called in both and loops",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "scripts.final_integrated_backtest_2026_03_29.run",
+        "src.backtest.engine.BacktestEngine._run_on_dates",
+        "src.backtest.engine.BacktestEngine.run"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:6fe967c445:8",
+      "commit": "6fe967c445",
+      "n_relevant": 3,
+      "source_overlap": 0.667
+    },
+    {
+      "id": "kalshi-bot:6fe967c445:22:verbatim",
+      "query": "Applies to both run() and _run_on_dates() loops with max_bet_cents cap",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "scripts.final_integrated_backtest_2026_03_29.run",
+        "src.backtest.engine.BacktestEngine._run_on_dates",
+        "src.backtest.engine.BacktestEngine.run"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:6fe967c445:22",
+      "commit": "6fe967c445",
+      "n_relevant": 3,
+      "source_overlap": 0.75
+    },
+    {
+      "id": "kalshi-bot:6fe967c445:22:name_blind",
+      "query": "applies to both and loops with max bet cents cap",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "scripts.final_integrated_backtest_2026_03_29.run",
+        "src.backtest.engine.BacktestEngine._run_on_dates",
+        "src.backtest.engine.BacktestEngine.run"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:6fe967c445:22",
+      "commit": "6fe967c445",
+      "n_relevant": 3,
+      "source_overlap": 0.75
+    },
+    {
+      "id": "kalshi-bot:245140f691:9:verbatim",
+      "query": "weather_strategy.py: Added EXCLUDED_CITIES, EXCLUDED_CITY_MARKET_TYPES, EXCLUDED_CITY_SIDES, MIN_EDGE_BY_SIDE constants + is_excluded_setup()",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.strategies.weather_strategy.is_excluded_setup"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:245140f691:9",
+      "commit": "245140f691",
+      "n_relevant": 1,
+      "source_overlap": 0.6
+    },
+    {
+      "id": "kalshi-bot:245140f691:9:name_blind",
+      "query": "py added cities city market types city sides min edge by side constants",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.strategies.weather_strategy.is_excluded_setup"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:245140f691:9",
+      "commit": "245140f691",
+      "n_relevant": 1,
+      "source_overlap": 0.6
+    },
+    {
+      "id": "kalshi-bot:245140f691:10:verbatim",
+      "query": "weather_strategy.py: analyze_market() now gates on exclusion filter and per-side minimum edge (NO floor raised to 12%)",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.strategies.weather_strategy.WeatherStrategy.analyze_market"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:245140f691:10",
+      "commit": "245140f691",
+      "n_relevant": 1,
+      "source_overlap": 0.643
+    },
+    {
+      "id": "kalshi-bot:245140f691:10:name_blind",
+      "query": "py now gates on exclusion filter and per side minimum edge no floor raised to",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.strategies.weather_strategy.WeatherStrategy.analyze_market"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:245140f691:10",
+      "commit": "245140f691",
+      "n_relevant": 1,
+      "source_overlap": 0.643
+    },
+    {
+      "id": "kalshi-bot:2425284351:3:verbatim",
+      "query": "Runs Black-Scholes model for each market (SPX IV from yfinance, crypto vol from Deribit)",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "main.market"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:2425284351:3",
+      "commit": "2425284351",
+      "n_relevant": 1,
+      "source_overlap": 0.091
+    },
+    {
+      "id": "kalshi-bot:2425284351:3:name_blind",
+      "query": "runs black scholes model for each spx iv from yfinance crypto vol from deribit",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "main.market"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:2425284351:3",
+      "commit": "2425284351",
+      "n_relevant": 1,
+      "source_overlap": 0.091
+    },
+    {
+      "id": "kalshi-bot:2425284351:19:verbatim",
+      "query": "FinancialSettler ticker parsing (series, threshold, direction, expiry)",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.trading.financial_settler.FinancialSettler"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:2425284351:19",
+      "commit": "2425284351",
+      "n_relevant": 1,
+      "source_overlap": 0.875
+    },
+    {
+      "id": "kalshi-bot:2425284351:19:name_blind",
+      "query": "ticker parsing series threshold direction expiry",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.trading.financial_settler.FinancialSettler"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:2425284351:19",
+      "commit": "2425284351",
+      "n_relevant": 1,
+      "source_overlap": 0.875
+    },
+    {
+      "id": "kalshi-bot:25e1dc2649:1:verbatim",
+      "query": "engine.py: remove city-specific baseline_f from _strategy_probability() so the engine delegation path matches the direct calculate_probability() call without explicit baseline \u2014 fixes failing delegation test",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "scripts.backtest_fixed_strategy.calculate_probability",
+        "src.backtest.engine.BacktestEngine._strategy_probability",
+        "src.strategies.weather_strategy.calculate_probability"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:25e1dc2649:1",
+      "commit": "25e1dc2649",
+      "n_relevant": 3,
+      "source_overlap": 0.368
+    },
+    {
+      "id": "kalshi-bot:25e1dc2649:1:name_blind",
+      "query": "py remove city specific baseline f from so the delegation path matches the direct call without explicit baseline fixes failing delegation test",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "scripts.backtest_fixed_strategy.calculate_probability",
+        "src.backtest.engine.BacktestEngine._strategy_probability",
+        "src.strategies.weather_strategy.calculate_probability"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:25e1dc2649:1",
+      "commit": "25e1dc2649",
+      "n_relevant": 3,
+      "source_overlap": 0.368
+    },
+    {
+      "id": "kalshi-bot:8a20ca96c1:2:verbatim",
+      "query": "auto_trader.log_settlement() lacked idempotency \u2014 calling it twice for the same tca_id would emit a duplicate circuit-breaker settlement_win event.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.trading.auto_trader.AutoTrader.log_settlement"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:8a20ca96c1:2",
+      "commit": "8a20ca96c1",
+      "n_relevant": 1,
+      "source_overlap": 0.562
+    },
+    {
+      "id": "kalshi-bot:8a20ca96c1:2:name_blind",
+      "query": "lacked idempotency calling it twice for the same tca id would emit a duplicate circuit breaker win event",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.trading.auto_trader.AutoTrader.log_settlement"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:8a20ca96c1:2",
+      "commit": "8a20ca96c1",
+      "n_relevant": 1,
+      "source_overlap": 0.562
+    },
+    {
+      "id": "kalshi-bot:8a20ca96c1:5:verbatim",
+      "query": "Fix: added early-return guard at top of log_settlement() \u2014 fetches the TCA record and returns immediately if record.settled is True.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.trading.auto_trader.AutoTrader.log_settlement"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:8a20ca96c1:5",
+      "commit": "8a20ca96c1",
+      "n_relevant": 1,
+      "source_overlap": 0.667
+    },
+    {
+      "id": "kalshi-bot:8a20ca96c1:5:name_blind",
+      "query": "fix added early return guard at top of fetches the tca record and returns immediately if record settled is true",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.trading.auto_trader.AutoTrader.log_settlement"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:8a20ca96c1:5",
+      "commit": "8a20ca96c1",
+      "n_relevant": 1,
+      "source_overlap": 0.667
+    },
+    {
+      "id": "kalshi-bot:460e7ac493:1:verbatim",
+      "query": "Confirmed auto_trader.py has BOTH safety interlocks (dry_run=True default, KALSHI_DRY_RUN env var gate, CB HALT/BLACK live-mode refusal) AND TCA rejection logging (_log_tca_rejection at every guard point).",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.trading.auto_trader.AutoTrader._log_tca_rejection"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:460e7ac493:1",
+      "commit": "460e7ac493",
+      "n_relevant": 1,
+      "source_overlap": 0.154
+    },
+    {
+      "id": "kalshi-bot:460e7ac493:1:name_blind",
+      "query": "confirmed py has both safety interlocks dry run true default kalshi dry run env var gate cb halt black live mode refusal and logging at every guard point",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.trading.auto_trader.AutoTrader._log_tca_rejection"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:460e7ac493:1",
+      "commit": "460e7ac493",
+      "n_relevant": 1,
+      "source_overlap": 0.154
+    },
+    {
+      "id": "kalshi-bot:460e7ac493:2:verbatim",
+      "query": "Confirmed scanner_pipeline.py has BOTH env var dry_run (KALSHI_DRY_RUN) AND verbose flag + _log_decision scan logging.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.trading.scanner_pipeline._log_decision"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:460e7ac493:2",
+      "commit": "460e7ac493",
+      "n_relevant": 1,
+      "source_overlap": 0.267
+    },
+    {
+      "id": "kalshi-bot:460e7ac493:2:name_blind",
+      "query": "confirmed py has both env var dry run kalshi dry run and verbose flag scan logging",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.trading.scanner_pipeline._log_decision"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:460e7ac493:2",
+      "commit": "460e7ac493",
+      "n_relevant": 1,
+      "source_overlap": 0.267
+    },
+    {
+      "id": "kalshi-bot:460e7ac493:3:verbatim",
+      "query": "Confirmed circuit_breaker.py has notification hooks (_send_alert for CAUTION/HALT/BLACK, notify_circuit_breaker_change on state transitions).",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.risk.circuit_breaker.CircuitBreaker._send_alert",
+        "src.trading.auto_trader.AutoTrader.circuit_breaker"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:460e7ac493:3",
+      "commit": "460e7ac493",
+      "n_relevant": 2,
+      "source_overlap": 0.533
+    },
+    {
+      "id": "kalshi-bot:460e7ac493:3:name_blind",
+      "query": "confirmed py has notification hooks for caution halt black notify change on state transitions",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.risk.circuit_breaker.CircuitBreaker._send_alert",
+        "src.trading.auto_trader.AutoTrader.circuit_breaker"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:460e7ac493:3",
+      "commit": "460e7ac493",
+      "n_relevant": 2,
+      "source_overlap": 0.533
+    },
+    {
+      "id": "kalshi-bot:460e7ac493:5:verbatim",
+      "query": "Fixed pre-existing test pollution in test_financial_pipeline.py: _make_trader now injects an isolated NORMAL-state CircuitBreaker so tests are not blocked by the real account's BLACK CB state.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.risk.circuit_breaker.CircuitBreaker"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:460e7ac493:5",
+      "commit": "460e7ac493",
+      "n_relevant": 1,
+      "source_overlap": 0.364
+    },
+    {
+      "id": "kalshi-bot:460e7ac493:5:name_blind",
+      "query": "fixed pre existing test pollution in test financial pipeline py make trader now injects an isolated normal state so tests are not blocked by the real account s black cb state",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.risk.circuit_breaker.CircuitBreaker"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:460e7ac493:5",
+      "commit": "460e7ac493",
+      "n_relevant": 1,
+      "source_overlap": 0.364
+    },
+    {
+      "id": "kalshi-bot:460e7ac493:9:verbatim",
+      "query": "Safety interlock verified: AutoTrader() defaults to dry_run=True.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.trading.auto_trader.AutoTrader"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:460e7ac493:9",
+      "commit": "460e7ac493",
+      "n_relevant": 1,
+      "source_overlap": 0.889
+    },
+    {
+      "id": "kalshi-bot:460e7ac493:9:name_blind",
+      "query": "safety interlock verified defaults to dry run true",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.trading.auto_trader.AutoTrader"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:460e7ac493:9",
+      "commit": "460e7ac493",
+      "n_relevant": 1,
+      "source_overlap": 0.889
+    },
+    {
+      "id": "kalshi-bot:0b84cdb748:4:verbatim",
+      "query": "paper_trader.fetch_weather_markets() only tried KXHIGHT/KXLOWT prefixes, missing all KXHIGH/KXLOW (no-T) series.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.paper_trading.paper_trader.PaperTrader.fetch_weather_markets"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:0b84cdb748:4",
+      "commit": "0b84cdb748",
+      "n_relevant": 1,
+      "source_overlap": 0.571
+    },
+    {
+      "id": "kalshi-bot:0b84cdb748:4:name_blind",
+      "query": "only tried kxhight kxlowt prefixes missing all kxhigh kxlow no t series",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.paper_trading.paper_trader.PaperTrader.fetch_weather_markets"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:0b84cdb748:4",
+      "commit": "0b84cdb748",
+      "n_relevant": 1,
+      "source_overlap": 0.571
+    },
+    {
+      "id": "kalshi-bot:0b84cdb748:6:verbatim",
+      "query": "scanner_pipeline._evaluate_market() used is_high=ticker.startswith('KXHIGHT') which misclassified no-T high-temp tickers as low-temp, using wrong forecast data.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.trading.scanner_pipeline._evaluate_market"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:0b84cdb748:6",
+      "commit": "0b84cdb748",
+      "n_relevant": 1,
+      "source_overlap": 0.667
+    },
+    {
+      "id": "kalshi-bot:0b84cdb748:6:name_blind",
+      "query": "used is high ticker startswith kxhight which misclassified no t high temp tickers as low temp using wrong forecast data",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.trading.scanner_pipeline._evaluate_market"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:0b84cdb748:6",
+      "commit": "0b84cdb748",
+      "n_relevant": 1,
+      "source_overlap": 0.667
+    },
+    {
+      "id": "kalshi-bot:1a76c1be8f:2:verbatim",
+      "query": "scan() \u2014 paginate all open markets, filter to NO-side candidates",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.strategies.safe_compounder.SafeCompounder.scan"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:1a76c1be8f:2",
+      "commit": "1a76c1be8f",
+      "n_relevant": 1,
+      "source_overlap": 0.625
+    },
+    {
+      "id": "kalshi-bot:1a76c1be8f:2:name_blind",
+      "query": "paginate all open markets filter to no side candidates",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.strategies.safe_compounder.SafeCompounder.scan"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:1a76c1be8f:2",
+      "commit": "1a76c1be8f",
+      "n_relevant": 1,
+      "source_overlap": 0.625
+    },
+    {
+      "id": "kalshi-bot:1a76c1be8f:3:verbatim",
+      "query": "execute(dry_run=True) \u2014 place maker orders (DRY RUN BY DEFAULT)",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.strategies.safe_compounder.SafeCompounder.execute"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:1a76c1be8f:3",
+      "commit": "1a76c1be8f",
+      "n_relevant": 1,
+      "source_overlap": 1.0
+    },
+    {
+      "id": "kalshi-bot:1a76c1be8f:3:name_blind",
+      "query": "dry run true place maker orders dry run by default",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.strategies.safe_compounder.SafeCompounder.execute"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:1a76c1be8f:3",
+      "commit": "1a76c1be8f",
+      "n_relevant": 1,
+      "source_overlap": 1.0
+    },
+    {
+      "id": "kalshi-bot:1a76c1be8f:4:verbatim",
+      "query": "check_fills() \u2014 monitor resting orders and recent NO fills",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.strategies.safe_compounder.SafeCompounder.check_fills"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:1a76c1be8f:4",
+      "commit": "1a76c1be8f",
+      "n_relevant": 1,
+      "source_overlap": 0.833
+    },
+    {
+      "id": "kalshi-bot:1a76c1be8f:4:name_blind",
+      "query": "monitor resting orders and recent no",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.strategies.safe_compounder.SafeCompounder.check_fills"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:1a76c1be8f:4",
+      "commit": "1a76c1be8f",
+      "n_relevant": 1,
+      "source_overlap": 0.833
+    },
+    {
+      "id": "kalshi-bot:4930d6cc76:2:verbatim",
+      "query": "live_scores.py: add NCAA_SCOREBOARD_URL + get_ncaa_live_games() method with tournament filtering; _calc_minutes_remaining now supports college basketball (40-min, 2-half format) via college= flag",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.sports.live_scores.ESPNLiveScores.get_ncaa_live_games",
+        "src.sports.live_scores._calc_minutes_remaining"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:4930d6cc76:2",
+      "commit": "4930d6cc76",
+      "n_relevant": 2,
+      "source_overlap": 0.609
+    },
+    {
+      "id": "kalshi-bot:4930d6cc76:2:name_blind",
+      "query": "py add scoreboard url method with tournament filtering now supports college basketball min half format via college flag",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.sports.live_scores.ESPNLiveScores.get_ncaa_live_games",
+        "src.sports.live_scores._calc_minutes_remaining"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:4930d6cc76:2",
+      "commit": "4930d6cc76",
+      "n_relevant": 2,
+      "source_overlap": 0.609
+    },
+    {
+      "id": "kalshi-bot:4930d6cc76:3:verbatim",
+      "query": "win_prob.py: add calculate_college() / calculate_college_full() / edge_college() using CBB-calibrated constants (pts_per_min=0.875, std_per_min=2.24, 40 min)",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.sports.win_prob.WinProbEngine.calculate_college",
+        "src.sports.win_prob.WinProbEngine.calculate_college_full",
+        "src.sports.win_prob.WinProbEngine.edge_college"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:4930d6cc76:3",
+      "commit": "4930d6cc76",
+      "n_relevant": 3,
+      "source_overlap": 0.733
+    },
+    {
+      "id": "kalshi-bot:4930d6cc76:3:name_blind",
+      "query": "py add using cbb calibrated constants pts per min std per min min",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.sports.win_prob.WinProbEngine.calculate_college",
+        "src.sports.win_prob.WinProbEngine.calculate_college_full",
+        "src.sports.win_prob.WinProbEngine.edge_college"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:4930d6cc76:3",
+      "commit": "4930d6cc76",
+      "n_relevant": 3,
+      "source_overlap": 0.733
+    },
+    {
+      "id": "kalshi-bot:afad64afa6:4:verbatim",
+      "query": "Async callbacks on new WhaleSignal events",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.sports.whale_tracker.WhaleSignal"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:afad64afa6:4",
+      "commit": "afad64afa6",
+      "n_relevant": 1,
+      "source_overlap": 0.4
+    },
+    {
+      "id": "kalshi-bot:afad64afa6:4:name_blind",
+      "query": "async callbacks on new events",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.sports.whale_tracker.WhaleSignal"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:afad64afa6:4",
+      "commit": "afad64afa6",
+      "n_relevant": 1,
+      "source_overlap": 0.4
+    },
+    {
+      "id": "kalshi-bot:afad64afa6:8:verbatim",
+      "query": "Emits GameState on score/status changes",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.sports.live_scores.GameState"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:afad64afa6:8",
+      "commit": "afad64afa6",
+      "n_relevant": 1,
+      "source_overlap": 0.667
+    },
+    {
+      "id": "kalshi-bot:afad64afa6:8:name_blind",
+      "query": "emits on score status changes",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.sports.live_scores.GameState"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:afad64afa6:8",
+      "commit": "afad64afa6",
+      "n_relevant": 1,
+      "source_overlap": 0.667
+    },
+    {
+      "id": "kalshi-bot:c0def8c368:2:verbatim",
+      "query": "_evaluate_market() now skips markets where hours_to_settlement < min_hours_to_settlement",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.trading.scanner_pipeline._evaluate_market"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:c0def8c368:2",
+      "commit": "c0def8c368",
+      "n_relevant": 1,
+      "source_overlap": 0.857
+    },
+    {
+      "id": "kalshi-bot:c0def8c368:2:name_blind",
+      "query": "now skips markets where hours to settlement min hours to settlement",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.trading.scanner_pipeline._evaluate_market"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:c0def8c368:2",
+      "commit": "c0def8c368",
+      "n_relevant": 1,
+      "source_overlap": 0.857
+    },
+    {
+      "id": "kalshi-bot:c0def8c368:7:verbatim",
+      "query": "_evaluate_market() now emits 'side' ('yes'/'no'), 'recommended_action' (e.g.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.trading.scanner_pipeline._evaluate_market"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:c0def8c368:7",
+      "commit": "c0def8c368",
+      "n_relevant": 1,
+      "source_overlap": 0.857
+    },
+    {
+      "id": "kalshi-bot:c0def8c368:7:name_blind",
+      "query": "now emits side yes no recommended action e g",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.trading.scanner_pipeline._evaluate_market"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:c0def8c368:7",
+      "commit": "c0def8c368",
+      "n_relevant": 1,
+      "source_overlap": 0.857
+    },
+    {
+      "id": "kalshi-bot:c0def8c368:11:verbatim",
+      "query": "_scan_financial_markets() Step 7 adds same three fields to financial opps",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.trading.scanner_pipeline._scan_financial_markets"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:c0def8c368:11",
+      "commit": "c0def8c368",
+      "n_relevant": 1,
+      "source_overlap": 0.875
+    },
+    {
+      "id": "kalshi-bot:c0def8c368:11:name_blind",
+      "query": "step adds same three fields to opps",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.trading.scanner_pipeline._scan_financial_markets"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:c0def8c368:11",
+      "commit": "c0def8c368",
+      "n_relevant": 1,
+      "source_overlap": 0.875
+    },
+    {
+      "id": "kalshi-bot:c0def8c368:13:verbatim",
+      "query": "_scan_financial_markets() Step 6 filters out any opp where edge < min_edge after timing bonus is applied (KXBTCD/KXETHD were leaking -7% to -65% edges)",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.trading.scanner_pipeline._scan_financial_markets"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:c0def8c368:13",
+      "commit": "c0def8c368",
+      "n_relevant": 1,
+      "source_overlap": 0.882
+    },
+    {
+      "id": "kalshi-bot:c0def8c368:13:name_blind",
+      "query": "step filters out any opp where edge min edge after timing bonus is applied kxbtcd kxethd were leaking to edges",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.trading.scanner_pipeline._scan_financial_markets"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:c0def8c368:13",
+      "commit": "c0def8c368",
+      "n_relevant": 1,
+      "source_overlap": 0.882
+    },
+    {
+      "id": "kalshi-bot:c0def8c368:14:verbatim",
+      "query": "Weather scanner already did this inside _evaluate_market; financial path now consistent",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.trading.scanner_pipeline._evaluate_market"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:c0def8c368:14",
+      "commit": "c0def8c368",
+      "n_relevant": 1,
+      "source_overlap": 0.556
+    },
+    {
+      "id": "kalshi-bot:c0def8c368:14:name_blind",
+      "query": "weather already did this inside financial path now consistent",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.trading.scanner_pipeline._evaluate_market"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:c0def8c368:14",
+      "commit": "c0def8c368",
+      "n_relevant": 1,
+      "source_overlap": 0.556
+    },
+    {
+      "id": "kalshi-bot:88b1ebc1da:0:verbatim",
+      "query": "fix(p1-quality): extract shared market type classifier, add WeeklyRetrainer WhatsApp notification",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.optimization.weekly_retrain.WeeklyRetrainer"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:88b1ebc1da:0",
+      "commit": "88b1ebc1da",
+      "n_relevant": 1,
+      "source_overlap": 0.462
+    },
+    {
+      "id": "kalshi-bot:88b1ebc1da:0:name_blind",
+      "query": "fix p 1 quality extract shared market type classifier add whats app notification",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.optimization.weekly_retrain.WeeklyRetrainer"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:88b1ebc1da:0",
+      "commit": "88b1ebc1da",
+      "n_relevant": 1,
+      "source_overlap": 0.462
+    },
+    {
+      "id": "kalshi-bot:88b1ebc1da:2:verbatim",
+      "query": "get_allocation_multiplier() exists with complete tier logic",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.trading.auto_trader.AutoTrader.get_allocation_multiplier"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:88b1ebc1da:2",
+      "commit": "88b1ebc1da",
+      "n_relevant": 1,
+      "source_overlap": 0.571
+    },
+    {
+      "id": "kalshi-bot:88b1ebc1da:2:name_blind",
+      "query": "exists with complete tier logic",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.trading.auto_trader.AutoTrader.get_allocation_multiplier"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:88b1ebc1da:2",
+      "commit": "88b1ebc1da",
+      "n_relevant": 1,
+      "source_overlap": 0.571
+    },
+    {
+      "id": "kalshi-bot:88b1ebc1da:3:verbatim",
+      "query": "evaluate_and_trade() applies multiplier to effective budget cap",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.trading.auto_trader.AutoTrader.evaluate_and_trade"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:88b1ebc1da:3",
+      "commit": "88b1ebc1da",
+      "n_relevant": 1,
+      "source_overlap": 0.857
+    },
+    {
+      "id": "kalshi-bot:88b1ebc1da:3:name_blind",
+      "query": "applies multiplier to effective budget cap",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.trading.auto_trader.AutoTrader.evaluate_and_trade"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:88b1ebc1da:3",
+      "commit": "88b1ebc1da",
+      "n_relevant": 1,
+      "source_overlap": 0.857
+    },
+    {
+      "id": "kalshi-bot:88b1ebc1da:6:verbatim",
+      "query": "Task 2 (WeeklyRetrainer WhatsApp notification):",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.optimization.weekly_retrain.WeeklyRetrainer"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:88b1ebc1da:6",
+      "commit": "88b1ebc1da",
+      "n_relevant": 1,
+      "source_overlap": 0.833
+    },
+    {
+      "id": "kalshi-bot:88b1ebc1da:6:name_blind",
+      "query": "task whats app notification",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.optimization.weekly_retrain.WeeklyRetrainer"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:88b1ebc1da:6",
+      "commit": "88b1ebc1da",
+      "n_relevant": 1,
+      "source_overlap": 0.833
+    },
+    {
+      "id": "kalshi-bot:88b1ebc1da:8:verbatim",
+      "query": "Refactor run() to store result dict before returning (clean exit point)",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.optimization.weekly_retrain.WeeklyRetrainer.run"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:88b1ebc1da:8",
+      "commit": "88b1ebc1da",
+      "n_relevant": 1,
+      "source_overlap": 0.3
+    },
+    {
+      "id": "kalshi-bot:88b1ebc1da:8:name_blind",
+      "query": "refactor to store result dict before returning clean exit point",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.optimization.weekly_retrain.WeeklyRetrainer.run"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:88b1ebc1da:8",
+      "commit": "88b1ebc1da",
+      "n_relevant": 1,
+      "source_overlap": 0.3
+    },
+    {
+      "id": "kalshi-bot:88b1ebc1da:9:verbatim",
+      "query": "Add _send_retrain_notification() called at end of run()",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.optimization.weekly_retrain.WeeklyRetrainer._send_retrain_notification",
+        "src.optimization.weekly_retrain.WeeklyRetrainer.run"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:88b1ebc1da:9",
+      "commit": "88b1ebc1da",
+      "n_relevant": 2,
+      "source_overlap": 0.714
+    },
+    {
+      "id": "kalshi-bot:88b1ebc1da:9:name_blind",
+      "query": "add called at end of",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.optimization.weekly_retrain.WeeklyRetrainer._send_retrain_notification",
+        "src.optimization.weekly_retrain.WeeklyRetrainer.run"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:88b1ebc1da:9",
+      "commit": "88b1ebc1da",
+      "n_relevant": 2,
+      "source_overlap": 0.714
+    },
+    {
+      "id": "kalshi-bot:88b1ebc1da:12:verbatim",
+      "query": "Task 3 (extract shared classify_market_type utility):",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.trading.auto_trader.classify_market_type",
+        "src.utils.market_type.classify_market_type"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:88b1ebc1da:12",
+      "commit": "88b1ebc1da",
+      "n_relevant": 2,
+      "source_overlap": 0.571
+    },
+    {
+      "id": "kalshi-bot:88b1ebc1da:12:name_blind",
+      "query": "task extract shared utility",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.trading.auto_trader.classify_market_type",
+        "src.utils.market_type.classify_market_type"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:88b1ebc1da:12",
+      "commit": "88b1ebc1da",
+      "n_relevant": 2,
+      "source_overlap": 0.571
+    },
+    {
+      "id": "kalshi-bot:88b1ebc1da:15:verbatim",
+      "query": "tca.market_type_performance() replaces inline _ROUTING + _classify with one-liner using shared utility",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.risk.tca.TCALogger.market_type_performance"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:88b1ebc1da:15",
+      "commit": "88b1ebc1da",
+      "n_relevant": 1,
+      "source_overlap": 0.727
+    },
+    {
+      "id": "kalshi-bot:88b1ebc1da:15:name_blind",
+      "query": "replaces inline routing classify with one liner using shared utility",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.risk.tca.TCALogger.market_type_performance"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:88b1ebc1da:15",
+      "commit": "88b1ebc1da",
+      "n_relevant": 1,
+      "source_overlap": 0.727
+    },
+    {
+      "id": "kalshi-bot:fd0f23d5a1:4:verbatim",
+      "query": "src/trading/scanner_pipeline.py: replace hardcoded _classify_price_into_lane() with config-driven implementation that reads boundaries from trading_rules.json via the existing _load_trading_rules() cache; keeps hardcoded fallback defaults so the function works even if config is unavailable",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.trading.scanner_pipeline._classify_price_into_lane",
+        "src.trading.scanner_pipeline._load_trading_rules"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:fd0f23d5a1:4",
+      "commit": "fd0f23d5a1",
+      "n_relevant": 2,
+      "source_overlap": 0.536
+    },
+    {
+      "id": "kalshi-bot:fd0f23d5a1:4:name_blind",
+      "query": "py replace hardcoded with config driven implementation that reads boundaries from json via the existing cache keeps hardcoded fallback defaults so the function works even if config is unavailable",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.trading.scanner_pipeline._classify_price_into_lane",
+        "src.trading.scanner_pipeline._load_trading_rules"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:fd0f23d5a1:4",
+      "commit": "fd0f23d5a1",
+      "n_relevant": 2,
+      "source_overlap": 0.536
+    },
+    {
+      "id": "kalshi-bot:fd0f23d5a1:10:verbatim",
+      "query": "Remove analyst_panel parameter from AutoTrader.__init__() signature",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.trading.auto_trader.AutoTrader",
+        "src.trading.auto_trader.AutoTrader.__init__",
+        "src.trading.auto_trader.AutoTrader.evaluate_and_trade._SignalProxy.__init__",
+        "src.trading.auto_trader.DailyBudget.__init__"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:fd0f23d5a1:10",
+      "commit": "fd0f23d5a1",
+      "n_relevant": 4,
+      "source_overlap": 0.5
+    },
+    {
+      "id": "kalshi-bot:fd0f23d5a1:10:name_blind",
+      "query": "remove analyst panel parameter from signature",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.trading.auto_trader.AutoTrader",
+        "src.trading.auto_trader.AutoTrader.__init__",
+        "src.trading.auto_trader.AutoTrader.evaluate_and_trade._SignalProxy.__init__",
+        "src.trading.auto_trader.DailyBudget.__init__"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:fd0f23d5a1:10",
+      "commit": "fd0f23d5a1",
+      "n_relevant": 4,
+      "source_overlap": 0.5
+    },
+    {
+      "id": "kalshi-bot:70381401b5:7:verbatim",
+      "query": "Kelly's liquidity adjustments have always been in size_position() but were dormant because order_book_depth_cents was never passed from the auto_trader (it was always None = backtest mode).",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.risk.kelly.size_position"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:70381401b5:7",
+      "commit": "70381401b5",
+      "n_relevant": 1,
+      "source_overlap": 0.684
+    },
+    {
+      "id": "kalshi-bot:70381401b5:7:name_blind",
+      "query": "s liquidity adjustments have always been in but were dormant because order book depth cents was never passed from the auto trader it was always none backtest mode",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.risk.kelly.size_position"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:70381401b5:7",
+      "commit": "70381401b5",
+      "n_relevant": 1,
+      "source_overlap": 0.684
+    },
+    {
+      "id": "kalshi-bot:70381401b5:12:verbatim",
+      "query": "src/trading/auto_trader.py: fetch orderbook BEFORE Kelly sizing in evaluate_and_trade().",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.trading.auto_trader.AutoTrader.evaluate_and_trade"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:70381401b5:12",
+      "commit": "70381401b5",
+      "n_relevant": 1,
+      "source_overlap": 0.917
+    },
+    {
+      "id": "kalshi-bot:70381401b5:12:name_blind",
+      "query": "py fetch orderbook before kelly sizing in",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.trading.auto_trader.AutoTrader.evaluate_and_trade"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:70381401b5:12",
+      "commit": "70381401b5",
+      "n_relevant": 1,
+      "source_overlap": 0.917
+    },
+    {
+      "id": "kalshi-bot:ddaad197f1:1:verbatim",
+      "query": "Replaces binary win/loss tracking with a nuanced TradeScore that distinguishes *how well* we traded from *whether we won*.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.risk.trade_scoring.TradeScore"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:ddaad197f1:1",
+      "commit": "ddaad197f1",
+      "n_relevant": 1,
+      "source_overlap": 0.154
+    },
+    {
+      "id": "kalshi-bot:ddaad197f1:1:name_blind",
+      "query": "replaces binary win loss tracking with a nuanced that distinguishes how well we traded from whether we won",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.risk.trade_scoring.TradeScore"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:ddaad197f1:1",
+      "commit": "ddaad197f1",
+      "n_relevant": 1,
+      "source_overlap": 0.154
+    },
+    {
+      "id": "kalshi-bot:ddaad197f1:10:verbatim",
+      "query": "composite_score property with weighted formula (positive = good trade)",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.risk.trade_scoring.TradeScore.composite_score"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:ddaad197f1:10",
+      "commit": "ddaad197f1",
+      "n_relevant": 1,
+      "source_overlap": 0.875
+    },
+    {
+      "id": "kalshi-bot:ddaad197f1:10:name_blind",
+      "query": "property with weighted formula positive good",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.risk.trade_scoring.TradeScore.composite_score"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:ddaad197f1:10",
+      "commit": "ddaad197f1",
+      "n_relevant": 1,
+      "source_overlap": 0.875
+    },
+    {
+      "id": "kalshi-bot:ddaad197f1:20:verbatim",
+      "query": "TradeScore dataclass + composite formula verification",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.risk.trade_scoring.TradeScore"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:ddaad197f1:20",
+      "commit": "ddaad197f1",
+      "n_relevant": 1,
+      "source_overlap": 0.667
+    },
+    {
+      "id": "kalshi-bot:ddaad197f1:20:name_blind",
+      "query": "dataclass composite formula verification",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.risk.trade_scoring.TradeScore"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:ddaad197f1:20",
+      "commit": "ddaad197f1",
+      "n_relevant": 1,
+      "source_overlap": 0.667
+    },
+    {
+      "id": "kalshi-bot:6da8ae663c:23:verbatim",
+      "query": "`allocation_multiplier` key included in evaluate_and_trade() return dict",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.trading.auto_trader.AutoTrader.evaluate_and_trade"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:6da8ae663c:23",
+      "commit": "6da8ae663c",
+      "n_relevant": 1,
+      "source_overlap": 1.0
+    },
+    {
+      "id": "kalshi-bot:6da8ae663c:23:name_blind",
+      "query": "allocation multiplier key included in return dict",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.trading.auto_trader.AutoTrader.evaluate_and_trade"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:6da8ae663c:23",
+      "commit": "6da8ae663c",
+      "n_relevant": 1,
+      "source_overlap": 1.0
+    },
+    {
+      "id": "kalshi-bot:a4763ef650:11:verbatim",
+      "query": "_evaluate_market(): new params spread_buffer_cents + use_dynamic_edge_floor",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.trading.scanner_pipeline._evaluate_market"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:a4763ef650:11",
+      "commit": "a4763ef650",
+      "n_relevant": 1,
+      "source_overlap": 0.889
+    },
+    {
+      "id": "kalshi-bot:a4763ef650:11:name_blind",
+      "query": "new params spread buffer cents use dynamic edge floor",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.trading.scanner_pipeline._evaluate_market"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:a4763ef650:11",
+      "commit": "a4763ef650",
+      "n_relevant": 1,
+      "source_overlap": 0.889
+    },
+    {
+      "id": "kalshi-bot:a4763ef650:12:verbatim",
+      "query": "_evaluate_market(): always populates spread_cents in returned opp dict",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.trading.scanner_pipeline._evaluate_market"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:a4763ef650:12",
+      "commit": "a4763ef650",
+      "n_relevant": 1,
+      "source_overlap": 0.778
+    },
+    {
+      "id": "kalshi-bot:a4763ef650:12:name_blind",
+      "query": "always populates spread cents in returned opp dict",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.trading.scanner_pipeline._evaluate_market"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:a4763ef650:12",
+      "commit": "a4763ef650",
+      "n_relevant": 1,
+      "source_overlap": 0.778
+    },
+    {
+      "id": "kalshi-bot:a4763ef650:13:verbatim",
+      "query": "run_evening_scan(): loads dynamic floor config from TradingRulesEngine",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.trading.rules_engine.TradingRulesEngine",
+        "src.trading.scanner_pipeline.run_evening_scan"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:a4763ef650:13",
+      "commit": "a4763ef650",
+      "n_relevant": 2,
+      "source_overlap": 0.9
+    },
+    {
+      "id": "kalshi-bot:a4763ef650:13:name_blind",
+      "query": "loads dynamic floor config from",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.trading.rules_engine.TradingRulesEngine",
+        "src.trading.scanner_pipeline.run_evening_scan"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:a4763ef650:13",
+      "commit": "a4763ef650",
+      "n_relevant": 2,
+      "source_overlap": 0.9
+    },
+    {
+      "id": "kalshi-bot:a4763ef650:14:verbatim",
+      "query": "_estimate_crypto_probability(): adds spread_cents to opp dict",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.trading.scanner_pipeline._estimate_crypto_probability"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:a4763ef650:14",
+      "commit": "a4763ef650",
+      "n_relevant": 1,
+      "source_overlap": 0.75
+    },
+    {
+      "id": "kalshi-bot:a4763ef650:14:name_blind",
+      "query": "adds spread cents to opp dict",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.trading.scanner_pipeline._estimate_crypto_probability"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:a4763ef650:14",
+      "commit": "a4763ef650",
+      "n_relevant": 1,
+      "source_overlap": 0.75
+    },
+    {
+      "id": "kalshi-bot:a4763ef650:15:verbatim",
+      "query": "_scan_financial_markets() Step 5: normalizes spread_cents on all opps that come from MarketTechnicals / WaveTech (which don't compute it)",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.trading.scanner_pipeline._scan_financial_markets"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:a4763ef650:15",
+      "commit": "a4763ef650",
+      "n_relevant": 1,
+      "source_overlap": 0.812
+    },
+    {
+      "id": "kalshi-bot:a4763ef650:15:name_blind",
+      "query": "step normalizes spread cents on all opps that come from market technicals wave tech which don t compute it",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.trading.scanner_pipeline._scan_financial_markets"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:a4763ef650:15",
+      "commit": "a4763ef650",
+      "n_relevant": 1,
+      "source_overlap": 0.812
+    },
+    {
+      "id": "kalshi-bot:a4763ef650:17:verbatim",
+      "query": "should_enter() financial path: RL-01 check using spread param",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.trading.rules_engine.TradingRulesEngine.should_enter"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:a4763ef650:17",
+      "commit": "a4763ef650",
+      "n_relevant": 1,
+      "source_overlap": 0.875
+    },
+    {
+      "id": "kalshi-bot:a4763ef650:17:name_blind",
+      "query": "financial path rl check using spread param",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.trading.rules_engine.TradingRulesEngine.should_enter"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:a4763ef650:17",
+      "commit": "a4763ef650",
+      "n_relevant": 1,
+      "source_overlap": 0.875
+    },
+    {
+      "id": "kalshi-bot:a4763ef650:18:verbatim",
+      "query": "should_enter() weather/lane path: RL-01 check using lane-specific floor",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.trading.rules_engine.TradingRulesEngine.should_enter"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:a4763ef650:18",
+      "commit": "a4763ef650",
+      "n_relevant": 1,
+      "source_overlap": 1.0
+    },
+    {
+      "id": "kalshi-bot:a4763ef650:18:name_blind",
+      "query": "weather lane path rl check using lane specific floor",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.trading.rules_engine.TradingRulesEngine.should_enter"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:a4763ef650:18",
+      "commit": "a4763ef650",
+      "n_relevant": 1,
+      "source_overlap": 1.0
+    },
+    {
+      "id": "kalshi-bot:024b592563:9:verbatim",
+      "query": "Added _load_trading_rules() \u2014 reads trading_rules.json with simple cache",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.trading.scanner_pipeline._load_trading_rules"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:024b592563:9",
+      "commit": "024b592563",
+      "n_relevant": 1,
+      "source_overlap": 0.625
+    },
+    {
+      "id": "kalshi-bot:024b592563:9:name_blind",
+      "query": "added reads json with simple cache",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.trading.scanner_pipeline._load_trading_rules"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:024b592563:9",
+      "commit": "024b592563",
+      "n_relevant": 1,
+      "source_overlap": 0.625
+    },
+    {
+      "id": "kalshi-bot:024b592563:11:verbatim",
+      "query": "Added _apply_timing_bonus(edge, hours, market_type) \u2014 linear interpolation from 1.0 at bonus_start_hours to max_bonus_multiplier at settlement",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.trading.scanner_pipeline._apply_timing_bonus"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:024b592563:11",
+      "commit": "024b592563",
+      "n_relevant": 1,
+      "source_overlap": 0.929
+    },
+    {
+      "id": "kalshi-bot:024b592563:11:name_blind",
+      "query": "added edge hours market type linear interpolation from at start hours to max multiplier at settlement",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.trading.scanner_pipeline._apply_timing_bonus"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:024b592563:11",
+      "commit": "024b592563",
+      "n_relevant": 1,
+      "source_overlap": 0.929
+    },
+    {
+      "id": "kalshi-bot:024b592563:13:verbatim",
+      "query": "_estimate_crypto_probability(): same pattern for crypto fallback opps",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.trading.scanner_pipeline._estimate_crypto_probability"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:024b592563:13",
+      "commit": "024b592563",
+      "n_relevant": 1,
+      "source_overlap": 0.667
+    },
+    {
+      "id": "kalshi-bot:024b592563:13:name_blind",
+      "query": "same pattern for fallback opps",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.trading.scanner_pipeline._estimate_crypto_probability"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:024b592563:13",
+      "commit": "024b592563",
+      "n_relevant": 1,
+      "source_overlap": 0.667
+    },
+    {
+      "id": "kalshi-bot:024b592563:14:verbatim",
+      "query": "_scan_financial_markets(): post-process step applies timing bonus to all MT/WaveTech opportunities (raw_edge + timing_multiplier always present)",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.trading.scanner_pipeline._scan_financial_markets"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:024b592563:14",
+      "commit": "024b592563",
+      "n_relevant": 1,
+      "source_overlap": 0.947
+    },
+    {
+      "id": "kalshi-bot:024b592563:14:name_blind",
+      "query": "post process step applies timing bonus to all mt wave tech opportunities raw edge timing multiplier always present",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.trading.scanner_pipeline._scan_financial_markets"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:024b592563:14",
+      "commit": "024b592563",
+      "n_relevant": 1,
+      "source_overlap": 0.947
+    },
+    {
+      "id": "kalshi-bot:456c2c0a1c:1:verbatim",
+      "query": "Added src/utils/market_compat.py: normalise_market() converts yes_bid_dollars \u2192 yes_bid (cents)",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.utils.market_compat.normalise_market"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:456c2c0a1c:1",
+      "commit": "456c2c0a1c",
+      "n_relevant": 1,
+      "source_overlap": 0.5
+    },
+    {
+      "id": "kalshi-bot:456c2c0a1c:1:name_blind",
+      "query": "added py converts yes bid dollars yes bid cents",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.utils.market_compat.normalise_market"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:456c2c0a1c:1",
+      "commit": "456c2c0a1c",
+      "n_relevant": 1,
+      "source_overlap": 0.5
+    },
+    {
+      "id": "kalshi-bot:456c2c0a1c:2:verbatim",
+      "query": "Wired into client._request() so ALL market responses auto-normalize",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.client.KalshiClient._request"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:456c2c0a1c:2",
+      "commit": "456c2c0a1c",
+      "n_relevant": 1,
+      "source_overlap": 0.375
+    },
+    {
+      "id": "kalshi-bot:456c2c0a1c:2:name_blind",
+      "query": "wired into so all market responses auto normalize",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.client.KalshiClient._request"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:456c2c0a1c:2",
+      "commit": "456c2c0a1c",
+      "n_relevant": 1,
+      "source_overlap": 0.375
+    },
+    {
+      "id": "kalshi-bot:1825ad6f55:2:verbatim",
+      "query": "KalshiSignalAdapter.scan_kxinx_markets() fetches live brackets + evaluates strikes",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.strategies.wavetech_signals.KalshiSignalAdapter",
+        "src.strategies.wavetech_signals.KalshiSignalAdapter.scan_kxinx_markets"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:1825ad6f55:2",
+      "commit": "1825ad6f55",
+      "n_relevant": 2,
+      "source_overlap": 0.909
+    },
+    {
+      "id": "kalshi-bot:1825ad6f55:2:name_blind",
+      "query": "fetches live brackets evaluates strikes",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.strategies.wavetech_signals.KalshiSignalAdapter",
+        "src.strategies.wavetech_signals.KalshiSignalAdapter.scan_kxinx_markets"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:1825ad6f55:2",
+      "commit": "1825ad6f55",
+      "n_relevant": 2,
+      "source_overlap": 0.909
+    },
+    {
+      "id": "kalshi-bot:42268734eb:0:verbatim",
+      "query": "fix: ArbitrageTrade attributes for walk-forward compatibility",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.backtest.engine.ArbitrageTrade"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:42268734eb:0",
+      "commit": "42268734eb",
+      "n_relevant": 1,
+      "source_overlap": 0.429
+    },
+    {
+      "id": "kalshi-bot:42268734eb:0:name_blind",
+      "query": "fix attributes for walk forward compatibility",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.backtest.engine.ArbitrageTrade"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:42268734eb:0",
+      "commit": "42268734eb",
+      "n_relevant": 1,
+      "source_overlap": 0.429
+    },
+    {
+      "id": "kalshi-bot:42268734eb:1:verbatim",
+      "query": "Add won property, lane='arbitrage', pnl_cents alias",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.backtest.engine.ArbitrageTrade.pnl_cents"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:42268734eb:1",
+      "commit": "42268734eb",
+      "n_relevant": 1,
+      "source_overlap": 0.5
+    },
+    {
+      "id": "kalshi-bot:42268734eb:1:name_blind",
+      "query": "add won property lane alias",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.backtest.engine.ArbitrageTrade.pnl_cents"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:42268734eb:1",
+      "commit": "42268734eb",
+      "n_relevant": 1,
+      "source_overlap": 0.5
+    },
+    {
+      "id": "kalshi-bot:97c9eee943:5:verbatim",
+      "query": "New KellyResult.fill_probability field (backward compat)",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.risk.kelly.KellyResult"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:97c9eee943:5",
+      "commit": "97c9eee943",
+      "n_relevant": 1,
+      "source_overlap": 0.571
+    },
+    {
+      "id": "kalshi-bot:97c9eee943:5:name_blind",
+      "query": "new fill probability field backward compat",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.risk.kelly.KellyResult"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:97c9eee943:5",
+      "commit": "97c9eee943",
+      "n_relevant": 1,
+      "source_overlap": 0.571
+    },
+    {
+      "id": "kalshi-bot:37732a04dc:9:verbatim",
+      "query": "backtest engine._kelly_size() documented as simplified variant",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.backtest.engine.BacktestEngine._kelly_size"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:37732a04dc:9",
+      "commit": "37732a04dc",
+      "n_relevant": 1,
+      "source_overlap": 0.571
+    },
+    {
+      "id": "kalshi-bot:37732a04dc:9:name_blind",
+      "query": "documented as simplified variant",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.backtest.engine.BacktestEngine._kelly_size"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:37732a04dc:9",
+      "commit": "37732a04dc",
+      "n_relevant": 1,
+      "source_overlap": 0.571
+    },
+    {
+      "id": "kalshi-bot:37732a04dc:10:verbatim",
+      "query": "BiasTracker: NOT duplicates (different APIs/storage/purpose) \u2014 added docstring clarification",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.paper_trading.bias_tracker.BiasTracker"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:37732a04dc:10",
+      "commit": "37732a04dc",
+      "n_relevant": 1,
+      "source_overlap": 0.2
+    },
+    {
+      "id": "kalshi-bot:37732a04dc:10:name_blind",
+      "query": "not duplicates different ap is storage purpose added docstring clarification",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.paper_trading.bias_tracker.BiasTracker"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:37732a04dc:10",
+      "commit": "37732a04dc",
+      "n_relevant": 1,
+      "source_overlap": 0.2
+    },
+    {
+      "id": "kalshi-bot:397c601b0f:4:verbatim",
+      "query": "Wired into AutoTrader as gate after rules engine",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.trading.auto_trader.AutoTrader"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:397c601b0f:4",
+      "commit": "397c601b0f",
+      "n_relevant": 1,
+      "source_overlap": 0.857
+    },
+    {
+      "id": "kalshi-bot:397c601b0f:4:name_blind",
+      "query": "wired into as gate after rules engine",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.trading.auto_trader.AutoTrader"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:397c601b0f:4",
+      "commit": "397c601b0f",
+      "n_relevant": 1,
+      "source_overlap": 0.857
+    },
+    {
+      "id": "kalshi-bot:e358451d24:2:verbatim",
+      "query": "classify_market_type() routes tickers to market type configs",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.trading.auto_trader.classify_market_type"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:e358451d24:2",
+      "commit": "e358451d24",
+      "n_relevant": 1,
+      "source_overlap": 0.5
+    },
+    {
+      "id": "kalshi-bot:e358451d24:2:name_blind",
+      "query": "routes tickers to configs",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.trading.auto_trader.classify_market_type"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:e358451d24:2",
+      "commit": "e358451d24",
+      "n_relevant": 1,
+      "source_overlap": 0.5
+    },
+    {
+      "id": "kalshi-bot:e358451d24:5:verbatim",
+      "query": "LANE_FINANCIAL for financial markets (no weather lane system)",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "main.markets"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:e358451d24:5",
+      "commit": "e358451d24",
+      "n_relevant": 1,
+      "source_overlap": 0.2
+    },
+    {
+      "id": "kalshi-bot:e358451d24:5:name_blind",
+      "query": "lane financial for financial no weather lane system",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "main.markets"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:e358451d24:5",
+      "commit": "e358451d24",
+      "n_relevant": 1,
+      "source_overlap": 0.2
+    },
+    {
+      "id": "kalshi-bot:13cd095105:1:verbatim",
+      "query": "Agent 1: Wire TCA + Kelly into AutoTrader",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.trading.auto_trader.AutoTrader"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:13cd095105:1",
+      "commit": "13cd095105",
+      "n_relevant": 1,
+      "source_overlap": 0.667
+    },
+    {
+      "id": "kalshi-bot:13cd095105:1:name_blind",
+      "query": "agent wire tca kelly into",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.trading.auto_trader.AutoTrader"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:13cd095105:1",
+      "commit": "13cd095105",
+      "n_relevant": 1,
+      "source_overlap": 0.667
+    },
+    {
+      "id": "kalshi-bot:35dc37d591:3:verbatim",
+      "query": "Add graceful guards to ai_scan, analyze, order, and history commands.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "main.ai_scan"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:35dc37d591:3",
+      "commit": "35dc37d591",
+      "n_relevant": 1,
+      "source_overlap": 0.444
+    },
+    {
+      "id": "kalshi-bot:35dc37d591:3:name_blind",
+      "query": "add graceful guards to analyze order and history commands",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "main.ai_scan"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:35dc37d591:3",
+      "commit": "35dc37d591",
+      "n_relevant": 1,
+      "source_overlap": 0.444
+    },
+    {
+      "id": "kalshi-bot:35dc37d591:5:verbatim",
+      "query": "Root cause: check_settlements() only checked status 'settled'|'closed' but Kalshi returns 'finalized'.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.paper_trading.paper_trader.PaperTrader.check_settlements"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:35dc37d591:5",
+      "commit": "35dc37d591",
+      "n_relevant": 1,
+      "source_overlap": 0.636
+    },
+    {
+      "id": "kalshi-bot:35dc37d591:5:name_blind",
+      "query": "root cause only checked status settled closed but kalshi returns finalized",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.paper_trading.paper_trader.PaperTrader.check_settlements"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:35dc37d591:5",
+      "commit": "35dc37d591",
+      "n_relevant": 1,
+      "source_overlap": 0.636
+    },
+    {
+      "id": "kalshi-bot:35dc37d591:7:verbatim",
+      "query": "Fix 3: Add paper trading page to Trading Station dashboard (:5557).",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "main.dashboard"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:35dc37d591:7",
+      "commit": "35dc37d591",
+      "n_relevant": 1,
+      "source_overlap": 0.429
+    },
+    {
+      "id": "kalshi-bot:35dc37d591:7:name_blind",
+      "query": "fix add paper trading page to trading station",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "main.dashboard"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:35dc37d591:7",
+      "commit": "35dc37d591",
+      "n_relevant": 1,
+      "source_overlap": 0.429
+    },
+    {
+      "id": "kalshi-bot:6c331c60f8:1:verbatim",
+      "query": "Add public get_entry_rules() to TradingRulesEngine (was only private _get_entry_rules())",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.trading.rules_engine.TradingRulesEngine",
+        "src.trading.rules_engine.TradingRulesEngine._get_entry_rules",
+        "src.trading.rules_engine.TradingRulesEngine.get_entry_rules"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:6c331c60f8:1",
+      "commit": "6c331c60f8",
+      "n_relevant": 3,
+      "source_overlap": 0.75
+    },
+    {
+      "id": "kalshi-bot:6c331c60f8:1:name_blind",
+      "query": "add public to was only private",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.trading.rules_engine.TradingRulesEngine",
+        "src.trading.rules_engine.TradingRulesEngine._get_entry_rules",
+        "src.trading.rules_engine.TradingRulesEngine.get_entry_rules"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:6c331c60f8:1",
+      "commit": "6c331c60f8",
+      "n_relevant": 3,
+      "source_overlap": 0.75
+    },
+    {
+      "id": "kalshi-bot:f0a09ec30d:0:verbatim",
+      "query": "refactor(TASK-05): backtest delegates to real WeatherStrategy for probability calculation",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.strategies.weather_strategy.WeatherStrategy"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:f0a09ec30d:0",
+      "commit": "f0a09ec30d",
+      "n_relevant": 1,
+      "source_overlap": 0.556
+    },
+    {
+      "id": "kalshi-bot:f0a09ec30d:0:name_blind",
+      "query": "refactor task backtest delegates to real for probability calculation",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.strategies.weather_strategy.WeatherStrategy"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:f0a09ec30d:0",
+      "commit": "f0a09ec30d",
+      "n_relevant": 1,
+      "source_overlap": 0.556
+    },
+    {
+      "id": "kalshi-bot:e5fdb23e63:0:verbatim",
+      "query": "refactor(TASK-02): wire TradingRulesEngine into AutoTrader, remove hardcoded thresholds",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.trading.auto_trader.AutoTrader",
+        "src.trading.rules_engine.TradingRulesEngine"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:e5fdb23e63:0",
+      "commit": "e5fdb23e63",
+      "n_relevant": 2,
+      "source_overlap": 0.727
+    },
+    {
+      "id": "kalshi-bot:e5fdb23e63:0:name_blind",
+      "query": "refactor task wire into remove hardcoded thresholds",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.trading.auto_trader.AutoTrader",
+        "src.trading.rules_engine.TradingRulesEngine"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:e5fdb23e63:0",
+      "commit": "e5fdb23e63",
+      "n_relevant": 2,
+      "source_overlap": 0.727
+    },
+    {
+      "id": "kalshi-bot:cb4810c2d7:0:verbatim",
+      "query": "Add MarketGrid implementation (66% decoded from Bob Kendall indicator)",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.strategies.market_grid.MarketGrid"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:cb4810c2d7:0",
+      "commit": "cb4810c2d7",
+      "n_relevant": 1,
+      "source_overlap": 0.25
+    },
+    {
+      "id": "kalshi-bot:cb4810c2d7:0:name_blind",
+      "query": "add implementation decoded from bob kendall indicator",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.strategies.market_grid.MarketGrid"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:cb4810c2d7:0",
+      "commit": "cb4810c2d7",
+      "n_relevant": 1,
+      "source_overlap": 0.25
+    },
+    {
+      "id": "kalshi-bot:28fe82668f:3:verbatim",
+      "query": "Fixed _parse_city_from_ticker to handle new prefix format",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.trading.scanner_pipeline._parse_city_from_ticker"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:28fe82668f:3",
+      "commit": "28fe82668f",
+      "n_relevant": 1,
+      "source_overlap": 0.571
+    },
+    {
+      "id": "kalshi-bot:28fe82668f:3:name_blind",
+      "query": "fixed to handle new prefix format",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.trading.scanner_pipeline._parse_city_from_ticker"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:28fe82668f:3",
+      "commit": "28fe82668f",
+      "n_relevant": 1,
+      "source_overlap": 0.571
+    },
+    {
+      "id": "kalshi-bot:e803acea81:7:verbatim",
+      "query": "Market direction safety: validate_trade() gate on all order paths",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "src.market_direction.validate_trade"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:e803acea81:7",
+      "commit": "e803acea81",
+      "n_relevant": 1,
+      "source_overlap": 0.556
+    },
+    {
+      "id": "kalshi-bot:e803acea81:7:name_blind",
+      "query": "safety gate on all order paths",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "src.market_direction.validate_trade"
+      ],
+      "repo": "kalshi-bot",
+      "pair_id": "kalshi-bot:e803acea81:7",
+      "commit": "e803acea81",
+      "n_relevant": 1,
+      "source_overlap": 0.556
+    }
+  ]
+}

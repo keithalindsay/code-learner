@@ -1,0 +1,208 @@
+{
+  "repo": "polymarket-official-client",
+  "source": "mined",
+  "generated_by": "codelearner.eval.mined_gold.mine_queries",
+  "mined_at_head": "f1a8807d11c0dda72d62b9aec5192a33f7975e67",
+  "commit_note": "MINED from commit prose, not hand-labelled: 4 queries from 5 candidate sentences across 4 of 245 commits, emitted as 8 rows (verbatim + name-blind per query). Snapshot at f1a8807d11 -- a mined set is a function of history and moves with the next commit; regenerate rather than trusting this file.",
+  "labelling_rule": "Relevant = every symbol named AS CODE by one sentence of a commit message, where that commit also changed the file the symbol lives in. 'As code' is gold_from_history.mentions_symbol: either the identifier is distinctive enough that a bare occurrence cannot be English, or it appears in backticks, called, attribute-accessed, or assigned. The sentence, unmodified, is the query. Excluded: commits with boilerplate subjects, merge commits, sentences under 5 words, code snippets, sentences naming more than 5 symbols, sentences leaving fewer than 3 content tokens once their targets' name tokens are removed, sentences found verbatim (32-char run) in any selected symbol's source, exact duplicates, and any query naming a qualname the index does not hold. NOT excluded: high token overlap with the target's source -- it is measured per query and reported, because the hand-labelled set's own overlap is a median 0.71 and a threshold would reject it too. Every query is emitted twice, verbatim and name-blinded, as separate rows sharing a pair_id -- except where two queries blind to the same text with different relevant sets, where the blind row is dropped as ambiguous and the verbatim row is left unpaired. The two rows of a pair are the same item and must be clustered, not counted twice.",
+  "funnel": {
+    "commits_in_history": 245,
+    "commits_contributing": 4,
+    "commits_skipped": {
+      "boilerplate_subject": 83,
+      "empty_prose": 76,
+      "no_live_python_files": 13
+    },
+    "candidates_considered": 5,
+    "rejected": {
+      "too_short": 1
+    },
+    "usable_queries": 4,
+    "usable_fraction": 0.8,
+    "distinct_target_symbols": 4,
+    "relevant_set_sizes": {
+      "1": 3,
+      "2": 1
+    },
+    "multi_relevant": 1,
+    "largest_commit_cluster": 2,
+    "blind_rows_dropped": 0,
+    "rows_emitted": 8
+  },
+  "source_overlap": {
+    "definition": "|content tokens of query & content tokens of relevant symbols' source| / |content tokens of query|. Reported, never filtered on.",
+    "mined": {
+      "n": 4,
+      "min": 0.5,
+      "p25": 0.571,
+      "median": 0.714,
+      "p75": 0.833,
+      "max": 0.833,
+      "mean": 0.655,
+      "deciles": {
+        "50-60%": 2,
+        "70-80%": 1,
+        "80-90%": 1
+      }
+    },
+    "hand_labelled_reference": {
+      "gold": "swarm_sync.json (16 hand-written queries)",
+      "min": 0.0,
+      "median": 0.71,
+      "mean": 0.61,
+      "max": 1.0,
+      "at_1.0": 2
+    }
+  },
+  "bias": {
+    "note": "The mention rule selects symbols a commit message happened to name. This set inherits that bias in full; it is measured here, not corrected. 'over_representation' is the selected share of a kind divided by its population share -- 1.0 is neutral, above 1.0 is over-represented.",
+    "population": {
+      "n": 238,
+      "documented": 0.47478991596638653,
+      "private": 0.08403361344537816,
+      "kinds": {
+        "class": 0.18907563025210083,
+        "function": 0.3739495798319328,
+        "method": 0.4369747899159664
+      }
+    },
+    "selected": {
+      "n": 4,
+      "documented": 0.75,
+      "private": 0.0,
+      "kinds": {
+        "class": 0.25,
+        "method": 0.75
+      }
+    },
+    "over_representation": {
+      "class": 1.322,
+      "function": 0.0,
+      "method": 1.716
+    }
+  },
+  "queries": [
+    {
+      "id": "polymarket-official-client:4d78f2c34e:14:verbatim",
+      "query": "Fix accept_rfq_quote to use request size instead of quote size",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "py_clob_client.rfq.rfq_client.RfqClient.accept_rfq_quote"
+      ],
+      "repo": "polymarket-official-client",
+      "pair_id": "polymarket-official-client:4d78f2c34e:14",
+      "commit": "4d78f2c34e",
+      "n_relevant": 1,
+      "source_overlap": 0.714
+    },
+    {
+      "id": "polymarket-official-client:4d78f2c34e:14:name_blind",
+      "query": "fix to use request size instead of size",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "py_clob_client.rfq.rfq_client.RfqClient.accept_rfq_quote"
+      ],
+      "repo": "polymarket-official-client",
+      "pair_id": "polymarket-official-client:4d78f2c34e:14",
+      "commit": "4d78f2c34e",
+      "n_relevant": 1,
+      "source_overlap": 0.714
+    },
+    {
+      "id": "polymarket-official-client:4d78f2c34e:16:verbatim",
+      "query": "accept_rfq_quote now uses the request's price/size (what requester asked for) approve_rfq_order now uses the quote's price/size (what quoter offered)",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "py_clob_client.rfq.rfq_client.RfqClient.accept_rfq_quote",
+        "py_clob_client.rfq.rfq_client.RfqClient.approve_rfq_order"
+      ],
+      "repo": "polymarket-official-client",
+      "pair_id": "polymarket-official-client:4d78f2c34e:16",
+      "commit": "4d78f2c34e",
+      "n_relevant": 2,
+      "source_overlap": 0.833
+    },
+    {
+      "id": "polymarket-official-client:4d78f2c34e:16:name_blind",
+      "query": "now uses the request s price size what requester asked for now uses the s price size what quoter offered",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "py_clob_client.rfq.rfq_client.RfqClient.accept_rfq_quote",
+        "py_clob_client.rfq.rfq_client.RfqClient.approve_rfq_order"
+      ],
+      "repo": "polymarket-official-client",
+      "pair_id": "polymarket-official-client:4d78f2c34e:16",
+      "commit": "4d78f2c34e",
+      "n_relevant": 2,
+      "source_overlap": 0.833
+    },
+    {
+      "id": "polymarket-official-client:144b4d288f:0:verbatim",
+      "query": "Fix 'invalid auth' error on `cancel_market_orders`",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "py_clob_client.client.ClobClient.cancel_market_orders"
+      ],
+      "repo": "polymarket-official-client",
+      "pair_id": "polymarket-official-client:144b4d288f:0",
+      "commit": "144b4d288f",
+      "n_relevant": 1,
+      "source_overlap": 0.571
+    },
+    {
+      "id": "polymarket-official-client:144b4d288f:0:name_blind",
+      "query": "fix invalid auth error on",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "py_clob_client.client.ClobClient.cancel_market_orders"
+      ],
+      "repo": "polymarket-official-client",
+      "pair_id": "polymarket-official-client:144b4d288f:0",
+      "commit": "144b4d288f",
+      "n_relevant": 1,
+      "source_overlap": 0.571
+    },
+    {
+      "id": "polymarket-official-client:a376582c23:2:verbatim",
+      "query": "To generate the hash of an orderbook it is needed a `OrderBookSummary` object.",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "py_clob_client.clob_types.OrderBookSummary"
+      ],
+      "repo": "polymarket-official-client",
+      "pair_id": "polymarket-official-client:a376582c23:2",
+      "commit": "a376582c23",
+      "n_relevant": 1,
+      "source_overlap": 0.5
+    },
+    {
+      "id": "polymarket-official-client:a376582c23:2:name_blind",
+      "query": "to generate the hash of an orderbook it is needed a object",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "py_clob_client.clob_types.OrderBookSummary"
+      ],
+      "repo": "polymarket-official-client",
+      "pair_id": "polymarket-official-client:a376582c23:2",
+      "commit": "a376582c23",
+      "n_relevant": 1,
+      "source_overlap": 0.5
+    }
+  ]
+}

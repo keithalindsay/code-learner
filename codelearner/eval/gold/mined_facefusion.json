@@ -1,0 +1,236 @@
+{
+  "repo": "facefusion",
+  "source": "mined",
+  "generated_by": "codelearner.eval.mined_gold.mine_queries",
+  "mined_at_head": "57fcb86b8205f5c601baa8479f74ec7c5363c440",
+  "commit_note": "MINED from commit prose, not hand-labelled: 6 queries from 18 candidate sentences across 17 of 384 commits, emitted as 10 rows (verbatim + name-blind per query). Snapshot at 57fcb86b82 -- a mined set is a function of history and moves with the next commit; regenerate rather than trusting this file.",
+  "labelling_rule": "Relevant = every symbol named AS CODE by one sentence of a commit message, where that commit also changed the file the symbol lives in. 'As code' is gold_from_history.mentions_symbol: either the identifier is distinctive enough that a bare occurrence cannot be English, or it appears in backticks, called, attribute-accessed, or assigned. The sentence, unmodified, is the query. Excluded: commits with boilerplate subjects, merge commits, sentences under 5 words, code snippets, sentences naming more than 5 symbols, sentences leaving fewer than 3 content tokens once their targets' name tokens are removed, sentences found verbatim (32-char run) in any selected symbol's source, exact duplicates, and any query naming a qualname the index does not hold. NOT excluded: high token overlap with the target's source -- it is measured per query and reported, because the hand-labelled set's own overlap is a median 0.71 and a threshold would reject it too. Every query is emitted twice, verbatim and name-blinded, as separate rows sharing a pair_id -- except where two queries blind to the same text with different relevant sets, where the blind row is dropped as ambiguous and the verbatim row is left unpaired. The two rows of a pair are the same item and must be clustered, not counted twice.",
+  "funnel": {
+    "commits_in_history": 384,
+    "commits_contributing": 17,
+    "commits_skipped": {
+      "boilerplate_subject": 120,
+      "empty_prose": 1,
+      "no_live_python_files": 90
+    },
+    "candidates_considered": 18,
+    "rejected": {
+      "duplicate": 1,
+      "name_only": 3,
+      "too_short": 8
+    },
+    "usable_queries": 6,
+    "usable_fraction": 0.333,
+    "distinct_target_symbols": 7,
+    "relevant_set_sizes": {
+      "1": 5,
+      "2": 1
+    },
+    "multi_relevant": 1,
+    "largest_commit_cluster": 1,
+    "blind_rows_dropped": 2,
+    "rows_emitted": 10
+  },
+  "source_overlap": {
+    "definition": "|content tokens of query & content tokens of relevant symbols' source| / |content tokens of query|. Reported, never filtered on.",
+    "mined": {
+      "n": 6,
+      "min": 0.25,
+      "p25": 0.4,
+      "median": 0.571,
+      "p75": 0.6,
+      "max": 0.6,
+      "mean": 0.47,
+      "deciles": {
+        "20-30%": 1,
+        "40-50%": 2,
+        "50-60%": 1,
+        "60-70%": 2
+      }
+    },
+    "hand_labelled_reference": {
+      "gold": "swarm_sync.json (16 hand-written queries)",
+      "min": 0.0,
+      "median": 0.71,
+      "mean": 0.61,
+      "max": 1.0,
+      "at_1.0": 2
+    }
+  },
+  "bias": {
+    "note": "The mention rule selects symbols a commit message happened to name. This set inherits that bias in full; it is measured here, not corrected. 'over_representation' is the selected share of a kind divided by its population share -- 1.0 is neutral, above 1.0 is over-represented.",
+    "population": {
+      "n": 975,
+      "documented": 0.0,
+      "private": 0.0010256410256410256,
+      "kinds": {
+        "function": 1.0
+      }
+    },
+    "selected": {
+      "n": 7,
+      "documented": 0.0,
+      "private": 0.0,
+      "kinds": {
+        "function": 1.0
+      }
+    },
+    "over_representation": {
+      "function": 1.0
+    }
+  },
+  "queries": [
+    {
+      "id": "facefusion:aa1007ff6a:0:verbatim",
+      "query": "Fix blank screen in replace_audio()",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "facefusion.ffmpeg.replace_audio"
+      ],
+      "repo": "facefusion",
+      "pair_id": "facefusion:aa1007ff6a:0",
+      "commit": "aa1007ff6a",
+      "n_relevant": 1,
+      "source_overlap": 0.6
+    },
+    {
+      "id": "facefusion:2bb91a8098:0:verbatim",
+      "query": "Fix blank screen in restore_audio()",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "facefusion.ffmpeg.restore_audio"
+      ],
+      "repo": "facefusion",
+      "pair_id": "facefusion:2bb91a8098:0",
+      "commit": "2bb91a8098",
+      "n_relevant": 1,
+      "source_overlap": 0.6
+    },
+    {
+      "id": "facefusion:d43cf5cdde:1:verbatim",
+      "query": "Introduce predict_video_frame_total() to fix progress bar while extracting and merging",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "facefusion.vision.predict_video_frame_total"
+      ],
+      "repo": "facefusion",
+      "pair_id": "facefusion:d43cf5cdde:1",
+      "commit": "d43cf5cdde",
+      "n_relevant": 1,
+      "source_overlap": 0.4
+    },
+    {
+      "id": "facefusion:d43cf5cdde:1:name_blind",
+      "query": "introduce to fix progress bar while extracting and merging",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "facefusion.vision.predict_video_frame_total"
+      ],
+      "repo": "facefusion",
+      "pair_id": "facefusion:d43cf5cdde:1",
+      "commit": "d43cf5cdde",
+      "n_relevant": 1,
+      "source_overlap": 0.4
+    },
+    {
+      "id": "facefusion:c70b45bd39:1:verbatim",
+      "query": "Introduce fit_frame to improve content analyser, rename resize_frame_resolution to restrict_frame",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "facefusion.vision.restrict_frame"
+      ],
+      "repo": "facefusion",
+      "pair_id": "facefusion:c70b45bd39:1",
+      "commit": "c70b45bd39",
+      "n_relevant": 1,
+      "source_overlap": 0.4
+    },
+    {
+      "id": "facefusion:c70b45bd39:1:name_blind",
+      "query": "introduce fit to improve content analyser rename resize resolution to",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "facefusion.vision.restrict_frame"
+      ],
+      "repo": "facefusion",
+      "pair_id": "facefusion:c70b45bd39:1",
+      "commit": "c70b45bd39",
+      "n_relevant": 1,
+      "source_overlap": 0.4
+    },
+    {
+      "id": "facefusion:1eed88b0f5:0:verbatim",
+      "query": "Override for Gradio's nasty convert_video_to_playable_mp4()",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "facefusion.uis.overrides.convert_video_to_playable_mp4"
+      ],
+      "repo": "facefusion",
+      "pair_id": "facefusion:1eed88b0f5:0",
+      "commit": "1eed88b0f5",
+      "n_relevant": 1,
+      "source_overlap": 0.571
+    },
+    {
+      "id": "facefusion:1eed88b0f5:0:name_blind",
+      "query": "override for gradio s nasty",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "facefusion.uis.overrides.convert_video_to_playable_mp4"
+      ],
+      "repo": "facefusion",
+      "pair_id": "facefusion:1eed88b0f5:0",
+      "commit": "1eed88b0f5",
+      "n_relevant": 1,
+      "source_overlap": 0.571
+    },
+    {
+      "id": "facefusion:8a9e08f3a2:9:verbatim",
+      "query": "Add chain() helper to the builders",
+      "source": "mined_verbatim",
+      "variant": "verbatim",
+      "name_bearing": true,
+      "relevant": [
+        "facefusion.curl_builder.chain",
+        "facefusion.ffmpeg_builder.chain"
+      ],
+      "repo": "facefusion",
+      "pair_id": "facefusion:8a9e08f3a2:9",
+      "commit": "8a9e08f3a2",
+      "n_relevant": 2,
+      "source_overlap": 0.25
+    },
+    {
+      "id": "facefusion:8a9e08f3a2:9:name_blind",
+      "query": "add helper to the builders",
+      "source": "mined_name_blind",
+      "variant": "name_blind",
+      "name_bearing": false,
+      "relevant": [
+        "facefusion.curl_builder.chain",
+        "facefusion.ffmpeg_builder.chain"
+      ],
+      "repo": "facefusion",
+      "pair_id": "facefusion:8a9e08f3a2:9",
+      "commit": "8a9e08f3a2",
+      "n_relevant": 2,
+      "source_overlap": 0.25
+    }
+  ]
+}

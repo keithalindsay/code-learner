@@ -1,0 +1,1522 @@
+{
+  "schema_version": 2,
+  "source": "hand",
+  "repo": "swarm-sync",
+  "repo_path": "/home/keith/projects/swarm-sync",
+  "index_path": "/home/keith/projects/swarm-sync/.codelearner/index.db",
+  "commit_note": "Hand-written against swarm-sync @ 75 indexed files, 1345 symbols (.codelearner/index.db, 2026-08-02). Author read every module under swarmsync/ before writing a query.",
+  "labelling_rule": "Relevant = a symbol a competent engineer would want to READ to answer the question. Tests are listed only where the question is about behaviour under test. Implementations are listed even when tests describe them better, because the question asks how the code works.",
+  "authoring_rule": "Every query is phrased from what the code DOES, in a newcomer's domain words, NOT by echoing the target's identifiers. Drafted from the source, then measured for token overlap against the target's chunk text (the exact text BM25 indexes) and against the target's own symbol name; queries whose wording leaked a target identifier are flagged name_bearing so they can be scored as a separate row instead of silently inflating the lexical modality.",
+  "overlap_method": {
+    "tokenizer": "lowercase, split on non-alphanumeric and camelCase boundaries, drop <3 chars, drop a 100-word English stoplist",
+    "corpus": "chunks.text for every symbol in this repo's index (the field chunks_fts indexes, i.e. exactly what BM25 scores)",
+    "name_overlap": "fraction of distinct query tokens that appear in some relevant symbol's OWN name (symbols.name / last dotted component)",
+    "source_overlap": "fraction of distinct query tokens that appear in some relevant symbol's chunk text",
+    "rare_source_overlap": "fraction of distinct query tokens that appear in a relevant symbol's chunk text AND have document frequency <= 2% of chunks -- the high-IDF terms BM25 actually ranks on",
+    "idf_weighted_source_overlap": "sum of idf over query tokens present in a relevant chunk, divided by sum of idf over all query tokens",
+    "name_bearing": "true iff name_overlap > 0, i.e. the query names the target. Not automatically wrong (real users do sometimes know the name) but must be scored as its own row."
+  },
+  "coverage_codes": {
+    "undocumented": "target symbol has no docstring in the index",
+    "private": "target is a _-prefixed helper, a nested function, or a module-level symbol with no public export",
+    "generic_name": "target's name is generic or misleading (run, main, get, handle, _run) so the name carries no query signal",
+    "cross_module": "answering requires reading symbols in 2+ modules",
+    "error_path": "the question is about a failure, edge case, or refusal rather than the happy path",
+    "hard_negative": "the obvious keyword match in this repo is the WRONG symbol; a lexical-only retriever is actively penalised"
+  },
+  "queries": [
+    {
+      "query": "what stops a second copy of the same program being started against one checkout",
+      "relevant": [
+        "swarmsync.repolock.RepoLock.acquire",
+        "swarmsync.repolock.holder_pid_if_held",
+        "swarmsync.repolock.lock_path_for",
+        "swarmsync.server.serve.main"
+      ],
+      "coverage": [
+        "cross_module",
+        "error_path",
+        "hard_negative"
+      ],
+      "hard_negative": true,
+      "note": "The lexical bait is 'program'/'started' pulling the launcher and the coordinator package; the answer is an OS advisory file lock in a module whose name the query never says.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.25,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.167
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "how do we know a worker process really died rather than merely being slow",
+      "relevant": [
+        "swarmsync.worktree.git_ops.prune_orphan_worktrees",
+        "swarmsync.worktree.git_ops._claim_if_unowned",
+        "swarmsync.coordinator.reaper.reap_once"
+      ],
+      "coverage": [
+        "cross_module",
+        "hard_negative",
+        "private"
+      ],
+      "hard_negative": true,
+      "note": "The reaper module is saturated with the words crash/died/expired, but the actual liveness answer is the kernel dropping a flock. reap_once is listed because reading it is how you learn it is NOT the answer to this question.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.444,
+        "rare_source_overlap": 0.111,
+        "idf_weighted_source_overlap": 0.435
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "uncommitted edits from a killed agent are preserved somewhere before its directory is removed",
+      "relevant": [
+        "swarmsync.worktree.git_ops._discard_orphan_worktree",
+        "swarmsync.worktree.git_ops.park_branch"
+      ],
+      "coverage": [
+        "error_path",
+        "private"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.625,
+        "rare_source_overlap": 0.5,
+        "idf_weighted_source_overlap": 0.566
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "asking for something you already hold should hand back what you have instead of refusing you",
+      "relevant": [
+        "swarmsync.blackboard.leases.acquire"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.625,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.497
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "why the current moment is taken by the database engine inside the statement and not by the caller beforehand",
+      "relevant": [
+        "swarmsync.blackboard.leases.heartbeat",
+        "swarmsync.blackboard.leases.acquire",
+        "swarmsync.server.serve.assert_clock_agreement"
+      ],
+      "coverage": [
+        "cross_module",
+        "error_path"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.556,
+        "rare_source_overlap": 0.222,
+        "idf_weighted_source_overlap": 0.466
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "refusing to boot when the host's two notions of the current time disagree",
+      "relevant": [
+        "swarmsync.server.serve.assert_clock_agreement"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.571,
+        "rare_source_overlap": 0.286,
+        "idf_weighted_source_overlap": 0.523
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "putting the shared branch back byte for byte after the automated checks come back red",
+      "relevant": [
+        "swarmsync.coordinator.integrator.integrate._reject_and_reset",
+        "swarmsync.worktree.git_ops.reset_hard"
+      ],
+      "coverage": [
+        "cross_module",
+        "error_path",
+        "private"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.556,
+        "rare_source_overlap": 0.222,
+        "idf_weighted_source_overlap": 0.432
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "cleaning up after the machine was powered off partway through publishing somebody's work",
+      "relevant": [
+        "swarmsync.coordinator.integrator.reconcile_orphaned_integrations",
+        "swarmsync.coordinator.integrator.unresolved_orphan_count"
+      ],
+      "coverage": [
+        "cross_module",
+        "error_path"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.25,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.131
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "giving up on a repair that keeps failing instead of attempting it forever on every restart",
+      "relevant": [
+        "swarmsync.coordinator.integrator.reconcile_orphaned_integrations"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.556,
+        "rare_source_overlap": 0.333,
+        "idf_weighted_source_overlap": 0.491
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "narrowing an automated verification pass to only what the edit could plausibly affect",
+      "relevant": [
+        "swarmsync.coordinator.gate.run_impact_tests",
+        "swarmsync.coordinator.gate._reverse_dep_files"
+      ],
+      "coverage": [
+        "cross_module",
+        "private"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.375,
+        "rare_source_overlap": 0.125,
+        "idf_weighted_source_overlap": 0.263
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "when we cannot work out what depends on a change we deliberately do more work rather than guess less",
+      "relevant": [
+        "swarmsync.coordinator.gate._AffectedFiles",
+        "swarmsync.coordinator.gate._reverse_dep_files",
+        "swarmsync.coordinator.gate.run_impact_tests"
+      ],
+      "coverage": [
+        "cross_module",
+        "error_path",
+        "private"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.5,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.407
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "terminating a whole tree of spawned children that will not stop on their own",
+      "relevant": [
+        "swarmsync.coordinator.gate._kill_process_group",
+        "swarmsync.coordinator.gate._close_streams"
+      ],
+      "coverage": [
+        "error_path",
+        "private"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.333,
+        "rare_source_overlap": 0.167,
+        "idf_weighted_source_overlap": 0.297
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "choosing which python binary the verification step is executed with",
+      "relevant": [
+        "swarmsync.coordinator.gate.resolve_python",
+        "swarmsync.config.gate_python",
+        "swarmsync.cli._gate_interpreter_check"
+      ],
+      "coverage": [
+        "cross_module",
+        "private"
+      ],
+      "overlap": {
+        "name_overlap": 0.167,
+        "source_overlap": 0.333,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.197,
+        "name_tokens_hit": [
+          "python"
+        ]
+      },
+      "name_bearing": true,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync",
+      "note": "name_bearing: 'python' is unavoidable domain vocabulary here -- the question is literally about which interpreter runs. Kept and flagged rather than contorted."
+    },
+    {
+      "query": "wiping the operator's shell customisations out of a child so they cannot silently alter its verdict",
+      "relevant": [
+        "swarmsync.config.subprocess_env"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.556,
+        "rare_source_overlap": 0.111,
+        "idf_weighted_source_overlap": 0.399
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "counting how many other places would break if I changed this one piece",
+      "relevant": [
+        "swarmsync.classifier.graph.blast_radius",
+        "swarmsync.classifier.graph.DepGraph"
+      ],
+      "coverage": [
+        "cross_module"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.286,
+        "rare_source_overlap": 0.143,
+        "idf_weighted_source_overlap": 0.245
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "deciding which definitions are used widely enough that their shape should be pinned down",
+      "relevant": [
+        "swarmsync.classifier.graph.extract_contracts",
+        "swarmsync.classifier.store.run_index"
+      ],
+      "coverage": [
+        "cross_module"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.0,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.0
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "an inner module pulled in through its package used to have the dependency credited to the wrong place",
+      "relevant": [
+        "swarmsync.classifier.graph.build_graph"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.6,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.462
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "a definition's boundaries must include anything written above it with an at sign",
+      "relevant": [
+        "swarmsync.classifier.indexer._decorated_start",
+        "swarmsync.classifier.indexer._node_span"
+      ],
+      "coverage": [
+        "private",
+        "undocumented"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.125,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.04
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "the text of a source file that sits outside every named definition",
+      "relevant": [
+        "swarmsync.classifier.indexer._leftover_bytes",
+        "swarmsync.classifier.indexer.parse_file"
+      ],
+      "coverage": [
+        "private"
+      ],
+      "overlap": {
+        "name_overlap": 0.125,
+        "source_overlap": 0.625,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.504,
+        "name_tokens_hit": [
+          "file"
+        ]
+      },
+      "name_bearing": true,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync",
+      "note": "name_bearing: 'file' leaks into `parse_file`. No newcomer asks this without the word 'file'. Kept and flagged."
+    },
+    {
+      "query": "one broken source file must not stop the rest of the tree being catalogued",
+      "relevant": [
+        "swarmsync.classifier.indexer.index_repo",
+        "swarmsync.classifier.graph.build_graph"
+      ],
+      "coverage": [
+        "cross_module",
+        "error_path"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.889,
+        "rare_source_overlap": 0.111,
+        "idf_weighted_source_overlap": 0.769
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "putting a ceiling on how much of a tree a caller can make us walk",
+      "relevant": [
+        "swarmsync.classifier.indexer.index_repo",
+        "swarmsync.classifier.indexer.IndexLimitError"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.5,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.422
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "two different names for one physical file on disk must not become two separate claims on it",
+      "relevant": [
+        "swarmsync.classifier.indexer.index_repo",
+        "swarmsync.hooks.adapter._relpath"
+      ],
+      "coverage": [
+        "cross_module",
+        "hard_negative",
+        "private"
+      ],
+      "hard_negative": true,
+      "note": "Neither the word symlink nor any identifier appears; the two halves of the answer live in modules with nothing lexically in common.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.444,
+        "rare_source_overlap": 0.111,
+        "idf_weighted_source_overlap": 0.346
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "why ownership is always the whole module rather than an individual definition inside it",
+      "relevant": [
+        "swarmsync.classifier.graph.check_file_granularity",
+        "swarmsync.classifier.graph.co_schedulable"
+      ],
+      "coverage": [
+        "cross_module",
+        "error_path"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.5,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.352
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "deciding whether two pieces of work are safe to carry out at the same moment",
+      "relevant": [
+        "swarmsync.classifier.graph.co_schedulable",
+        "swarmsync.coordinator.broker.schedulable",
+        "swarmsync.coordinator.broker.group_schedulable"
+      ],
+      "coverage": [
+        "cross_module"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.0,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.0
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "one job blowing up must not discard the answers its siblings already produced",
+      "relevant": [
+        "swarmsync.coordinator.broker._run_task_contained",
+        "swarmsync.coordinator.broker._contained_attempt",
+        "swarmsync.coordinator.broker._error_result"
+      ],
+      "coverage": [
+        "error_path",
+        "private"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.125,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.068
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "one extra attempt when version control itself was momentarily contended, but never for anything else",
+      "relevant": [
+        "swarmsync.coordinator.broker._is_transient_git_failure",
+        "swarmsync.coordinator.broker._run_task_contained"
+      ],
+      "coverage": [
+        "error_path",
+        "private"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.222,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.181
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "only the step that touches the shared trunk is forced into single file while the rest of a batch stays parallel",
+      "relevant": [
+        "swarmsync.coordinator.broker._SerializingIntegrateClient.integrate",
+        "swarmsync.coordinator.broker.run",
+        "swarmsync.server.app.create_app.post_integrate"
+      ],
+      "coverage": [
+        "cross_module",
+        "generic_name",
+        "private",
+        "undocumented"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.545,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.409
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "every worker thread gets a handle of its own rather than sharing one",
+      "relevant": [
+        "swarmsync.coordinator.broker._open_task_conn",
+        "swarmsync.server.app.get_conn",
+        "swarmsync.blackboard.db.connect"
+      ],
+      "coverage": [
+        "cross_module",
+        "private"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.714,
+        "rare_source_overlap": 0.286,
+        "idf_weighted_source_overlap": 0.644
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "a background thread that keeps saying I am still alive so a hard kill needs no cleanup",
+      "relevant": [
+        "swarmsync.agent.runner._Heartbeater",
+        "swarmsync.agent.runner._Heartbeater._run",
+        "swarmsync.agent.runner._Heartbeater.start"
+      ],
+      "coverage": [
+        "cross_module",
+        "generic_name",
+        "private",
+        "undocumented"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.444,
+        "rare_source_overlap": 0.222,
+        "idf_weighted_source_overlap": 0.421
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "a missed keepalive is written to the log but the work carries on regardless",
+      "relevant": [
+        "swarmsync.agent.runner._Heartbeater._run"
+      ],
+      "coverage": [
+        "error_path",
+        "generic_name",
+        "private",
+        "undocumented"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.0,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.0
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "never trusting the fingerprint an agent reports about its own edit, always recomputing it",
+      "relevant": [
+        "swarmsync.agent.runner.run_agent",
+        "swarmsync.coordinator.integrator.regenerate_summary",
+        "swarmsync.hooks.adapter.cmd_postupdate"
+      ],
+      "coverage": [
+        "cross_module"
+      ],
+      "overlap": {
+        "name_overlap": 0.143,
+        "source_overlap": 0.571,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.331,
+        "name_tokens_hit": [
+          "agent"
+        ]
+      },
+      "name_bearing": true,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync",
+      "note": "name_bearing: 'agent' leaks into `run_agent`, and 'agent' is the domain's central noun. Kept and flagged."
+    },
+    {
+      "query": "handing back everything already granted when the last request in the set is turned down",
+      "relevant": [
+        "swarmsync.agent.runner.run_agent"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.6,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.472
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "this thing must never be the reason an ordinary editing session gets wedged",
+      "relevant": [
+        "swarmsync.hooks.adapter.main",
+        "swarmsync.hooks.adapter._dispatch"
+      ],
+      "coverage": [
+        "cross_module",
+        "error_path",
+        "generic_name",
+        "private",
+        "undocumented"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.25,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.204
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "when silence from the other side should be read as busy rather than as absent",
+      "relevant": [
+        "swarmsync.hooks.adapter._maybe_fail_closed",
+        "swarmsync.hooks.adapter._recent_contact",
+        "swarmsync.hooks.adapter._record_contact"
+      ],
+      "coverage": [
+        "cross_module",
+        "error_path",
+        "private"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.5,
+        "rare_source_overlap": 0.167,
+        "idf_weighted_source_overlap": 0.437
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "positive evidence that the far side actually answered, as opposed to nothing having thrown",
+      "relevant": [
+        "swarmsync.hooks.adapter._ContactRecordingHttp",
+        "swarmsync.hooks.adapter._ContactRecordingHttp.get",
+        "swarmsync.hooks.adapter._ContactRecordingHttp.post"
+      ],
+      "coverage": [
+        "private",
+        "undocumented"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.2,
+        "rare_source_overlap": 0.2,
+        "idf_weighted_source_overlap": 0.197
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "which project a tool invocation belongs to is decided from the file being edited, not from where the shell happens to be",
+      "relevant": [
+        "swarmsync.hooks.adapter._repo_root",
+        "swarmsync.hooks.adapter._git_toplevel"
+      ],
+      "coverage": [
+        "private"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.6,
+        "rare_source_overlap": 0.2,
+        "idf_weighted_source_overlap": 0.532
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "two callers we cannot tell apart must never be quietly fused into one",
+      "relevant": [
+        "swarmsync.hooks.adapter._agent_id"
+      ],
+      "coverage": [
+        "error_path",
+        "hard_negative",
+        "private"
+      ],
+      "hard_negative": true,
+      "note": "No identifier and no jargon in the query; the target is a tiny private helper whose whole point is the fallback branch.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.286,
+        "rare_source_overlap": 0.143,
+        "idf_weighted_source_overlap": 0.25
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "recording that a file is gone instead of leaving the last good fingerprint standing",
+      "relevant": [
+        "swarmsync.hooks.adapter.cmd_postupdate",
+        "swarmsync.hooks.adapter._deleted_summary"
+      ],
+      "coverage": [
+        "error_path",
+        "private"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.556,
+        "rare_source_overlap": 0.111,
+        "idf_weighted_source_overlap": 0.43
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "a typo in an environment variable must not quietly switch the protection off",
+      "relevant": [
+        "swarmsync.hooks.adapter._hook_lease_ttl"
+      ],
+      "coverage": [
+        "error_path",
+        "private"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.429,
+        "rare_source_overlap": 0.286,
+        "idf_weighted_source_overlap": 0.338
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "the client waits longer than the store's own contention window so a busy server is not mistaken for a dead one",
+      "relevant": [
+        "swarmsync.hooks.adapter",
+        "swarmsync.blackboard.db._configure"
+      ],
+      "coverage": [
+        "cross_module",
+        "error_path",
+        "private"
+      ],
+      "note": "The answer is a module-level constant derived from another module's constant, so the target is a module symbol -- a shape mining cannot produce.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.7,
+        "rare_source_overlap": 0.2,
+        "idf_weighted_source_overlap": 0.672
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "an operator asking from a plain shell which files are taken right now and by whom",
+      "relevant": [
+        "swarmsync.cli.cmd_holds",
+        "swarmsync.cli.cmd_free",
+        "swarmsync.cli._held_paths"
+      ],
+      "coverage": [
+        "cross_module",
+        "private",
+        "undocumented"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.125,
+        "rare_source_overlap": 0.125,
+        "idf_weighted_source_overlap": 0.175
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "a non zero exit status so the answer can gate the next command in a one liner",
+      "relevant": [
+        "swarmsync.cli.cmd_free"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.444,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.353
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "refusing to overwrite a settings document we were unable to make sense of",
+      "relevant": [
+        "swarmsync.cli._read_settings",
+        "swarmsync.cli.SettingsUnreadable",
+        "swarmsync.cli.cmd_init_hooks"
+      ],
+      "coverage": [
+        "cross_module",
+        "error_path",
+        "private"
+      ],
+      "overlap": {
+        "name_overlap": 0.125,
+        "source_overlap": 0.25,
+        "rare_source_overlap": 0.25,
+        "idf_weighted_source_overlap": 0.232,
+        "name_tokens_hit": [
+          "settings"
+        ]
+      },
+      "name_bearing": true,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync",
+      "note": "name_bearing: 'settings' leaks into `_read_settings`/`SettingsUnreadable`; it is the file's actual name in the product and in the user's head. Kept and flagged."
+    },
+    {
+      "query": "put the new content beside the target then move it into place, so an interruption leaves one whole version or the other",
+      "relevant": [
+        "swarmsync.cli._write_settings_atomically"
+      ],
+      "coverage": [
+        "error_path",
+        "private"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.455,
+        "rare_source_overlap": 0.091,
+        "idf_weighted_source_overlap": 0.36
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "keeping entries the user added themselves while replacing only the ones we own",
+      "relevant": [
+        "swarmsync.cli._merge_hooks",
+        "swarmsync.cli._is_swarmsync_entry"
+      ],
+      "coverage": [
+        "private"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.429,
+        "rare_source_overlap": 0.429,
+        "idf_weighted_source_overlap": 0.431
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "turning away a branch label that version control would read as a command line switch",
+      "relevant": [
+        "swarmsync.worktree.git_ops._reject_option_like",
+        "swarmsync.worktree.git_ops._reject_unsafe_name"
+      ],
+      "coverage": [
+        "error_path",
+        "private"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.182,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.101
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "the identifier becomes a directory we later delete recursively, so it has to be a plain token",
+      "relevant": [
+        "swarmsync.worktree.git_ops._reject_unsafe_name"
+      ],
+      "coverage": [
+        "error_path",
+        "private"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.625,
+        "rare_source_overlap": 0.375,
+        "idf_weighted_source_overlap": 0.599
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "leaving the shared line of history exactly as it was when combining two versions goes wrong",
+      "relevant": [
+        "swarmsync.worktree.git_ops.merge_branch"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.222,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.138
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "a moved file has to show up as both a disappearance and an arrival",
+      "relevant": [
+        "swarmsync.worktree.git_ops.changed_files"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.2,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.058
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "a batch of writes that either all take effect or none of them do",
+      "relevant": [
+        "swarmsync.blackboard.db.transaction"
+      ],
+      "coverage": [],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.167,
+        "rare_source_overlap": 0.167,
+        "idf_weighted_source_overlap": 0.233
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "refusing to open a store that an older or newer build of this program wrote",
+      "relevant": [
+        "swarmsync.blackboard.db.init_db",
+        "swarmsync.blackboard.db.SchemaVersionError"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.375,
+        "rare_source_overlap": 0.375,
+        "idf_weighted_source_overlap": 0.427
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "stopping one store from being reused against a second codebase whose names would collide",
+      "relevant": [
+        "swarmsync.blackboard.db.bind_managed_root",
+        "swarmsync.blackboard.db.stored_managed_root",
+        "swarmsync.server.app.check_single_root"
+      ],
+      "coverage": [
+        "cross_module",
+        "error_path"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.364,
+        "rare_source_overlap": 0.091,
+        "idf_weighted_source_overlap": 0.274
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "supplying a missing arithmetic routine when the underlying library was compiled without it",
+      "relevant": [
+        "swarmsync.blackboard.db._pow_fallback",
+        "swarmsync.blackboard.db._configure"
+      ],
+      "coverage": [
+        "error_path",
+        "private"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.375,
+        "rare_source_overlap": 0.25,
+        "idf_weighted_source_overlap": 0.33
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "an activity signal that fades as time passes so stale interest stops counting",
+      "relevant": [
+        "swarmsync.blackboard.events.decay_pheromone",
+        "swarmsync.coordinator.reaper.decay_once"
+      ],
+      "coverage": [
+        "cross_module"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.222,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.121
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "reading the most recent entries rather than paging forward from the very beginning",
+      "relevant": [
+        "swarmsync.blackboard.events.tail_newest",
+        "swarmsync.server.app.create_app.get_events",
+        "swarmsync.agent.runner.run_agent"
+      ],
+      "coverage": [
+        "cross_module",
+        "private",
+        "undocumented"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.571,
+        "rare_source_overlap": 0.429,
+        "idf_weighted_source_overlap": 0.527
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "taking the new row's number straight off the statement that inserted it instead of asking afterwards",
+      "relevant": [
+        "swarmsync.blackboard.events.emit",
+        "swarmsync.blackboard.leases.acquire"
+      ],
+      "coverage": [
+        "cross_module"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.6,
+        "rare_source_overlap": 0.2,
+        "idf_weighted_source_overlap": 0.471
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "asking for a million records at once should be a loud error rather than a quiet truncation",
+      "relevant": [
+        "swarmsync.server.app.create_app.get_events"
+      ],
+      "coverage": [
+        "error_path",
+        "private",
+        "undocumented"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.111,
+        "rare_source_overlap": 0.111,
+        "idf_weighted_source_overlap": 0.129
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "turning away a payload that announces a larger size than we are willing to buffer",
+      "relevant": [
+        "swarmsync.server.app.create_app._BodySizeCapMiddleware.__call__",
+        "swarmsync.config.max_body_bytes"
+      ],
+      "coverage": [
+        "cross_module",
+        "error_path",
+        "private",
+        "undocumented"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.25,
+        "rare_source_overlap": 0.25,
+        "idf_weighted_source_overlap": 0.231
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "comparing a shared secret so that a wrong guess leaks nothing through how long it took",
+      "relevant": [
+        "swarmsync.server.app.require_token"
+      ],
+      "coverage": [],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.3,
+        "rare_source_overlap": 0.2,
+        "idf_weighted_source_overlap": 0.356
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "a caller supplied location that resolves outside the permitted area is rejected before anything runs",
+      "relevant": [
+        "swarmsync.server.app._validate_managed_path",
+        "swarmsync.config.roots"
+      ],
+      "coverage": [
+        "cross_module",
+        "error_path",
+        "private"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.2,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.167
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "signalling the periodic housekeeping task to finish and then waiting for it, rather than cutting it off",
+      "relevant": [
+        "swarmsync.server.app.create_app._serving",
+        "swarmsync.coordinator.reaper.run"
+      ],
+      "coverage": [
+        "cross_module",
+        "error_path",
+        "generic_name",
+        "private",
+        "undocumented"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.5,
+        "rare_source_overlap": 0.25,
+        "idf_weighted_source_overlap": 0.362
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "the every second housekeeping cycle that clears out what has timed out and trims the history",
+      "relevant": [
+        "swarmsync.coordinator.reaper.run",
+        "swarmsync.coordinator.reaper.reap_once",
+        "swarmsync.blackboard.events.compact_events"
+      ],
+      "coverage": [
+        "cross_module",
+        "generic_name"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.5,
+        "rare_source_overlap": 0.25,
+        "idf_weighted_source_overlap": 0.34
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "keeping the audit history from growing without bound while never dropping a record something still points at",
+      "relevant": [
+        "swarmsync.blackboard.events.compact_events",
+        "swarmsync.config.events_max_age"
+      ],
+      "coverage": [
+        "cross_module",
+        "hard_negative"
+      ],
+      "hard_negative": true,
+      "note": "'trail'/'fading' bait leads to the pheromone decay pair; the answer is retention pruning, a different mechanism in the same module.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.2,
+        "rare_source_overlap": 0.2,
+        "idf_weighted_source_overlap": 0.2
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "moving an existing store aside under a dated name instead of deleting it",
+      "relevant": [
+        "swarmsync.server.serve.rotate_stale_db"
+      ],
+      "coverage": [],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.375,
+        "rare_source_overlap": 0.125,
+        "idf_weighted_source_overlap": 0.316
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "turning a refused connection into one actionable sentence instead of a raw stack trace",
+      "relevant": [
+        "swarmsync.agent.client._UnreachableTranslatingHttp",
+        "swarmsync.agent.client._UnreachableTranslatingHttp._translate",
+        "swarmsync.agent.client.BlackboardUnreachable"
+      ],
+      "coverage": [
+        "private",
+        "undocumented"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.556,
+        "rare_source_overlap": 0.111,
+        "idf_weighted_source_overlap": 0.428
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "why one particular call is given far more patience than every other call this client makes",
+      "relevant": [
+        "swarmsync.agent.client._integrate_timeout",
+        "swarmsync.agent.client.BlackboardClient.integrate"
+      ],
+      "coverage": [
+        "cross_module",
+        "private"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.25,
+        "rare_source_overlap": 0.125,
+        "idf_weighted_source_overlap": 0.179
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "a rejection is an ordinary successful reply here, so the status code must not be treated as failure",
+      "relevant": [
+        "swarmsync.agent.client.BlackboardClient.integrate"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.556,
+        "rare_source_overlap": 0.222,
+        "idf_weighted_source_overlap": 0.444
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "rewriting only the lines belonging to one named definition and nothing on either side of it",
+      "relevant": [
+        "swarmsync.agent.mutators.edit_function_body",
+        "swarmsync.agent.mutators._find_def",
+        "swarmsync.agent.mutators.fix_call_site"
+      ],
+      "coverage": [
+        "cross_module",
+        "private"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.125,
+        "rare_source_overlap": 0.125,
+        "idf_weighted_source_overlap": 0.119
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "a scripted change that lands on disk and then deliberately blocks forever so it can be killed mid flight",
+      "relevant": [
+        "swarmsync.agent.mutators.slow_edit"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.5,
+        "rare_source_overlap": 0.2,
+        "idf_weighted_source_overlap": 0.499
+      },
+      "name_bearing": false,
+      "hard_negative": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "what the command does when a person types it at a terminal with no arguments",
+      "relevant": [
+        "swarmsync.cli.main",
+        "swarmsync.server.serve.main",
+        "swarmsync.hooks.adapter.main"
+      ],
+      "coverage": [
+        "cross_module",
+        "generic_name",
+        "hard_negative",
+        "undocumented"
+      ],
+      "hard_negative": true,
+      "note": "Three unrelated entry points share the name; the query names none of them, so this separates a retriever that understands 'entry point' from one that matches the token 'main'.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.0,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.0
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    }
+  ]
+}
