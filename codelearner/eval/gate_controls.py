@@ -47,13 +47,31 @@ are not expected to agree, and where they differ the difference is the finding:
   range); and
 * one attack the server refused was **not refused at the store at all**. Running the
   corpus at the second door found `escaping_path` admitted, stored `active`, and
-  reported servable on every one of 12,803 generated instances. It was recorded as an
+  reported servable on every one of 12,803 generated instances -- which, measured the
+  way this module now measures (see "the resolution of a rate"), is ONE probe repeated
+  12,803 times: the gate did the same thing to all of them. It was recorded as an
   `Unenforced` gate entry -- controls still generated, still submitted, still scored as
   the failures they were -- because a corpus that declines to generate a control
   reports a hole as an absence. `store.SpanEscapesRepo` closed it, and closing it
   FAILED the test that pinned the gap set exactly, which is what that entry is for: a
   declared gap is a liability the suite makes you settle, not a footnote it lets you
   keep. `Unenforced` stays in the vocabulary for the next one.
+
+**Sized, not just measured.** The pooled figure this module used to lead with --
+`12,266 attacks / 1.0000` -- was never wrong and was reported at a resolution the
+corpus cannot support. It is fifteen attack SHAPES instantiated once per symbol, and
+for most of them the gate does literally the same thing on every instance: the same
+lines run, the same bytes (usually none) are read, the same `raise` fires. Four
+significant figures over a numerator that can only be 0 or n does not describe twelve
+thousand independent adversarial probes; it describes a handful of probes photocopied.
+
+So the per-family table is the output and the pooled figure is a caption under it, each
+family carries the number of DISTINCT gate executions its instances produced, and every
+bound is computed on that rather than on the submission count. The classification is
+measured at the gate and not guessed from the family name -- `Execution` explains how
+and what it does and does not establish, and it is the only thing that can say that
+`unverifiable_span` is one probe at the store and n probes at the server, which is true
+and which no reading of the family table would give you.
 
 The attacks are the ways a confident model gets a citation wrong, not arbitrary
 malformed input -- content it remembers from the wrong file, a range that runs one line
@@ -71,7 +89,9 @@ model cannot argue with it.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import math
 import os
 import shutil
 import sqlite3
@@ -1691,6 +1711,249 @@ def _hashes_after(fact: FileFact, edited: bytes, symbol: SymbolFact) -> set[str]
 
 
 # ---------------------------------------------------------------------------
+# the resolution of a rate
+# ---------------------------------------------------------------------------
+#
+# WP14. The pooled number was never wrong; it was SIZED wrong, and the sizing is what
+# persuades. `1.0000` over 12,266 submissions reads as twelve thousand independent
+# adversarial probes. It is fifteen attack shapes instantiated once per symbol, and for
+# more than half of them the gate does literally the same thing on every instance --
+# same lines, same bytes, same refusal -- so the extra instances are replications, not
+# coverage. Four significant figures over a numerator that can only be 0 or n, on a
+# corpus whose independent breadth is fifteen, is the most over-precise number here.
+#
+# Three things follow, and all three are printed rather than documented: the per-family
+# table is the measurement, the denominator is the number of distinct gate EXECUTIONS,
+# and every family carries an upper bound that says what its n actually buys.
+
+ALPHA = 0.05
+
+# What a family's instances turned out to be, measured rather than assumed. See
+# `_GateObserver` for how, and `FamilyStat.shape` for what each one licenses.
+REPLICATED = "replicated"
+VARYING = "varying"
+UNMEASURED = "unmeasured"
+
+INTERVAL_NOTE = (
+    "ub95 is a one-sided 95% Clopper-Pearson upper bound on this family's FAILURE rate.\n"
+    "Exact, not approximate: with zero failures it is 1 - 0.05**(1/n), which is what the\n"
+    "rule of three (3/n) approximates and which, unlike 3/n, is still a probability at\n"
+    "n=1 and n=2 -- and several families here have single-figure probe counts. It assumes\n"
+    "n independent Bernoulli trials. The replicated families do not supply them: instances\n"
+    "that executed the gate identically are one trial repeated, so the bound is computed\n"
+    "on `probes`, and ub(n) is printed beside it only to show the size of the difference.\n"
+    "Even ub(probes) is optimistic -- the probes are one template with one field varied,\n"
+    "not a sample from the space of attacks."
+)
+
+BREADTH_LIMIT = (
+    "WHAT THIS CANNOT SHOW\n"
+    "  Every control above is generated from FAMILIES, so this corpus can only ever\n"
+    "  expose a rule some family already names.\n"
+    "  It has found no attack nobody had enumerated.\n"
+    "  The holes it did find were found some other way: two auditors found two by\n"
+    "  probing outside the family list, and adding a second door found a third --\n"
+    "  escaping_path was refused at the server and admitted at the store, stored\n"
+    "  active and reported servable, on every instance. Adding doors is a second axis\n"
+    "  with the same property. A rate of 100.0% here is a statement about the\n"
+    "  enumerated attack shapes and about nothing else."
+)
+
+
+def binomial_at_most(successes: int, n: int, p: float) -> float:
+    """P(X <= successes) for X ~ Binomial(n, p). In log space, so n=12,266 is fine.
+
+    Public because the bound below is only worth anything if it can be checked against
+    its own definition rather than against itself -- which is what
+    `test_the_upper_bound_is_exact_rather_than_a_rule_of_thumb` does.
+    """
+    if p <= 0.0:
+        return 1.0
+    if p >= 1.0:
+        return 1.0 if successes >= n else 0.0
+    log_p, log_q = math.log(p), math.log1p(-p)
+    log_n = math.lgamma(n + 1)
+    total = 0.0
+    for k in range(min(successes, n) + 1):
+        total += math.exp(
+            log_n - math.lgamma(k + 1) - math.lgamma(n - k + 1) + k * log_p + (n - k) * log_q
+        )
+    return min(total, 1.0)
+
+
+def clopper_pearson_upper(failures: int, n: int, alpha: float = ALPHA) -> float:
+    """The one-sided (1-alpha) upper bound on a failure rate, exact.
+
+    Clopper-Pearson rather than the rule of three, and the reason is small n rather
+    than taste. `3/n` is the large-n approximation to this for a zero numerator -- they
+    agree to 0.2% by n=50 -- but it stops being a probability below n=3, and this
+    corpus has families whose honest denominator is 1. `1 - alpha**(1/n)` is closed,
+    needs no library, and answers 0.95 at n=1, which is the true and useful thing to
+    say about a single probe.
+
+    Non-zero numerators are solved by bisection on the binomial CDF, which is the same
+    definition: the bound is the p at which a result this good has probability alpha.
+    Nothing in a passing run needs that branch, and it is here because a bound that
+    silently only works at zero would be a bound nobody could trust the first time
+    something failed.
+    """
+    if n <= 0:
+        raise VacuousCorpus(
+            "an upper bound was asked over no trials. Every convention that does not "
+            "raise here returns something between 0 and 1 for a measurement that never "
+            "happened."
+        )
+    if failures >= n:
+        return 1.0
+    if failures == 0:
+        return 1.0 - alpha ** (1.0 / n)
+    low, high = failures / n, 1.0
+    for _ in range(100):
+        mid = (low + high) / 2.0
+        if binomial_at_most(failures, n, mid) > alpha:
+            low = mid
+        else:
+            high = mid
+    return high
+
+
+# ---------------------------------------------------------------------------
+# watching what the gate actually did
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class Execution:
+    """One traversal of the gate: which of its own lines ran, and what they consumed.
+
+    This is the instrument behind `replicated` vs `varying`, and it is deliberately an
+    observation of the CODE rather than an inference from the family name or from the
+    submission. Two claims a name-based rule cannot make and this one can:
+
+    * `unverifiable_span` is the same attack at both doors and is replicated at one and
+      varying at the other -- the store refuses it in the span loop before opening
+      anything, while the server reads the file and hashes both readings of the cited
+      lines before finding there is no hash to compare them against;
+    * `absent_file` submits a different path and a different byte range for every
+      symbol, and is still one probe, because the gate refuses it at the index-membership
+      check without ever reaching them.
+
+    `code_path` is the digest of the (module-relative file, line) sequence executed
+    inside the package, excluding `eval` -- the corpus watching itself would swamp the
+    signal. `evidence_read` is the digest of what the gate pulled out of the world on
+    the way: the bytes returned by every `Path.read_bytes` and the bytes handed to every
+    `content_hash` call the gate made. Reads alone are too coarse -- the store reads a
+    whole file to refuse a decoy hash, so all of a file's symbols would look alike --
+    and the hashed bytes are what the comparison actually turns on.
+
+    What identity here establishes is narrow and worth stating: it is a post-hoc fact
+    about this run, not a proof about the submissions. n instances that produced the
+    identical execution carry the information of one, because the refusal code is
+    decided by which `raise` ran and that is inside `code_path`. It does NOT establish
+    that a different symbol could not have taken a different branch.
+    """
+
+    code_path: str
+    evidence_read: str
+
+    @property
+    def digest(self) -> str:
+        return f"{self.code_path}/{self.evidence_read}"
+
+
+class _GateObserver:
+    """A `sys.settrace` hook that records one `Execution`. Cheap, and off by default.
+
+    Nothing is monkey-patched. The two boundary calls whose ARGUMENTS matter -- a file
+    read and a content hash -- are picked out by code-object identity, so a rename
+    cannot silently turn this into a line counter, and `content_hash` calls made from
+    `eval` are skipped by looking at the calling frame: the corpus computes the cited
+    hash of a quoted-text control itself, and counting that as evidence the GATE
+    consumed would make every such family look varying for the corpus's own reasons.
+    """
+
+    def __init__(self) -> None:
+        root = str(Path(__file__).resolve().parents[1]) + os.sep
+        self._root = root
+        self._skip = root + "eval" + os.sep
+        self._relative: dict[str, str | None] = {}
+        self._locals: dict[str, Any] = {}
+        self._path = hashlib.sha256()
+        self._evidence = hashlib.sha256()
+        self._hash_code = content_hash.__code__
+        self._read_code = getattr(Path.read_bytes, "__code__", None)
+
+    def _rel(self, filename: str) -> str | None:
+        try:
+            return self._relative[filename]
+        except KeyError:
+            pass
+        rel: str | None = None
+        if filename.startswith(self._root) and not filename.startswith(self._skip):
+            rel = filename[len(self._root):]
+        self._relative[filename] = rel
+        return rel
+
+    def _local_for(self, rel: str) -> Any:
+        tracer = self._locals.get(rel)
+        if tracer is None:
+            prefix = rel.encode()
+            update = self._path.update
+
+            def tracer(frame: Any, event: str, arg: Any) -> Any:  # noqa: ANN401
+                if event == "line":
+                    update(b"%s:%d;" % (prefix, frame.f_lineno))
+                return tracer
+
+            self._locals[rel] = tracer
+        return tracer
+
+    def _read_return(self, frame: Any, event: str, arg: Any) -> Any:  # noqa: ANN401
+        if event == "return" and isinstance(arg, bytes):
+            self._evidence.update(b"read:" + hashlib.sha256(arg).digest())
+        return self._read_return
+
+    def __call__(self, frame: Any, event: str, arg: Any) -> Any:  # noqa: ANN401
+        if event != "call":
+            return None
+        code = frame.f_code
+        if code is self._hash_code:
+            back = frame.f_back
+            if back is None or self._rel(back.f_code.co_filename) is not None:
+                data = frame.f_locals.get("source")
+                if isinstance(data, bytes):
+                    self._evidence.update(b"hash:" + hashlib.sha256(data).digest())
+            return None
+        if code is self._read_code:
+            return self._read_return
+        rel = self._rel(code.co_filename)
+        return None if rel is None else self._local_for(rel)
+
+    def result(self) -> Execution:
+        return Execution(
+            code_path=self._path.hexdigest(), evidence_read=self._evidence.hexdigest()
+        )
+
+
+@contextmanager
+def _observing() -> Iterator[list[Execution]]:
+    """Install the observer for one submission and hand back what it saw.
+
+    The previous trace function is saved and restored rather than assumed absent: a
+    coverage tool holding the slot would otherwise be silently uninstalled for the rest
+    of the process by a measurement that has nothing to do with it.
+    """
+    seen: list[Execution] = []
+    observer = _GateObserver()
+    previous = sys.gettrace()
+    sys.settrace(observer)
+    try:
+        yield seen
+    finally:
+        sys.settrace(previous)
+        seen.append(observer.result())
+
+
+# ---------------------------------------------------------------------------
 # running the corpus against the real gate
 # ---------------------------------------------------------------------------
 
@@ -1703,6 +1966,11 @@ class Harness:
     files: dict[str, FileFact]
     surface: str = SURFACE_DIRECT
     corpus_name: str = ""
+    # The revision of the tree the corpus was generated from, when there is one. Carried
+    # so the caption under the instance count can name what N symbols were counted at:
+    # "12,266 instances" is a different claim at every commit, and a pooled figure
+    # quoted without one is a number nobody can re-derive.
+    revision: str = ""
     pristine: dict[str, bytes] = field(default_factory=dict)
     dirty: set[str] = field(default_factory=set)
     _source: Any = None
@@ -1745,6 +2013,46 @@ class Harness:
 
     def rows(self) -> int:
         return int(self.conn.execute("SELECT count(*) FROM assertions").fetchone()[0])
+
+    def warm(self) -> None:
+        """Build everything lazy BEFORE the first control is watched.
+
+        `IndexSource`, the MCP server object and the store's connection are all built on
+        first use, and first use is inside a submission. Under observation that
+        construction lands in the first control's `Execution` and nowhere else, so a
+        family whose 1,343 instances are otherwise identical would report two distinct
+        probes -- one of them an artefact of import order. The warm-up is the whole fix
+        and it costs one query.
+        """
+        self.rows()
+        if self.surface == SURFACE_TOOL and self._server is None:
+            from ..server import build_server
+
+            self._server = build_server(self.index_path)
+
+    def observe(
+        self, control: Control
+    ) -> tuple[dict[str, Any] | None, BaseException | None, Execution]:
+        """Submit one control and record what the gate did with it.
+
+        Separate from `submit` rather than folded into it, because `submit` is also how
+        the individual tests put one control through the gate, and instrumenting those
+        would trace pytest's frames for no benefit. The trace is installed around the
+        submission only.
+
+        A raise is returned rather than propagated, so that the execution which produced
+        it survives. A gate that crashes is a finding, and a finding whose code path was
+        thrown away with the exception is one nobody can compare against the run's other
+        crashes.
+        """
+        error: BaseException | None = None
+        payload: dict[str, Any] | None = None
+        with _observing() as seen:
+            try:
+                payload = self.submit(control)
+            except Exception as exc:  # a raise IS the finding; never let it end the run
+                error = exc
+        return payload, error, seen[0]
 
     def apply(self, control: Control) -> None:
         if control.edit is None:
@@ -1913,6 +2221,20 @@ class Outcome:
     # outcome that lost its surface would be scored against whichever code set the
     # default named, which for a store-surface refusal is a set it can never produce.
     surface: str = SURFACE_DIRECT
+    # What the gate DID to produce this outcome (see `Execution`). Both default to the
+    # empty string, which means NOT WATCHED rather than "watched and consumed nothing":
+    # `FamilyStat` reads that difference and refuses to call an unwatched family
+    # replicated, because shrinking a denominator on the strength of a measurement that
+    # never happened is the same move as reporting a rate over an empty corpus.
+    code_path: str = ""
+    evidence_read: str = ""
+
+    @property
+    def execution(self) -> str | None:
+        """This outcome's execution digest, or None when nobody was watching."""
+        if not self.code_path:
+            return None
+        return f"{self.code_path}/{self.evidence_read}"
 
     @property
     def expect(self) -> str:
@@ -1962,9 +2284,70 @@ class Outcome:
         return self.verdict == REFUSED
 
 
+@dataclass(frozen=True)
+class FamilyStat:
+    """One family at one door, at the resolution the run actually supports.
+
+    `instances` is what was submitted. `probes` is how many DISTINCT things the gate
+    did with them, and it is the denominator every bound here is computed on. The two
+    differ by an order of magnitude for more than half the families, and printing only
+    the first is what made `1.0000` read as twelve thousand independent adversarial
+    tests.
+    """
+
+    family: str
+    expect: str
+    surface: str
+    instances: int
+    probes: int
+    paths: int
+    held: int
+    shape: str
+    codes: dict[str, int]
+    enforced: bool
+
+    @property
+    def hold_rate(self) -> float:
+        if not self.instances:
+            raise VacuousCorpus(f"family {self.family!r} generated no controls")
+        return self.held / self.instances
+
+    @property
+    def upper_bound(self) -> float:
+        """95% upper bound on this family's failure rate, over its PROBES.
+
+        The honest one. For a replicated family it is 0.95 however many instances were
+        submitted, which is the correct and uncomfortable answer: one probe repeated
+        1,343 times establishes what one probe establishes.
+        """
+        return clopper_pearson_upper(self.instances - self.held, self.probes)
+
+    @property
+    def naive_upper_bound(self) -> float:
+        """The same bound over INSTANCES. Printed only to show the size of the lie."""
+        return clopper_pearson_upper(self.instances - self.held, self.instances)
+
+    def row(self) -> str:
+        codes = ", ".join(f"{k}={v}" for k, v in sorted(self.codes.items()))
+        if not self.enforced:
+            codes = "NO RULE AT THIS GATE -- " + codes
+        return (
+            f"{self.family:<22} {self.expect:<8} {self.instances:>6} {self.probes:>6} "
+            f"{self.paths:>5} {self.held:>6} {self.hold_rate * 100:>7.1f}% "
+            f"{self.naive_upper_bound * 100:>7.2f}% {self.upper_bound * 100:>7.2f}%  "
+            f"{self.shape:<10} {codes}"
+        )
+
+
+FAMILY_HEADER = (
+    f"{'family':<22} {'expect':<8} {'n':>6} {'probes':>6} {'paths':>5} {'held':>6} "
+    f"{'rate':>8} {'ub95(n)':>8} {'ub95(pr)':>8}  {'shape':<10} codes"
+)
+
+
 @dataclass
 class GateReport:
-    """The measurement: a rejection rate, a positive pass rate, and what failed."""
+    """The measurement: a per-family table, and a pooled figure that summarises it."""
 
     corpus: str
     symbols: int
@@ -1972,6 +2355,7 @@ class GateReport:
     skips: list[tuple[str, str, str]]
     gate_path: str
     surface: str = SURFACE_DIRECT
+    revision: str = ""
 
     @property
     def gate(self) -> str:
@@ -2048,6 +2432,57 @@ class GateReport:
             raise VacuousCorpus(f"family {name!r} generated no controls")
         return sum(1 for o in group if o.held) / len(group)
 
+    def stat(self, name: str) -> FamilyStat:
+        """This family's row, at the resolution the run supports.
+
+        The probe count is the number of DISTINCT executions observed, and an outcome
+        that carries none makes the whole family `unmeasured` -- every instance counts
+        as its own probe and nothing is claimed. That default is the conservative one on
+        purpose: the alternative, treating an absent observation as evidence of sameness,
+        would shrink a denominator using data nobody collected.
+        """
+        group = self.family(name)
+        if not group:
+            raise VacuousCorpus(f"family {name!r} generated no controls")
+        executions = [o.execution for o in group]
+        if any(e is None for e in executions):
+            shape, probes, paths = UNMEASURED, len(group), len(group)
+        else:
+            probes = len(set(executions))
+            paths = len({o.code_path for o in group})
+            shape = REPLICATED if probes == 1 else VARYING
+        return FamilyStat(
+            family=name,
+            expect=FAMILIES[name].expect,
+            surface=self.surface,
+            instances=len(group),
+            probes=probes,
+            paths=paths,
+            held=sum(1 for o in group if o.held),
+            shape=shape,
+            codes=self.codes(name),
+            enforced=isinstance(FAMILIES[name].gates[self.gate], Rule),
+        )
+
+    def family_stats(self) -> list[FamilyStat]:
+        """Every family that produced controls here. The primary output."""
+        return [self.stat(name) for name in FAMILIES if self.family(name)]
+
+    @property
+    def negative_probes(self) -> int:
+        """Distinct gate executions across the attacks. The honest denominator.
+
+        Summed per family rather than taken over the whole run: two families that
+        happened to execute the gate identically would be two attacks nobody had
+        collapsed, and the point of the number is the replication INSIDE a family, which
+        is where the generator put it.
+        """
+        return sum(s.probes for s in self.family_stats() if s.expect == REFUSED)
+
+    @property
+    def positive_probes(self) -> int:
+        return sum(s.probes for s in self.family_stats() if s.expect == ACCEPTED)
+
     @property
     def failures(self) -> list[Outcome]:
         return [o for o in self.outcomes if not o.held]
@@ -2076,26 +2511,39 @@ class GateReport:
     def to_json(self) -> dict[str, Any]:
         return {
             "corpus": self.corpus,
+            "revision": self.revision,
             "surface": self.surface,
             "gate": self.gate,
             "symbols": self.symbols,
             "gate_path": self.gate_path,
+            "attack_shapes": len(FAMILIES),
             "negatives": len(self.negatives),
             "positives": len(self.positives),
+            "negative_probes": self.negative_probes,
+            "positive_probes": self.positive_probes,
             "rejection_rate": self._rate("rejection_rate"),
             "attributed_rate": self._rate("attributed_rate"),
             "positive_pass_rate": self._rate("positive_pass_rate"),
             "families": {
-                name: {
-                    "expect": FAMILIES[name].expect,
-                    "n": len(self.family(name)),
-                    "held": sum(1 for o in self.family(name) if o.held),
-                    "hold_rate": self.hold_rate(name) if self.family(name) else None,
-                    "codes": self.codes(name),
-                    "enforced": isinstance(FAMILIES[name].gates[self.gate], Rule),
+                stat.family: {
+                    "expect": stat.expect,
+                    # `n` keeps meaning INSTANCES, and `instances` is its name spelled
+                    # out beside it. Reusing `n` for the probe count would have been the
+                    # tidier schema and would have silently changed what every existing
+                    # reader of this payload was comparing.
+                    "n": stat.instances,
+                    "instances": stat.instances,
+                    "probes": stat.probes,
+                    "paths": stat.paths,
+                    "shape": stat.shape,
+                    "held": stat.held,
+                    "hold_rate": stat.hold_rate,
+                    "upper_bound_95": stat.upper_bound,
+                    "naive_upper_bound_95": stat.naive_upper_bound,
+                    "codes": stat.codes,
+                    "enforced": stat.enforced,
                 }
-                for name in FAMILIES
-                if self.family(name)
+                for stat in self.family_stats()
             },
             "failures": [
                 {"control": o.control, "family": o.family, "verdict": o.verdict,
@@ -2107,44 +2555,69 @@ class GateReport:
             "skips": [{"family": f, "subject": s, "reason": r} for f, s, r in self.skips],
         }
 
-    def _family_row(self, name: str) -> str:
-        """One family's cells for this surface: n, held, rate, and what it was scored by."""
-        group = self.family(name)
+    def _missing_row(self, name: str) -> str:
         entry = FAMILIES[name].gates[self.gate]
-        if not group:
-            note = "(not expressible here)" if isinstance(entry, Inexpressible) else "(no instances)"
-            return f"{0:>5} {'-':>5} {'-':>7}  {note}"
-        held = sum(1 for o in group if o.held)
-        if isinstance(entry, Unenforced):
-            codes = "NO RULE AT THIS GATE -- " + ", ".join(
-                f"{k}={v}" for k, v in sorted(self.codes(name).items())
-            )
-        else:
-            codes = ", ".join(f"{k}={v}" for k, v in sorted(self.codes(name).items()))
-        return f"{len(group):>5} {held:>5} {self.hold_rate(name):>7.3f}  {codes}"
+        note = "(not expressible here)" if isinstance(entry, Inexpressible) else "(no instances)"
+        return (
+            f"{name:<22} {FAMILIES[name].expect:<8} {0:>6} {'-':>6} {'-':>5} {'-':>6} "
+            f"{'-':>8} {'-':>8} {'-':>8}  {'-':<10} {note}"
+        )
+
+    def caption(self) -> str:
+        """What the pooled count is a count OF. Printed where the count is.
+
+        `12,266 attacks` is the sentence a reader takes away as twelve thousand
+        independent adversarial probes, and the fix is not a smaller number -- it is the
+        denominator being described. Fifteen shapes, instantiated per symbol, against a
+        stated number of symbols in a named tree.
+        """
+        at = self.revision or self.corpus
+        return (
+            f"{len(FAMILIES)} attack shapes, instantiated per symbol against "
+            f"{self.symbols} symbols at {at}."
+        )
 
     def format_table(self) -> str:
+        pooled = "-" if self._rate("rejection_rate") is None else (
+            f"{self.rejection_rate * 100:.1f}%"
+        )
         lines = [
             f"corpus: {self.corpus}  ({self.symbols} symbols, surface={self.surface})",
             f"gate:   {self.gate_path}",
             "",
-            f"{'family':<24} {'expect':<9} {'n':>5} {'held':>5} {'rate':>7}  codes",
+            "PER FAMILY -- this is the measurement. Everything below it is a summary.",
+            "",
+            FAMILY_HEADER,
         ]
         for name in FAMILIES:
-            lines.append(
-                f"{name:<24} {FAMILIES[name].expect:<9} {self._family_row(name)}"
-            )
+            group = self.family(name)
+            lines.append(self.stat(name).row() if group else self._missing_row(name))
+
         def show(name: str) -> str:
             rate = self._rate(name)
-            return "     -" if rate is None else f"{rate:.4f}"
+            return "     -" if rate is None else f"{rate * 100:.1f}%"
 
         lines += [
             "",
-            f"rejection rate      {show('rejection_rate')}  ({len(self.negatives)} attacks)",
-            f"attributed rate     {show('attributed_rate')}  (refused by the rule it targets, "
-            "no row written)",
-            f"positive pass rate  {show('positive_pass_rate')}  ({len(self.positives)} "
-            "legitimate submissions)",
+            self.caption(),
+            "",
+            f"pooled   refused {show('rejection_rate')}  attributed "
+            f"{show('attributed_rate')}  over {len(self.negatives)} instances "
+            f"({self.negative_probes} distinct gate executions)",
+            f"         positive {show('positive_pass_rate')}  over "
+            f"{len(self.positives)} legitimate submissions "
+            f"({self.positive_probes} distinct gate executions)",
+            f"  {pooled} pooled is an EXISTENCE CLAIM about this run:",
+            "  no instance of any enumerated attack was admitted at this door.",
+            "  It is not an estimate of the probability an attack gets through -- most of",
+            "  that denominator is a handful of probes repeated once per symbol. Read it",
+            "  beside the positive pass rate, which is the only thing stopping a gate that",
+            "  refuses everything from scoring perfectly, and read the per-family bounds",
+            "  for what any of it is worth.",
+            "",
+            INTERVAL_NOTE,
+            "",
+            BREADTH_LIMIT,
         ]
         gaps = self.known_gaps
         if gaps:
@@ -2169,6 +2642,28 @@ class GateReport:
         return "\n".join(lines)
 
 
+def _revision_of(repo: Path) -> str:
+    """The commit the corpus was generated from, or "" when there is not one.
+
+    Best effort, and silent when it fails. A caption naming a revision the reader can
+    check is worth a subprocess; a corpus that refuses to run outside a git checkout is
+    not, and the harness deliberately indexes a COPY with `.git` stripped, so the
+    question can only be asked here, of the tree that was pointed at.
+    """
+    git = shutil.which("git")
+    if git is None:
+        return ""
+    try:
+        proc = subprocess.run(  # noqa: S603
+            [git, "-C", str(repo), "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, check=False, timeout=10,
+        )
+    except OSError:  # pragma: no cover - a git that exists and will not start
+        return ""
+    revision = proc.stdout.strip()
+    return revision if proc.returncode == 0 and revision else ""
+
+
 def build_harness(
     workdir: Path,
     *,
@@ -2184,7 +2679,9 @@ def build_harness(
     worth taking to measure a rate.
     """
     root = workdir / "repo"
+    revision = ""
     if repo is not None:
+        revision = _revision_of(repo)
         shutil.copytree(
             repo,
             root,
@@ -2211,6 +2708,7 @@ def build_harness(
         files=facts,
         surface=surface,
         corpus_name=corpus_name,
+        revision=revision,
         pristine={path: fact.source for path, fact in facts.items()},
     )
 
@@ -2228,19 +2726,20 @@ def run_controls(
         controls = [c for c in controls if c.family in wanted]
         skips = [s for s in skips if s[0] in wanted]
     outcomes: list[Outcome] = []
+    harness.warm()
     for control in controls:
         harness.restore()
         harness.apply(control)
         before = harness.rows()
-        try:
-            payload = harness.submit(control)
-        except Exception as exc:  # a raise IS the finding; never let it end the run
+        payload, error, execution = harness.observe(control)
+        if error is not None or payload is None:
             outcomes.append(Outcome(
                 control=control.name, family=control.family, verdict=RAISED,
-                code=type(exc).__name__, rows_added=harness.rows() - before,
+                code=type(error).__name__, rows_added=harness.rows() - before,
                 evidence=0, expected_evidence=len(control.spans), servable=None,
-                detail=f"{type(exc).__name__}: {exc}"[:200],
+                detail=f"{type(error).__name__}: {error}"[:200],
                 surface=harness.surface,
+                code_path=execution.code_path, evidence_read=execution.evidence_read,
             ))
             continue
         rows_added = harness.rows() - before
@@ -2255,6 +2754,8 @@ def run_controls(
             expected_evidence=len(control.spans),
             servable=payload.get("servable") if accepted else None,
             surface=harness.surface,
+            code_path=execution.code_path,
+            evidence_read=execution.evidence_read,
         ))
     harness.restore()
     return GateReport(
@@ -2264,6 +2765,7 @@ def run_controls(
         skips=skips,
         gate_path=harness.gate_path(),
         surface=harness.surface,
+        revision=harness.revision,
     )
 
 
@@ -2341,38 +2843,43 @@ class SurfaceComparison:
         }
 
     def format_table(self) -> str:
-        width = 24
-        head = f"{'family':<{width}} {'expect':<9}"
-        sub = f"{'':<{width}} {'':<9}"
+        width = 22
+        head = f"{'family':<{width}} {'expect':<8}"
+        sub = f"{'':<{width}} {'':<8}"
         for surface in self.surfaces:
-            head += f"  {surface:^21}"
-            sub += f"  {'n':>5} {'held':>5} {'rate':>7}"
+            head += f"  {surface:^37}"
+            sub += f"  {'n':>6} {'probes':>6} {'rate':>7} {'ub95(pr)':>8} {'shape':<5}"
         lines = ["the same corpus, at each door it can be reached through", "", head, sub]
         for name in FAMILIES:
-            row = f"{name:<{width}} {FAMILIES[name].expect:<9}"
+            row = f"{name:<{width}} {FAMILIES[name].expect:<8}"
             for surface in self.surfaces:
                 report = self.reports[surface]
-                group = report.family(name)
-                entry = FAMILIES[name].gates[report.gate]
-                if not group:
+                if not report.family(name):
+                    entry = FAMILIES[name].gates[report.gate]
                     mark = "n/a" if isinstance(entry, Inexpressible) else "-"
-                    row += f"  {0:>5} {mark:>5} {'-':>7}"
+                    row += f"  {0:>6} {mark:>6} {'-':>7} {'-':>8} {'-':<5}"
                 else:
-                    held = sum(1 for o in group if o.held)
-                    row += f"  {len(group):>5} {held:>5} {report.hold_rate(name):>7.3f}"
+                    stat = report.stat(name)
+                    row += (
+                        f"  {stat.instances:>6} {stat.probes:>6} "
+                        f"{stat.hold_rate * 100:>6.1f}% {stat.upper_bound * 100:>7.2f}% "
+                        f"{stat.shape[:4]:<5}"
+                    )
             lines.append(row)
         lines.append("")
         for surface, report in self.reports.items():
             def show(report: GateReport, name: str) -> str:
                 rate = report._rate(name)
-                return "     -" if rate is None else f"{rate:.4f}"
+                return "    -" if rate is None else f"{rate * 100:.1f}%"
 
             lines.append(
-                f"{surface:<8} rejection {show(report, 'rejection_rate')}  "
+                f"{surface:<8} refused {show(report, 'rejection_rate')}  "
                 f"attributed {show(report, 'attributed_rate')}  "
-                f"positive {show(report, 'positive_pass_rate')}  "
-                f"gate={Path(report.gate_path).name}"
+                f"positive {show(report, 'positive_pass_rate')}  over "
+                f"{len(report.negatives)} instances / {report.negative_probes} distinct "
+                f"gate executions  gate={Path(report.gate_path).name}"
             )
+            lines.append(f"{'':<8} {report.caption()}")
             for name in sorted({o.family for o in report.known_gaps}):
                 lines.append(f"{'':<8}   KNOWN GAP: {name} is not refused here at all")
         divergent = self.divergent()
@@ -2392,6 +2899,7 @@ class SurfaceComparison:
                 )
                 for name, by_surface in differing.items()
             ]
+        lines += ["", INTERVAL_NOTE, "", BREADTH_LIMIT]
         return "\n".join(lines)
 
 
@@ -2447,11 +2955,36 @@ class MutationResult:
         """
         return self.mutant_rate < self.baseline_rate
 
+    @property
+    def flip_fraction(self) -> float:
+        """What proportion of the family's instances the deletion actually flipped.
+
+        The distinction `12/12 mutation-verified` threw away. Deleting a NEGATIVE rule
+        admits the attack on every instance -- the mutant rate is exactly 0.0, and the
+        claim is as strong as a mutation claim gets. Deleting the leniency a POSITIVE
+        family names is only partially detected by construction: `published_hash` cites
+        the symbol reading, and removing it falsely rejects only the symbols whose
+        stored bytes are not their lines' bytes, leaving the rest admitted. Both are
+        `detected`; pooling them states the weaker result over the stronger one.
+        """
+        if self.baseline_n <= 0:
+            raise VacuousCorpus(f"{self.family!r} had no baseline instances to flip")
+        return len(self.flipped) / self.baseline_n
+
+    @property
+    def partial(self) -> bool:
+        return self.detected and 0.0 < self.flip_fraction < 1.0
+
     def row(self) -> str:
-        mark = "detected" if self.detected else "NOT DETECTED"
+        if not self.detected:
+            mark = "NOT DETECTED"
+        elif self.partial:
+            mark = f"detected (partial: {len(self.flipped)}/{self.baseline_n} flipped)"
+        else:
+            mark = f"detected ({len(self.flipped)}/{self.baseline_n} flipped)"
         return (
             f"{self.family:<24} {self.surface:<7} {self.baseline_rate:>8.3f} -> "
-            f"{self.mutant_rate:<8.3f} {self.mutant_n:>4}  {mark}"
+            f"{self.mutant_rate:<8.3f} {self.mutant_n:>5}  {mark}"
         )
 
 
@@ -2602,6 +3135,96 @@ def mutable_families(surface: str) -> tuple[str, ...]:
     )
 
 
+@dataclass(frozen=True)
+class MutationCensus:
+    """How many rules this corpus can delete, by door and by polarity.
+
+    `12/12 mutation-verified` was one door and one polarity, and it is now wrong in
+    three ways at once: there are two doors, several rules have a home at each of them,
+    and the positive families' mutations are only partially detected. The counts are
+    derived from `FAMILIES` rather than listed, so a family that gains a rule at a door
+    it did not have one at is counted from the next run without anybody remembering.
+    """
+
+    negatives: tuple[tuple[str, str], ...]
+    positives: tuple[tuple[str, str], ...]
+    unmutable: tuple[tuple[str, str], ...]
+
+    def cases(self) -> tuple[tuple[str, str], ...]:
+        return self.negatives + self.positives
+
+    def summary(self) -> str:
+        """What there is to mutate. Structure only -- `mutation_summary` measures it.
+
+        Deliberately not a result. `12/12 mutation-verified` conflated "there are twelve
+        rules" with "twelve mutations were detected", and the two drifted apart the
+        moment a rule gained a second home. This counts rules; running them counts
+        detections.
+        """
+        doors = len({s for _, s in self.cases()})
+        head = (
+            f"{len(self.negatives)} negative and {len(self.positives)} positive "
+            f"(family, door) rules have an edit that deletes them, over "
+            f"{doors} door{'' if doors == 1 else 's'}."
+        )
+        if not self.unmutable:
+            return head + " Every family has a rule at every door counted."
+        return head + f" {len(self.unmutable)} pair(s) have nothing to delete: " + ", ".join(
+            f"{f}@{s}" for f, s in self.unmutable
+        )
+
+
+def mutation_summary(results: Sequence[MutationResult]) -> str:
+    """The measured replacement for `12/12 mutation-verified`, polarities apart.
+
+    Three counts, because they are three different strengths of claim and pooling them
+    states the weakest. A NEGATIVE rule's deletion admits or misattributes the attack on
+    every instance -- the mutant hold rate is exactly 0.000, which is as strong as a
+    mutation result gets. A POSITIVE rule's deletion is detected, but often only
+    partially: `published_hash` names the symbol reading of a line range, and deleting
+    it falsely rejects only the symbols whose stored bytes are not their lines' bytes.
+    Reporting `detected` for both loses the difference; reporting the partial ones as
+    the headline understates the negative result, which is the best-verified thing here.
+    """
+    negatives = [r for r in results if FAMILIES[r.family].expect == REFUSED]
+    positives = [r for r in results if FAMILIES[r.family].expect == ACCEPTED]
+    total = [r for r in negatives if r.detected and r.mutant_rate == 0.0]
+    detected = [r for r in positives if r.detected]
+    partial = [r for r in detected if r.partial]
+    return (
+        f"{len(total)}/{len(negatives)} negative rules produce an admitted or "
+        f"misattributed attack on EVERY instance when deleted (mutant hold rate 0.000); "
+        f"{len(detected)}/{len(positives)} positive rules are detected, {len(partial)} of "
+        f"them only partially -- deleting one reading of a legitimate citation flips the "
+        f"instances that needed that reading and leaves the rest admitted "
+        + (
+            "(" + ", ".join(
+                f"{r.family}@{r.surface} {len(r.flipped)}/{r.baseline_n}" for r in partial
+            ) + ")"
+            if partial
+            else "(none partial in this run)"
+        )
+    )
+
+
+def mutation_census(
+    surfaces: Sequence[str] = (SURFACE_DIRECT, SURFACE_STORE),
+) -> MutationCensus:
+    """Count the mutations this corpus can run, at every door, polarity kept apart."""
+    negatives, positives, unmutable = [], [], []
+    for surface in surfaces:
+        for name, spec in FAMILIES.items():
+            if not isinstance(spec.at(surface), Rule):
+                unmutable.append((name, surface))
+            elif spec.expect == REFUSED:
+                negatives.append((name, surface))
+            else:
+                positives.append((name, surface))
+    return MutationCensus(
+        negatives=tuple(negatives), positives=tuple(positives), unmutable=tuple(unmutable)
+    )
+
+
 def run_mutations(
     workdir: Path,
     *,
@@ -2688,7 +3311,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print("")
             print(f"{'family':<24} {'surface':<7} {'baseline':>8}    {'mutant':<8} "
-                  f"{'n':>4}  verdict")
+                  f"{'n':>5}  verdict")
             for result in results:
                 print(result.row())
             for name in FAMILIES:
@@ -2696,6 +3319,9 @@ def main(argv: list[str] | None = None) -> int:
                     entry = FAMILIES[name].at(args.surface)
                     why = getattr(entry, "detail", None) or entry.reason  # type: ignore[union-attr]
                     print(f"{name:<24} {args.surface:<7} NO MUTATION -- {why}")
+            print("")
+            print(mutation_census([args.surface]).summary())
+            print(mutation_summary(results))
         if any(not r.detected for r in results):
             return 1
     # A known gap is a measurement, not a regression, and a command that exits non-zero

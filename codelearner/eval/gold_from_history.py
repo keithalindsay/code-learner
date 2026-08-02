@@ -20,6 +20,10 @@ That proviso is the whole design, so it is enforced in code rather than promised
   - `find_leaks()` walks a view's whole object graph looking for the label text. The
     scoring harness runs it on every view before it scores anything and raises
     `LeakDetected` rather than reporting a number.
+  - `audit_leak_boundary()` runs the same check across the **full cross product** --
+    every view against every label, not each view against its own -- and
+    `run_purpose_eval` calls it first and aborts on any finding. Until it did, the
+    cross-symbol case was unreachable from every scored run, and there was one.
   - `suspect_tokens()` checks the other direction: a rare word that appears in the
     held-out prose and in the generator's OUTPUT but nowhere in the input it was
     given is either a coincidence or a leak, and is counted and reported either way.
@@ -28,14 +32,20 @@ An eval whose ground truth is reachable from its input measures nothing, and it
 measures nothing *silently* -- the scores look better, which is exactly the direction
 that does not prompt anyone to check.
 
-## What was measured, on swarm-sync (93 commits, 316 non-test symbols)
+## What was measured, at swarm-sync@3119a97 (95 commits, 318 non-test symbols)
 
-The technique yields a usable label for **13.3% of symbols** (42 of 316), and the
-funnel says where the other 274 went. One rejection reason accounts for essentially
-all of it: 272 symbols were introduced by a commit whose prose never names them.
+**Every number below is stamped with a sha, and that is not bookkeeping pedantry.**
+A mined corpus is a function of a repo's history, so it moves with every commit
+Keith makes: the same conditions that produced "42 of 316, 13.3%, 17 commits" now
+produce the table here. The conditions are deterministic and reproduce exactly at a
+given sha; an uncaptioned table is what turns that into an apparent instability.
 
-  - 163 symbols (52%) trace to the single initial commit, whose entire message is a
-    602-character project summary. One label cannot describe 163 symbols.
+The technique yields a usable label for **13.2% of symbols** (42 of 318), and the
+funnel says where the other 276 went. One rejection reason accounts for essentially
+all of it: 273 symbols were introduced by a commit whose prose never names them.
+
+  - Most of the loss traces to the single initial commit, whose entire message is a
+    602-character project summary. One label cannot describe that many symbols.
   - The rest come from work-package-sized commits (2 to 57 files, median 6). Their
     prose describes a *change*, and usually several changes.
 
@@ -49,40 +59,47 @@ does the work is therefore the mention rule, and it costs 87% of the corpus.
 So the honest summary is that this pays off as a *sample*, not as a labelling. 42
 labels for zero labelling effort is nearly twice the hand-labelled retrieval gold set,
 and it covers 13% of the symbols one would want to measure. It gets no cheaper on a
-smaller repo: run against code-learner itself (7 commits, 231 symbols) the yield is
-**3 labels, 1.3%**. The technique needs history that is fine-grained, not merely
-present.
+coarser history: run against code-learner itself (15 commits, 635 symbols) the yield
+is **16 labels, 2.5%**. The technique needs history that is fine-grained relative to
+the code, not merely present -- swarm-sync's 95 commits over 318 symbols buy five
+times the yield of code-learner's 15 over 635.
 
 ## Does the mined prose actually describe its symbol?
 
 Two independent checks, because "the commit named the symbol" is not the same claim.
 
-**Purpose agreement** (`score_purposes`, name-blind token-F1, n=42): a docstring-first-
-sentence generator scores 0.159 against 0.023 for the shuffled control; a body-
-identifier bag scores 0.208 against 0.047; name-and-signature-only scores 0.020
-against 0.002. Every condition clears its control by 4-7x, so the labels do carry
-symbol-specific signal. Absolute values are low, and the reasons are limits 2 and 4
-below.
+**Purpose agreement** (`score_purposes`, name-blind token-F1, n=42, swarm-sync@3119a97,
+null = 500 cross-commit derangements at seed 20250729, CI = clustered bootstrap over
+the 17 introducing commits at seed 20250801):
 
-Swap token-F1 for `Qwen3-Embedding-0.6B` cosine and the ordering is identical:
-docstring 0.631 vs 0.427 control (lift 0.203), body identifiers 0.675 vs 0.480 (0.194),
-body doc-blind 0.557 vs 0.420 (0.137), name-and-signature 0.451 vs 0.416 (0.035). Two
-unrelated similarity measures ranking four conditions the same way is the most
-reassuring result here -- it is evidence about the labels rather than about either
-metric. Note the cosine floor: any two English texts score ~0.42, so the raw numbers
-look far better than the token-F1 ones while carrying the same information, and the
-name echo keeps a residual 0.035 lift that token-F1 puts at 0.018. Neither measure
-blinds a name perfectly.
+    condition                      gold  null   sd    lift   95% CI            p
+    docstring first sentence      0.125 0.017 0.006  0.109  [0.063, 0.171]  0.002
+    name + signature only         0.019 0.004 0.003  0.014  [0.002, 0.032]  0.002
+    body identifiers              0.193 0.041 0.005  0.152  [0.107, 0.205]  0.002
+    body identifiers, doc-blind   0.119 0.031 0.005  0.089  [0.052, 0.143]  0.002
+
+Every condition clears its null at the p floor -- no derangement of 500 reached the
+gold score, including the name floor -- so the labels do carry symbol-specific signal.
+The result STRENGTHENS under the statistical corrections rather than weakening: what
+falls is the absolute levels, not the separation. Absolute values are low, and the
+reasons are limits 2 and 4 below.
+
+The intervals are the number that changed the reading. The four lifts span
+0.014-0.152 and their intervals are +/-0.04 to +/-0.05 wide, so `docstring` and
+`body identifiers, doc-blind` (0.109 vs 0.089) are NOT separated by this corpus, while
+`body identifiers` against either of them is. Any claim resting on a gap smaller than
+about 0.05 needs a paired test, not two overlapping intervals.
 
 **Label validity** (`label_retrieval_validity`, lexical, name-blind): use each label
 as a search query and see whether it retrieves the symbol it was mined from. MRR
-0.288, hit@5 0.452, hit@10 0.500. So half the mined labels do not put their own symbol
+0.254, hit@5 0.405, hit@10 0.500. So half the mined labels do not put their own symbol
 in the top ten of a lexical search -- those are labels whose vocabulary is about a
-work package. For scale, the hand-labelled gold set scored on the same modality and
-the same measure reaches MRR 0.221 / hit@10 0.435, on the *easier* criterion of
-several acceptable symbols per query. Mined prose is, if anything, a slightly better
-retrieval query than a hand-written question. That is a statement about both sets, and
-it is the one number here comparable to existing work in this repo.
+work package. The comparison to the hand-labelled set that used to sit here (mined
+prose "is, if anything, a slightly better retrieval query than a hand-written
+question") is WITHDRAWN: re-run, the hand set beats the mined set on all three
+measures, and the correction to name-blinding below moves the mined number further
+down. On 16 and 42 items respectively neither set can support the comparison in
+either direction.
 
 The two gold sets barely overlap: only 5 of the hand set's 23 symbols got a mined
 label. They are complementary rather than alternative, and no per-symbol agreement
@@ -93,11 +110,12 @@ between them can be computed from five cases.
 1. **The label is not independent of the source.** One author wrote the docstring and
    the commit message in the same sitting. A docstring-reading generator therefore
    scores high partly through shared authorship, not through inference. Two things
-   respond to this: labels found verbatim in their own symbol's source are rejected
-   outright (2 of 44 on swarm-sync), and `score_purposes` runs a `docstring_blind`
-   condition -- which costs the body-identifier generator a third of its lift (0.161
-   -> 0.089). All 42 usable-labelled symbols in swarm-sync have a docstring, so this
-   is not a corner case on this corpus, it is the whole corpus.
+   respond to this: a label found verbatim in ANY labelled symbol's source is rejected
+   outright (3 of 45 at swarm-sync@3119a97 -- 2 in the symbol's own source, 1 in a
+   sibling's), and `score_purposes` runs a `docstring_blind` condition -- which costs
+   the body-identifier generator 41% of its lift (0.152 -> 0.089). All 42
+   usable-labelled symbols in swarm-sync have a docstring, so this is not a corner
+   case on this corpus, it is the whole corpus.
 
 2. **A mention is not a purpose statement.** For a symbol introduced by a bug-fix
    commit, the prose that names it often describes the bug rather than the symbol's
@@ -106,14 +124,39 @@ between them can be computed from five cases.
    low even for a good generator.
 
 3. **42 labels are not 42 independent measurements.** They come from 17 distinct
-   commits, and one commit supplies 9 of them. Treat differences of a few points as
-   noise, exactly as `ablation.py` says of its 16 queries.
+   commits, and one commit supplies 9 of them. This is not a caveat to hold in mind,
+   it is an input to the arithmetic, and it enters at both places it can: the null is
+   drawn cross-commit (`_null_orders`) so no view is ever paired with a sentence of
+   its own commit message, and the interval resamples COMMITS
+   (`_clustered_bootstrap`), which is roughly `sqrt(9)` wider on the cluster that
+   matters than the iid interval it replaces. The published resolution between two
+   conditions is about **0.04-0.05 on lift** -- read that, not the third decimal.
 
 4. **Token-F1 is a weak similarity.** It is deterministic and model-free, which is why
    the tests use it, and it rewards vocabulary overlap that carries no meaning -- it
    cannot tell "opens the connection" from "closes the connection" (there is a test
    pinning that). The shuffled control is the answer: it is the score available from
    vocabulary alone, and real signal has to clear it. Read the *gap*, never the score.
+
+## The concession this module used to make, and no longer can
+
+The README concedes that "correlated phrasing cannot be filtered" -- one author wrote
+the docstring and the commit message in a sitting, so their shared vocabulary is a
+property of the corpus rather than a bug in the harness. That concession is true, and
+it does not describe what was actually found here.
+
+The finding at swarm-sync@3119a97 was a **32-character clause copied verbatim across a
+symbol boundary**: `_AffectedFiles`' held-out label, sitting word for word in
+`_reverse_dep_files`' docstring. That is not correlated phrasing, it is a copy, and a
+copy is exactly the thing that CAN be filtered -- `find_leaks` was already able to see
+it, and `audit_leak_boundary` had been finding it for as long as anyone ran it by
+hand. What was missing was a caller. The concession was doing work it had not earned:
+covering a filterable failure with the language of an unfilterable one.
+
+The remaining honest concession is narrower. Shared vocabulary between a label and its
+symbol's source, below a copied clause, is not filterable and is not filtered. The
+`docstring_blind` condition is what bounds it, and it costs the body-identifier
+generator 41% of its lift.
 """
 from __future__ import annotations
 
@@ -123,7 +166,7 @@ import random
 import re
 import subprocess
 from collections.abc import Callable, Iterable, Iterator, Sequence
-from dataclasses import dataclass, field, fields, is_dataclass
+from dataclasses import dataclass, field, fields, is_dataclass, replace
 from pathlib import Path
 
 from ..ingest.indexer import is_test_path, iter_python_files
@@ -153,6 +196,20 @@ REJECT_TOO_SHORT = "too_short"
 # a docstring-copying generator scores 1.0 on it for no reason. Found by running the
 # leak check on swarm-sync, where it fires on real symbols.
 REJECT_COPIED_INTO_SOURCE = "copied_into_source"
+# The label prose is copied verbatim into a DIFFERENT labelled symbol's source. The
+# same authorship accident as above, one symbol over: the author reused a clause from
+# the commit message in a neighbour's docstring. `REJECT_COPIED_INTO_SOURCE` cannot
+# see it, because that check is per-symbol by construction -- it compares a label
+# against its own source and nothing else.
+#
+# It matters because the corpus is scored as a SET. Every view is paired with some
+# other label to form the shuffled control, so a label sitting inside another
+# symbol's view inflates that pairing and understates the lift. It is also the only
+# thing `audit_leak_boundary` can find that the scored run cannot, which is why the
+# audit went unwired for so long without anyone noticing it had something to say.
+#
+# NOT restricted to siblings from the same commit -- see `_reject_cross_symbol_copies`.
+REJECT_COPIED_INTO_SIBLING = "copied_into_sibling"
 
 # A trailer block at the END of a commit message: `Key: value` lines, possibly
 # several. Stripped because `Co-Authored-By: Claude ...` is in most commits in both
@@ -321,6 +378,13 @@ class MineReport:
     considered: int = 0
     commits_in_history: int = 0
     labels: list[MinedLabel] = field(default_factory=list)
+    #: Set by `run_purpose_eval` from `audit_leak_boundary`. `audit_pairs` is
+    #: views x labels -- the full cross product the audit actually walked, which is
+    #: the number worth publishing; `audit_views` alone reads as if the check were
+    #: per-symbol, which is precisely the check it exists to be stronger than.
+    audit_views: int = 0
+    audit_pairs: int = 0
+    audit_findings: list[str] = field(default_factory=list)
 
     @property
     def usable(self) -> list[MinedLabel]:
@@ -636,6 +700,10 @@ def mine_labels(
     report = MineReport(repo=str(repo), commits_in_history=commit_count(repo))
     pairs = list(symbols) if symbols is not None else list(repo_symbols(repo, include_tests))
     file_bytes: dict[str, bytes] = {}
+    # (index into report.labels, that symbol's source) for every candidate that
+    # survived the per-symbol filters. The cross-symbol copy filter needs the whole
+    # surviving set before it can decide anything, so it runs as a second pass.
+    survivors: list[tuple[int, str]] = []
     for rel, sym in pairs:
         report.considered += 1
         prov = introducing_commit(repo, rel, sym.line_start, sym.line_end)
@@ -677,8 +745,56 @@ def mine_labels(
                 _candidate(rel, sym, prov, prose, units, reject=REJECT_COPIED_INTO_SOURCE)
             )
             continue
+        survivors.append((len(report.labels), symbol_source))
         report.labels.append(_candidate(rel, sym, prov, prose, units))
+    _reject_cross_symbol_copies(report, survivors)
     return report
+
+
+def _reject_cross_symbol_copies(
+    report: MineReport, survivors: Sequence[tuple[int, str]]
+) -> None:
+    """Reject a label whose clause is copied into some OTHER labelled symbol's source.
+
+    The per-symbol copy filter above compares a label to its own source, so it cannot
+    reject this class at all -- not as a matter of threshold or tuning, but by
+    construction. `audit_leak_boundary` is the only thing that ever looked at the
+    cross product, and on swarm-sync it finds a 32-character clause from
+    `_AffectedFiles`'s held-out label sitting verbatim in `_reverse_dep_files`'s
+    docstring.
+
+    **The two symbols do not share an introducing commit** (`982386a` vs `d6e029a`),
+    and that is the reason this filter is not scoped to same-commit siblings, which
+    was the obvious design. A later commit edited the neighbour's docstring; the
+    neighbour's LABEL still comes from the commit that first wrote its lines. Scoping
+    the check to a commit would have shipped a filter that leaves the only real
+    finding in place while reporting that it had closed it.
+
+    Direction: the LABEL is dropped, not the symbol whose source holds the copy. That
+    matches `REJECT_COPIED_INTO_SOURCE` (a label that is not held out is not a label)
+    and it is what makes the audit's cross product come back empty, since the audit
+    checks every view against every surviving label.
+
+    One pass, not a fixed point. A label whose prose leaks only into a source that is
+    itself dropped in this same pass is dropped anyway -- conservative in the direction
+    that costs yield rather than the one that keeps a leak. Measured at
+    swarm-sync@3119a97: a second pass over the survivors rejects nothing further, so
+    the extra machinery would buy nothing on this corpus. `audit_leak_boundary` is
+    what would catch it if that ever stopped being true, and it now runs on every
+    scored run.
+    """
+    if len(survivors) < 2:
+        return
+    for i, (idx, _source) in enumerate(survivors):
+        prose = report.labels[idx].prose
+        for j, (_other_idx, other_source) in enumerate(survivors):
+            if i == j:
+                continue
+            if find_leaks(other_source, [prose]):
+                report.labels[idx] = replace(
+                    report.labels[idx], reject=REJECT_COPIED_INTO_SIBLING
+                )
+                break
 
 
 def _candidate(
@@ -1020,13 +1136,36 @@ def embedding_similarity(embedder: object) -> Callable[[str, str], float]:
     return similarity
 
 
-def _derangement(n: int, seed: int = 20250729) -> list[int]:
+#: Draws of the null distribution. 500 rather than 1 because ONE derangement is one
+#: sample from the null and carries its full sampling error -- which the old `lift`
+#: silently inherited and never reported. Measured on swarm-sync: the single shipped
+#: draw put `body identifiers` +2.3sd above the null mean and `name + signature`
+#: -1.3sd below it, so the published lifts were wrong by up to 0.015 in opposite
+#: directions on different rows. Averaging is not a refinement here, it is what makes
+#: two rows comparable.
+#:
+#: 500 also fixes the resolution of the permutation p-value at 1/501 = 0.002, which is
+#: the smallest number this test can produce and should be read as "no draw beat it",
+#: never as a probability that small.
+NULL_DRAWS = 500
+NULL_SEED = 20250729
+
+#: Bootstrap settings. Stated here and PRINTED in `format_report`, because a
+#: confidence interval whose resample count and seed live only in the source is not
+#: reproducible by the person reading the number.
+BOOTSTRAP_RESAMPLES = 2000
+BOOTSTRAP_SEED = 20250801
+
+
+def _derangement(n: int, seed: int = NULL_SEED) -> list[int]:
     """A permutation with no fixed point, deterministic for a given n and seed.
 
     The shuffled control needs every view paired with a label that is NOT its own.
     A rotation would do it in one line but pairs each symbol with its file
     neighbour, and neighbours share vocabulary -- which would overstate the control
     and understate the signal.
+
+    Retained as the single-draw primitive. `_null_orders` is what scoring uses.
     """
     if n < 2:
         return list(range(n))
@@ -1037,6 +1176,119 @@ def _derangement(n: int, seed: int = 20250729) -> list[int]:
         if all(i != j for i, j in enumerate(order)):
             return order
     return [(i + 1) % n for i in range(n)]
+
+
+def _null_orders(
+    n: int,
+    draws: int = NULL_DRAWS,
+    seed: int = NULL_SEED,
+    clusters: Sequence[str] | None = None,
+) -> list[list[int]]:
+    """`draws` derangements of `n`, deterministic for a given (n, draws, seed).
+
+    **Cross-commit constrained when `clusters` is supplied**, and the constraint is
+    not cosmetic. An unconstrained derangement of swarm-sync's 43 labels pairs ~1.7
+    views per draw with a label mined from their OWN introducing commit -- 9 labels
+    share one commit, so the collision rate is set by that cluster rather than by
+    chance. Those pairings are not a null: the two labels are sentences of the same
+    commit message and share its vocabulary, so the control they produce is too high
+    and the lift measured against it is too low. Constraining them away raises every
+    control slightly and is therefore the LESS flattering choice, which is the
+    direction that makes it worth doing.
+
+    Returns fewer draws than asked, or none at all, when the constraint cannot be
+    satisfied -- a cluster holding more than half the labels admits no cross-cluster
+    permutation, and inventing one by relaxing the constraint silently would be worse
+    than reporting a null with no draws in it.
+    """
+    if n < 2:
+        return []
+    rng = random.Random(seed)  # noqa: S311 -- reproducibility, not secrecy
+    orders: list[list[int]] = []
+    for _ in range(draws):
+        order = _one_null_order(n, rng, clusters)
+        if order is not None:
+            orders.append(order)
+    return orders
+
+
+def _one_null_order(
+    n: int, rng: random.Random, clusters: Sequence[str] | None
+) -> list[int] | None:
+    """One derangement, cross-cluster if `clusters` is given. None if it cannot be had.
+
+    Shuffle-and-repair rather than pure rejection sampling: at swarm-sync's cluster
+    sizes a uniform shuffle satisfies the constraint about 18% of the time, and a
+    repo with a fatter cluster would push that toward zero and turn a control into a
+    hang.
+    """
+    def bad(order: list[int]) -> list[int]:
+        return [
+            i
+            for i in range(n)
+            if order[i] == i
+            or (clusters is not None and clusters[order[i]] == clusters[i])
+        ]
+
+    for _ in range(64):
+        order = list(range(n))
+        rng.shuffle(order)
+        for _ in range(16 * n):
+            offenders = bad(order)
+            if not offenders:
+                return order
+            i = rng.choice(offenders)
+            j = rng.randrange(n)
+            swapped = list(order)
+            swapped[i], swapped[j] = swapped[j], swapped[i]
+            # Accept only a swap that does not create a new offence at j.
+            if len(bad(swapped)) < len(offenders):
+                order = swapped
+        if not bad(order):
+            return order
+    return None
+
+
+def _percentile_ci(values: Sequence[float], alpha: float = 0.05) -> tuple[float, float]:
+    """The `1 - alpha` percentile interval of a bootstrap distribution."""
+    if not values:
+        return (0.0, 0.0)
+    ordered = sorted(values)
+    lo = ordered[min(len(ordered) - 1, int((alpha / 2) * len(ordered)))]
+    hi = ordered[min(len(ordered) - 1, int((1 - alpha / 2) * len(ordered)))]
+    return (lo, hi)
+
+
+def _clustered_bootstrap(
+    values: Sequence[float],
+    clusters: Sequence[str],
+    resamples: int = BOOTSTRAP_RESAMPLES,
+    seed: int = BOOTSTRAP_SEED,
+) -> tuple[float, float]:
+    """95% percentile CI for the mean of `values`, resampling CLUSTERS not values.
+
+    The 43 mined labels are not 43 independent measurements: they come from 18
+    commits and one commit supplies 9 of them. An iid bootstrap over labels would
+    treat those 9 as 9 draws and return an interval too narrow by roughly the square
+    root of the cluster size -- which is exactly the direction that makes a
+    between-condition difference look resolved when it is not.
+    """
+    if not values:
+        return (0.0, 0.0)
+    groups: dict[str, list[float]] = {}
+    for value, cluster in zip(values, clusters, strict=True):
+        groups.setdefault(cluster, []).append(value)
+    keys = sorted(groups)
+    if len(keys) < 2:
+        return (_mean(values), _mean(values))
+    rng = random.Random(seed)  # noqa: S311 -- reproducibility, not secrecy
+    means: list[float] = []
+    for _ in range(resamples):
+        drawn: list[float] = []
+        for _ in range(len(keys)):
+            drawn.extend(groups[keys[rng.randrange(len(keys))]])
+        means.append(_mean(drawn))
+    return _percentile_ci(means)
 
 
 @dataclass
@@ -1054,6 +1306,17 @@ class PurposeScorecard:
     control: list[float] = field(default_factory=list)
     suspect: int = 0
     empty_output: int = 0
+    #: The introducing commit of each scored label, positionally aligned with
+    #: `scores`. Carried on the card because the bootstrap has to resample commits
+    #: rather than labels, and a card that does not know its own clusters can only
+    #: offer the interval that is wrong.
+    clusters: list[str] = field(default_factory=list)
+    #: One entry per derangement: the mean control score under that permutation.
+    #: This is the null distribution, and `shuffled` is its centre rather than a
+    #: point on it.
+    null_means: list[float] = field(default_factory=list)
+    #: True when the null was drawn under the cross-commit constraint.
+    null_cross_commit: bool = False
 
     @property
     def n(self) -> int:
@@ -1065,16 +1328,77 @@ class PurposeScorecard:
 
     @property
     def shuffled(self) -> float:
+        """The null MEAN -- averaged over `draws` derangements, not a single draw."""
         return _mean(self.control)
 
     @property
     def lift(self) -> float:
         return self.gold - self.shuffled
 
+    @property
+    def draws(self) -> int:
+        return len(self.null_means)
+
+    @property
+    def null_sd(self) -> float:
+        """Sampling sd of the control mean across derangements.
+
+        The number the old single-draw `lift` was missing. It is the sd of the
+        STATISTIC, so it says how far a one-draw control could have been from the
+        null centre -- which is the error the published lifts carried unlabelled.
+        """
+        if len(self.null_means) < 2:
+            return 0.0
+        mu = _mean(self.null_means)
+        return math.sqrt(sum((x - mu) ** 2 for x in self.null_means) / (len(self.null_means) - 1))
+
+    @property
+    def p_value(self) -> float | None:
+        """Permutation p: fraction of derangements whose control mean reached `gold`.
+
+        `(1 + hits) / (1 + draws)`, so it can never read 0 -- the floor at 500 draws
+        is 0.002 and means "no draw beat it", not "p is two in a thousand". None when
+        the null is empty (n < 2, or a cluster too large to permute around).
+
+        What it establishes: the generator's agreement with its OWN label is not
+        reachable by pairing the same generator outputs with other labels from the
+        same corpus. What it does NOT establish: that the effect generalises past
+        these 18 commits. The permutation is over label ASSIGNMENT, not over repos,
+        so the exchangeable unit is a label within this corpus and the p-value is
+        silent about sampling a different history. Read the clustered CI for that.
+        """
+        if not self.null_means:
+            return None
+        hits = sum(1 for m in self.null_means if m >= self.gold)
+        return (1 + hits) / (1 + len(self.null_means))
+
+    def gold_ci(
+        self, resamples: int = BOOTSTRAP_RESAMPLES, seed: int = BOOTSTRAP_SEED
+    ) -> tuple[float, float]:
+        return _clustered_bootstrap(self.scores, self.clusters, resamples, seed)
+
+    def lift_ci(
+        self, resamples: int = BOOTSTRAP_RESAMPLES, seed: int = BOOTSTRAP_SEED
+    ) -> tuple[float, float]:
+        """Clustered CI for `lift`, resampling the introducing commits.
+
+        Paired at the label: each label's per-label control is the mean of what it
+        scored across every derangement, so `lift_i` is a within-label difference and
+        the bootstrap does not have to model the null and the gold as independent.
+        """
+        if not self.control:
+            return self.gold_ci(resamples, seed)
+        diffs = [g - c for g, c in zip(self.scores, self.control, strict=True)]
+        return _clustered_bootstrap(diffs, self.clusters, resamples, seed)
+
     def row(self) -> str:
+        lo, hi = self.lift_ci()
+        p = self.p_value
+        p_text = "     --" if p is None else f"{p:>7.3f}"
         return (
             f"{self.name:<30} {self.n:>4} {self.gold:>7.3f} {self.shuffled:>9.3f} "
-            f"{self.lift:>7.3f} {self.suspect:>8} {self.empty_output:>6}"
+            f"{self.null_sd:>7.3f} {self.lift:>7.3f} [{lo:>6.3f},{hi:>6.3f}]{p_text} "
+            f"{self.suspect:>8} {self.empty_output:>6}"
         )
 
 
@@ -1090,6 +1414,9 @@ def score_purposes(
     similarity: Callable[[str, str], float] = token_f1,
     docstring_blind: bool = False,
     name_blind: bool = True,
+    null_draws: int = NULL_DRAWS,
+    null_seed: int = NULL_SEED,
+    cross_commit_null: bool = True,
 ) -> PurposeScorecard:
     """Score a generator's inferred purpose against held-out commit prose.
 
@@ -1105,9 +1432,12 @@ def score_purposes(
     with every label. Measured on swarm-sync: scored raw, `name + signature only`
     reaches 0.210 against `docstring first sentence`'s 0.225 -- i.e. the metric cannot
     tell a name echo from reading the documentation, and a generator that printed the
-    function's own name would look like a working purpose inferrer. Name-blinding drops
-    the echo to 0.020 while the docstring condition keeps 0.159, which is the
-    resolution the eval needs to be worth running.
+    function's own name would look like a working purpose inferrer. What gets blinded
+    is `blind_terms`: every dotted component and the path stem, not the leaf alone.
+
+    The control is drawn `null_draws` times, not once. One derangement is one sample
+    from the null and a `lift` computed against it carries that sample's error with no
+    way to see it; `null_sd` and `p_value` are what make it visible. See `NULL_DRAWS`.
     """
     card = PurposeScorecard(name=name)
     by_path: dict[str, dict[str, Symbol]] = {}
@@ -1138,26 +1468,84 @@ def score_purposes(
     if not views:
         return card
 
-    order = _derangement(len(views))
+    n = len(views)
+    outputs = [generator(view) for view in views]
+    blinds: list[frozenset[str] | None] = [
+        blind_terms(view.qualname, view.path) if name_blind else None for view in views
+    ]
+    left = [_blind(outputs[i], blinds[i]) for i in range(n)]
+    # similarity(generator output i, label j) with label j blinded by view i's terms.
+    # Cached because the null now draws `null_draws` permutations instead of one, and
+    # every permutation reuses pairs an earlier one already scored. The cache bounds
+    # the work at n^2 regardless of how many draws are taken, which is what makes a
+    # 500-draw null free rather than a 500x cost.
+    cache: dict[tuple[int, int], float] = {}
+
+    def sim(i: int, j: int) -> float:
+        key = (i, j)
+        if key not in cache:
+            cache[key] = similarity(left[i], _blind(kept[j].prose, blinds[i]))
+        return cache[key]
+
     for i, (view, lab) in enumerate(zip(views, kept, strict=True)):
-        inferred = generator(view)
-        if not inferred.strip():
+        if not outputs[i].strip():
             card.empty_output += 1
-        blind = view.qualname.rsplit(".", 1)[-1] if name_blind else None
-        card.scores.append(similarity(_blind(inferred, blind), _blind(lab.prose, blind)))
-        other = kept[order[i]]
-        card.control.append(
-            similarity(_blind(inferred, blind), _blind(other.prose, blind))
-        )
-        card.suspect += len(suspect_tokens(inferred, lab.prose, view))
+        card.scores.append(sim(i, i))
+        card.clusters.append(lab.commit)
+        card.suspect += len(suspect_tokens(outputs[i], lab.prose, view))
+
+    clusters = [lab.commit for lab in kept] if cross_commit_null else None
+    orders = _null_orders(n, draws=null_draws, seed=null_seed, clusters=clusters)
+    card.null_cross_commit = cross_commit_null and bool(orders)
+    if not orders and cross_commit_null:
+        # The constraint could not be met -- one commit holds more than half the
+        # labels. Fall back to the unconstrained null and SAY SO on the card rather
+        # than reporting no control at all.
+        orders = _null_orders(n, draws=null_draws, seed=null_seed, clusters=None)
+    per_label = [0.0] * n
+    for order in orders:
+        draw = [sim(i, order[i]) for i in range(n)]
+        card.null_means.append(_mean(draw))
+        for i, value in enumerate(draw):
+            per_label[i] += value
+    if orders:
+        card.control = [total / len(orders) for total in per_label]
     return card
 
 
-def _blind(text: str, name: str | None) -> str:
-    """Remove a symbol name's tokens from `text`, for name-blind scoring."""
+def blind_terms(qualname: str, path: str = "") -> frozenset[str]:
+    """Every token a name-blind comparison must drop, for one symbol.
+
+    **Every dotted component, plus the path stem -- not just the leaf.** The old rule
+    blinded `_reverse_dep_files` and left `swarmsync`, `coordinator` and `gate`
+    standing, and those are not incidental vocabulary: `view.path` carries them
+    verbatim, a method's `class` statement carries its class name, and the mention
+    rule guarantees the label carries at least the leaf. Measured on swarm-sync, 34 of
+    43 labels (79%) still shared a non-leaf component token with the generator's
+    output after leaf-only blinding.
+
+    It is not a uniform correction. A docstring says "the gate widens ..." far more
+    often than a body's identifier bag does, so leaf-only blinding flattered the
+    docstring condition more than the body condition -- it moved the ORDERING of the
+    table, not only its levels, which is the part that would have gone unnoticed.
+    """
+    terms: set[str] = set()
+    for component in qualname.split("."):
+        terms.update(_split_identifier(component))
+    if path:
+        terms.update(_split_identifier(Path(path).stem))
+    return frozenset(terms)
+
+
+def _blind(text: str, name: str | Iterable[str] | None) -> str:
+    """Remove a symbol's own name tokens from `text`, for name-blind scoring.
+
+    Accepts either a single name (split into its parts) or a ready-made term set from
+    `blind_terms`.
+    """
     if not name:
         return text
-    drop = set(_split_identifier(name))
+    drop = set(_split_identifier(name)) if isinstance(name, str) else set(name)
     return " ".join(t for t in _tokens(text, drop_stopwords=False) if t not in drop)
 
 
@@ -1179,10 +1567,36 @@ def run_purpose_eval(
     similarity: Callable[[str, str], float] = token_f1,
     include_tests: bool = False,
     conditions: Sequence[tuple[str, Generator, bool]] = DEFAULT_CONDITIONS,
+    audit: bool = True,
 ) -> tuple[MineReport, list[PurposeScorecard]]:
-    """Mine a repo's history and score every default condition against it."""
+    """Mine a repo's history and score every default condition against it.
+
+    **The cross-product audit runs first and aborts the run on any finding.** Before
+    this call existed, `audit_leak_boundary` was reachable from no reported code path:
+    the only leak check a scored run performed was `score_purposes`' per-view
+    `assert_no_leak(view, [lab.prose])`, which compares each view to its OWN label and
+    is therefore blind to the cross-symbol case by construction. The audit had been
+    finding a real leak in swarm-sync that nothing was asking it about.
+
+    It raises rather than warning for the reason `LeakDetected` exists: a leak does
+    not degrade the number, it voids it, and the failure mode of a warning is a run
+    that prints better scores and a line above them nobody reads. `audit=False` is for
+    the caller who wants the funnel from a repo they have not cleaned yet, and it is
+    not the default.
+    """
     report = mine_labels(repo, include_tests=include_tests)
     usable = report.usable
+    if audit:
+        checked, findings = audit_leak_boundary(repo, usable)
+        report.audit_views = checked
+        report.audit_pairs = checked * len(usable)
+        report.audit_findings = findings
+        if findings:
+            raise LeakDetected(
+                f"leak boundary audit: {len(findings)} finding(s) over "
+                f"{report.audit_pairs} view x label pairs -- "
+                + "; ".join(findings[:3])
+            )
     cards = [
         score_purposes(
             repo, usable, generator, name, similarity=similarity, docstring_blind=blind
@@ -1235,6 +1649,11 @@ def label_retrieval_validity(
     name", which is true and worthless. Blinding removes the name's tokens from the
     query, so what is left is whether the *description* finds the symbol.
 
+    Blinding is `blind_terms` -- every dotted component and the path stem. Leaf-only
+    blinding left the module and class tokens in the query, and those are indexed on
+    the symbol's own chunk as surely as its name is, so the number it produced was
+    still partly the name-matching measurement it was introduced to remove.
+
     Two further asymmetries with the ablation, both of which make these numbers NOT
     interchangeable with its rows: there, one query has several relevant symbols and
     any of them counts; here, one label has exactly one correct symbol. And a mined
@@ -1246,8 +1665,8 @@ def label_retrieval_validity(
 
     out = LabelValidity()
     for lab in labels:
-        name = lab.qualname.rsplit(".", 1)[-1] if name_blind else None
-        query = _blind(lab.prose, name) if name else lab.prose
+        terms = blind_terms(lab.qualname, lab.path) if name_blind else None
+        query = _blind(lab.prose, terms) if terms else lab.prose
         hits = search_lexical(conn, query, k=k)  # type: ignore[arg-type]
         rank: int | None = None
         for i, hit in enumerate(hits, start=1):
@@ -1268,7 +1687,8 @@ LABELLING_RULE = (
     "identifier is distinctive enough that a bare occurrence cannot be English, or it "
     "occurs in backticks, called, attribute-accessed, or assigned. Commits with "
     "boilerplate subjects are excluded, as are labels shorter than 6 words and labels "
-    "found verbatim in the symbol's own source (not held out). The generator sees only "
+    "whose prose is found verbatim in ANY labelled symbol's source -- its own or "
+    "another's, in any commit (not held out). The generator sees only "
     "a SourceView built from the working tree; it never sees any commit message. "
     "The label describes why the code was WRITTEN, which for a symbol introduced by a "
     "bug-fix commit is often the bug rather than the symbol's standing purpose -- a "
@@ -1330,6 +1750,7 @@ def format_report(report: MineReport, cards: Sequence[PurposeScorecard]) -> str:
         REJECT_NO_MENTION,
         REJECT_TOO_SHORT,
         REJECT_COPIED_INTO_SOURCE,
+        REJECT_COPIED_INTO_SIBLING,
     ):
         lines.append(f"  rejected: {reason:<20} {report.rejects().get(reason, 0):>6}")
     lines.append(
@@ -1351,11 +1772,33 @@ def format_report(report: MineReport, cards: Sequence[PurposeScorecard]) -> str:
             "  attribution: "
             + ", ".join(f"{m}={n}" for m, n in sorted(methods.items()))
         )
+    if report.audit_pairs:
+        lines.append(
+            f"  leak audit: {len(report.audit_findings)} finding(s) over "
+            f"{report.audit_pairs} view x label pairs "
+            f"({report.audit_views} views x {len(report.usable)} labels)"
+        )
     if cards:
         header = (
-            f"{'condition':<30} {'n':>4} {'gold':>7} {'shuffled':>9} {'lift':>7} "
-            f"{'suspect':>8} {'empty':>6}"
+            f"{'condition':<30} {'n':>4} {'gold':>7} {'shuffled':>9} {'null sd':>7} "
+            f"{'lift':>7} {'lift 95% CI':>15}{'p':>7} {'suspect':>8} {'empty':>6}"
         )
-        lines += ["", "PURPOSE AGREEMENT (name-blind token-F1)", header, "-" * len(header)]
+        first = cards[0]
+        constraint = "cross-commit" if first.null_cross_commit else "unconstrained"
+        lines += [
+            "",
+            "PURPOSE AGREEMENT (name-blind token-F1)",
+            # Every number on this table is reproducible only with these three
+            # settings, so they are printed WITH it. A seed recorded in the source and
+            # not in the output is a seed the reader cannot check.
+            f"  null:      {first.draws} {constraint} derangements, seed {NULL_SEED};"
+            f" p = (1+hits)/(1+draws), floor {1 / (1 + first.draws):.3f}"
+            if first.draws
+            else "  null:      none drawn (n < 2)",
+            f"  interval:  clustered bootstrap over {len(sharing)} introducing commits,"
+            f" {BOOTSTRAP_RESAMPLES} resamples, seed {BOOTSTRAP_SEED}",
+            header,
+            "-" * len(header),
+        ]
         lines += [c.row() for c in cards]
     return "\n".join(lines)

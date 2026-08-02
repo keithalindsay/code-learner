@@ -47,32 +47,43 @@ pytest.importorskip("mcp", reason="the gate lives on the MCP surface, an optiona
 
 from codelearner.eval.gate_controls import (  # noqa: E402
     ACCEPTED,
+    ALPHA,
+    BREADTH_LIMIT,
     FAMILIES,
     GATE_SERVER,
     GATE_STORE,
+    INTERVAL_NOTE,
     NEGATIVE_FAMILIES,
     POSITIVE_FAMILIES,
     REFUSED,
+    REPLICATED,
     SURFACE_DIRECT,
     SURFACE_STORE,
     SURFACE_TOOL,
+    UNMEASURED,
+    VARYING,
     Edit,
     Family,
     GateReport,
     Inexpressible,
     Mutation,
     MutationFailed,
+    MutationResult,
     Outcome,
     Rule,
     Unenforced,
     VacuousCorpus,
+    binomial_at_most,
     build_corpus,
     build_harness,
+    clopper_pearson_upper,
     compare_surfaces,
     gate_module,
     gate_of,
     mutable_families,
     mutate_tree,
+    mutation_census,
+    mutation_summary,
     run_controls,
     run_mutation,
     run_unmutated_copy,
@@ -1188,3 +1199,271 @@ def test_a_known_gap_stays_inside_the_rate_it_is_a_gap_in(unenforced_probe):
     assert [o.control for o in one.known_gaps] == [f"{UNGUARDED_FAMILY}/core"]
     assert one.unexpected_failures == []
     assert [o.control for o in one.failures] == [f"{UNGUARDED_FAMILY}/core"]
+
+
+# ---------------------------------------------------------------------------
+# the resolution of the number
+# ---------------------------------------------------------------------------
+#
+# WP14. `1.0000` over 12,266 instances is the most over-precise number in the repo:
+# four significant figures on a numerator that can only be 0 or n, over a denominator
+# that is 15 attack shapes instantiated once per symbol. The tests below pin the three
+# things that fix it -- the per-family table is the measurement, the denominator is the
+# number of DISTINCT gate executions rather than the number of submissions, and the
+# interval says what n buys.
+
+
+def test_the_upper_bound_is_exact_rather_than_a_rule_of_thumb():
+    """Rule of three (`3/n`) is the large-n approximation to the exact Clopper-Pearson
+    upper bound for zero failures, and it stops being a probability exactly where this
+    corpus needs one: several families here have a handful of distinct probes, and
+    `3/2` is 1.5. The exact form `1 - alpha**(1/n)` is closed, needs no library, and is
+    a probability at every n."""
+    assert clopper_pearson_upper(0, 1) == pytest.approx(1.0 - ALPHA)
+    assert clopper_pearson_upper(0, 59) == pytest.approx(1.0 - ALPHA ** (1 / 59))
+    assert clopper_pearson_upper(0, 59) == pytest.approx(0.0494, abs=5e-4)
+    # It agrees with 3/n only once n is large, and diverges from it where it matters.
+    assert clopper_pearson_upper(0, 1343) == pytest.approx(3 / 1343, rel=5e-3)
+    assert clopper_pearson_upper(0, 2) < 1.0 < 3 / 2
+    # Exact, by its definition: the bound is the p at which a result this good has
+    # probability alpha. Checked against the binomial CDF rather than against itself.
+    for failures, n in ((0, 8), (1, 20), (3, 40), (7, 100)):
+        upper = clopper_pearson_upper(failures, n)
+        assert binomial_at_most(failures, n, upper) == pytest.approx(ALPHA, abs=1e-6)
+    # Monotone in both arguments, and saturating rather than exceeding 1.
+    assert clopper_pearson_upper(0, 10) > clopper_pearson_upper(0, 100)
+    assert clopper_pearson_upper(1, 100) > clopper_pearson_upper(0, 100)
+    assert clopper_pearson_upper(5, 5) == 1.0
+    with pytest.raises(VacuousCorpus):
+        clopper_pearson_upper(0, 0)
+
+
+def test_a_replicated_family_is_one_probe_however_many_times_it_is_instantiated(reports):
+    """The whole point. `zero_evidence` submits an empty span list once per symbol, and
+    the gate does the same thing every time -- the same lines, reading and hashing
+    nothing -- so 1,343 instances are 1,343 replications of one probe. The bound has to
+    be computed on the probe count or it reports the sample size of a photocopier."""
+    for surface, one in reports.items():
+        stat = one.stat("zero_evidence")
+        assert stat.instances >= 8, surface
+        assert stat.probes == 1, surface
+        assert stat.paths == 1, surface
+        assert stat.shape == REPLICATED, surface
+        assert stat.hold_rate == 1.0, surface
+        # One probe buys a 95% upper bound of 95%. That is the honest number.
+        assert stat.upper_bound == pytest.approx(1.0 - ALPHA), surface
+        assert stat.naive_upper_bound < 0.5, surface
+
+
+def test_a_varying_family_probes_the_gate_with_different_bytes_every_time(reports):
+    """The other half, or the classification would be unfalsifiable. `decoy_content_hash`
+    hands the gate a different cited hash against different bytes for every symbol, and
+    the gate hashes those bytes -- so every instance is its own probe and the two bounds
+    coincide."""
+    for surface, one in reports.items():
+        stat = one.stat("decoy_content_hash")
+        assert stat.shape == VARYING, surface
+        assert stat.probes == stat.instances, surface
+        assert stat.upper_bound == pytest.approx(stat.naive_upper_bound), surface
+
+
+def test_the_replication_verdict_is_measured_at_the_gate_and_not_guessed_from_the_name(
+    reports,
+):
+    """The judgement WP14 asked not to be guessed. `unverifiable_span` is ONE family with
+    one attack, and it is replicated at one door and varying at the other: the store
+    refuses it at the span loop before anything is opened, while the server reads the
+    file and hashes both readings of the cited lines before discovering there is no hash
+    to compare them to. No rule keyed on the family name could produce that, and neither
+    could reading the family table -- it comes from watching which of the gate's own
+    lines ran and what bytes they consumed.
+
+    `blank_range` is the same story from the other side, and it is why the classifier
+    cannot be "did the submission vary": both doors are handed the same four submissions
+    and only one of them reads the file."""
+    direct, store = reports[SURFACE_DIRECT], reports[SURFACE_STORE]
+    assert store.stat("unverifiable_span").shape == REPLICATED
+    assert direct.stat("unverifiable_span").shape == VARYING
+    assert store.stat("blank_range").shape == REPLICATED
+    assert direct.stat("blank_range").shape == VARYING
+    # Same corpus, same instances, different verdict -- so the verdict is about the gate.
+    for family in ("unverifiable_span", "blank_range"):
+        assert direct.stat(family).instances == store.stat(family).instances, family
+
+
+def test_every_observed_outcome_records_the_execution_that_produced_it(report):
+    """The classification is only as good as the observation, so the observation is
+    stored on the outcome rather than recomputed from the family. An outcome with no
+    execution recorded is one nobody watched, and it must not be counted as a replica of
+    anything."""
+    assert all(o.execution is not None for o in report.outcomes)
+    assert all(o.code_path and o.evidence_read for o in report.outcomes)
+    # A family that reads nothing and a family that reads the file do not share an
+    # evidence digest -- otherwise the two halves of the classifier are one half.
+    assert len({o.evidence_read for o in report.family("zero_evidence")}) == 1
+    assert len({o.evidence_read for o in report.family("published_hash")}) == 8
+    # And a refusal and an admission of the same symbols do not share a code path.
+    zero = {o.code_path for o in report.family("zero_evidence")}
+    published = {o.code_path for o in report.family("published_hash")}
+    assert len(zero) == 1
+    assert not (zero & published)
+    # An outcome nobody watched says so, rather than reporting an empty execution.
+    assert Outcome(
+        control="x", family="past_eof", verdict=REFUSED, code="bad_range",
+        rows_added=0, evidence=0, expected_evidence=0, servable=None,
+    ).execution is None
+
+
+def test_a_report_nobody_watched_does_not_claim_replication_it_did_not_measure():
+    """`held` and the rates are computed from synthetic outcomes in several tests above,
+    and `GateReport` is constructible by hand. Those outcomes carry no execution, and the
+    safe reading of an absent measurement is the conservative one: every instance counts
+    as its own probe and the shape is `unmeasured`, never `replicated`. A classifier that
+    defaulted to `replicated` would shrink a denominator on the strength of data it never
+    had."""
+    unwatched = GateReport(
+        corpus="synthetic",
+        symbols=0,
+        outcomes=[_attack(), _attack(control="past_eof/core")],
+        skips=[],
+        gate_path="?",
+    )
+    stat = unwatched.stat("past_eof")
+    assert stat.shape == UNMEASURED
+    assert stat.instances == stat.probes == 2
+    assert stat.upper_bound == pytest.approx(clopper_pearson_upper(0, 2))
+
+
+def test_the_per_family_table_is_the_output_and_the_pooled_count_is_a_caption(report):
+    """WP14's first change. The per-family table was already computed and printed under
+    the pooled rate; now it IS the output, the pooled figure is captioned as instances
+    rather than probes, and no rate is printed to four significant figures. `1.0000` over
+    a numerator that can only be 0 or n is the sizing that does the persuading."""
+    table = report.format_table()
+    assert table.index("family") < table.index("pooled"), "the pooled figure leads again"
+    assert f"{len(FAMILIES)} attack shapes, instantiated per symbol" in table
+    assert "100.0%" in table
+    assert "1.0000" not in table, "four significant figures on a 0-or-n numerator"
+    assert "ub95" in table
+    for name in FAMILIES:
+        assert name in table, name
+
+
+def test_the_pooled_figure_survives_only_as_an_existence_claim_about_the_run(report):
+    """It is still worth printing -- anything other than 100.0% is an unambiguous red
+    flag, and it has to be read beside the positive pass rate or a gate that refuses
+    everything scores perfectly. What it is not is an estimate of the probability an
+    attack gets through, because most of its denominator is a handful of probes repeated
+    per symbol. The caption has to say so where the number is."""
+    table = report.format_table()
+    assert "no instance of any enumerated attack was admitted" in table
+    assert "not an estimate" in table
+    # The honest denominator is printed beside the instance count, not instead of it.
+    assert report.negative_probes < len(report.negatives)
+    assert f"{len(report.negatives)} instances" in table
+    assert f"{report.negative_probes} distinct" in table
+
+
+def test_the_interval_and_the_breadth_limit_are_stated_where_the_number_is(
+    report, tmp_path
+):
+    """A caveat in a docstring is a caveat nobody reading the number sees. WP5's own
+    conclusion -- that this corpus is generated from `FAMILIES` and has never found an
+    attack nobody enumerated -- belongs under the rate, at both doors."""
+    for text in (report.format_table(), compare_surfaces(tmp_path / "b", limit=1).format_table()):
+        assert BREADTH_LIMIT in text
+        assert INTERVAL_NOTE in text
+    assert "Clopper-Pearson" in INTERVAL_NOTE
+    assert "independen" in INTERVAL_NOTE, "the assumption the replicated families break"
+    assert "no attack nobody had enumerated" in BREADTH_LIMIT
+    assert "second door" in BREADTH_LIMIT
+
+
+def test_the_json_report_carries_the_honest_denominator_beside_the_pooled_one(report):
+    """`to_json` is what the mutation runner and any downstream reader see, so the
+    distinction has to survive serialisation -- and `n` has to keep meaning instances, or
+    a reader comparing two runs would silently compare a probe count to a submission
+    count."""
+    payload = report.to_json()
+    zero = payload["families"]["zero_evidence"]
+    assert zero["n"] == zero["instances"] == len(report.family("zero_evidence"))
+    assert zero["probes"] == 1
+    assert zero["paths"] == 1
+    assert zero["shape"] == REPLICATED
+    assert zero["upper_bound_95"] == pytest.approx(1.0 - ALPHA)
+    assert zero["naive_upper_bound_95"] == pytest.approx(
+        clopper_pearson_upper(0, zero["n"])
+    )
+    assert payload["families"]["decoy_content_hash"]["shape"] == VARYING
+    assert payload["negative_probes"] == report.negative_probes
+    assert payload["attack_shapes"] == len(FAMILIES)
+
+
+def test_the_mutation_census_counts_both_doors_and_keeps_the_polarities_apart():
+    """`12/12 mutation-verified` was one door and one polarity. There are two doors now,
+    every family owes each of them an answer, and a positive family's mutation is only
+    PARTIALLY detected -- deleting one reading of a legitimate citation flips the symbols
+    that needed that reading and leaves the rest admitted. Pooling those with the
+    negatives, where the mutant rate goes to exactly 0.0, states the weaker result over
+    the stronger one."""
+    census = mutation_census()
+    cases = {(family, surface) for family, surface, *_ in [p.values for p in MUTATION_CASES]}
+    assert set(census.negatives) | set(census.positives) == cases
+    assert not set(census.negatives) & set(census.positives)
+    assert all(FAMILIES[f].expect == REFUSED for f, _ in census.negatives)
+    assert all(FAMILIES[f].expect == ACCEPTED for f, _ in census.positives)
+    # Both doors are counted, and the one entry with nothing to delete is named.
+    assert {s for _, s in census.negatives} == {SURFACE_DIRECT, SURFACE_STORE}
+    assert {s for _, s in census.positives} == {SURFACE_DIRECT, SURFACE_STORE}
+    assert census.unmutable == (("zero_length_span", SURFACE_DIRECT),)
+    assert len(census.negatives) == 23
+    assert len(census.positives) == 6
+    assert "23" in census.summary() and "6" in census.summary()
+    # The census counts RULES. It must not claim detections it did not run -- that
+    # conflation is what `12/12 mutation-verified` was.
+    assert "detected" not in census.summary()
+
+
+def test_the_measured_mutation_summary_states_the_strong_result_as_the_strong_one():
+    """`12/12 mutation-verified` pooled a negative rule whose deletion admits the attack
+    on every instance with a positive rule whose deletion is only partially detected. The
+    replacement counts them apart and says how partial the partial ones were, built from
+    `MutationResult`s so the sentence cannot drift from the run that produced it."""
+    def result(family, surface, mutant_rate, flipped, n):
+        return MutationResult(
+            family=family, rule="r", baseline_rate=1.0, mutant_rate=mutant_rate,
+            baseline_n=n, mutant_n=n, gate_path="?", surface=surface,
+            flipped=tuple(f"{family}/{i}" for i in range(flipped)),
+        )
+
+    results = [
+        result("zero_evidence", SURFACE_DIRECT, 0.0, 8, 8),
+        result("past_eof", SURFACE_STORE, 0.0, 2, 2),
+        result("published_hash", SURFACE_DIRECT, 0.5, 4, 8),
+        result("multi_span", SURFACE_STORE, 0.0, 2, 2),
+    ]
+    summary = mutation_summary(results)
+    assert "2/2 negative rules" in summary
+    assert "2/2 positive rules are detected, 1 of them only partially" in summary
+    assert "published_hash@direct 4/8" in summary
+    assert results[2].partial and not results[0].partial
+    assert results[0].flip_fraction == 1.0
+    assert results[2].flip_fraction == 0.5
+    # A run where nothing was partial says so rather than trailing an empty bracket.
+    assert "none partial" in mutation_summary(results[:2] + results[3:])
+
+
+def test_a_positive_mutation_is_only_partially_detected_and_says_so(mutant_dir, report):
+    """The claim the corrected count has to make. Deleting the symbol reading from
+    `_verify_span` falsely rejects exactly the symbols whose stored bytes are not their
+    lines' bytes -- four of eight on this fixture -- and admits the other four. Reporting
+    that as `detected` alongside a negative family that goes to 0.0 loses the difference,
+    so the fraction travels with the result."""
+    negative = run_mutation("zero_evidence", mutant_dir / "census-neg", baseline=report)
+    positive = run_mutation("published_hash", mutant_dir / "census-pos", baseline=report)
+    assert negative.detected and positive.detected
+    assert negative.flip_fraction == 1.0
+    assert 0.0 < positive.flip_fraction < 1.0
+    assert positive.flip_fraction == pytest.approx(4 / 8)
+    assert "partial" in positive.row()
+    assert "partial" not in negative.row()

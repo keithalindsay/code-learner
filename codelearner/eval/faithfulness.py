@@ -7,16 +7,78 @@ present, perfectly unedited, and says nothing whatsoever about what the claim
 asserts. That failure is invisible to every check in `assertions/store.py`, and it is
 the one this module measures.
 
-**The judge is a different model family from the generator, on purpose.** Claude
-writes the assertions through `submit_assertion`; `qwen3.5:9b` judges them. This is
-not a budget compromise -- a local 9B model is not chosen because it is cheaper than
-an API call, it is chosen because it did not write the claim. A generator grading its
-own output shares its blind spots, its tokenizer, its training distribution and its
-particular way of being confidently wrong, so agreement between the two measures
-consistency rather than truth. The one number this module produces is only worth
-reading because the thing producing it is not the thing being measured. If the judge
-is ever swapped for the generator, the score stops meaning anything and no test here
-will notice, so it is stated in prose instead.
+**The judge is different weights and a different tokenizer from the generator: a
+proxy for independence, not a demonstration of it.** Claude writes the assertions
+through `submit_assertion`; `qwen3.5:9b` judges them. This is not a budget compromise
+-- a local 9B model is not chosen because it is cheaper than an API call, it is chosen
+because it did not write the claim. A generator grading its own output shares its
+blind spots, its tokenizer, its training distribution and its particular way of being
+confidently wrong, so agreement between the two measures consistency rather than
+truth. The one number this module produces is only worth reading because the thing
+producing it is not the thing being measured. If the judge is ever swapped for the
+generator, the score stops meaning anything and no test here will notice, so it is
+stated in prose instead.
+
+What that pairing does NOT establish is independence, and the earlier wording here --
+"a different model family, which is the point" -- claimed more than the check behind
+it can carry. The check is `generate.llm.model_family`, a string-prefix test on an
+ollama tag: it lowercases the tag, drops the registry namespace and the tag suffix,
+and takes the leading run of letters. A Qwen-distilled model published as `deepseek-r1`
+passes it. This repo's own reranker is Qwen3-based and would pass it. A published tag
+is a marketing string, not a lineage, and no arrangement of its characters can prove
+two models do not share pre-training data. Independence is a measurable property and
+it is not measured here. **The measurement that would establish it is second-judge
+agreement**: re-adjudicate the same claims with a second judge -- `qwen3:14b` is
+already pulled locally, and a non-Qwen judge would be better -- and publish the
+disagreement rate. Until that exists, read "cross-family" as the narrower thing that
+is actually true: this model did not write the claim.
+
+**One denominator used to hold three different events.** `score` is
+`supported / n`, and `n` counts every `uncertain` -- but `uncertain` arrives by three
+routes that are not the same fact. The judge can say "uncertain", which is the only
+route the prompt sanctions and the only one that is evidence about the claim. Or
+`_extract_json` and `_salvage_fields` can both fail, which is a harness/transport
+failure and says nothing about the claim. Or a verdict token can fail to normalise,
+which is a judge-format failure and also says nothing about the claim. Charging the
+last two to the generator makes a run in which ollama returned malformed output report
+a low faithfulness that reads as "the claims are bad" -- observed at 1-in-16 on a real
+run before `_salvage_fields` existed. So `Judgement.cause` records which route was
+taken, `FaithfulnessReport` counts the three apart, and past a threshold the run stops
+instead of publishing a number about the generator that is really about the parser
+(see `JudgeMisbehaving`).
+
+`score` stays `supported / n` all the same, and `score_decided`
+(`supported / (supported + not_supported)`) is reported beside it rather than in place
+of it. Two reasons. `supported / n` is a lower bound under the assumption that an
+undecided claim is at worst unfaithful; `score_decided` is an estimate that assumes
+the undecided set is a random subset of the whole, which is known to be false here --
+the parse failures that produced it were measurably biased toward claims about code
+containing quote characters. And a headline that divides the instrument's failures out
+of its own denominator stays flattering exactly when the instrument is broken, which
+is the pathology the rest of this module is written against. Read the pair: a small gap
+means the claims, a large gap means the instrument.
+
+**The number carries an interval, because three decimals were a lie.** `0.544` on
+n=147 has a Wilson 95% interval of `[0.464, 0.623]` -- the third decimal implies a
+resolution two orders of magnitude finer than the measurement has. It is reported as
+`0.54 [0.46, 0.62]`. That interval still assumes 147 independent draws, and the claims
+are clustered: several per symbol, many per file, some about toy fixtures in
+`sample_repo/`. Positive intra-cluster correlation makes the true interval wider, so
+`clustered_interval` estimates the design effect from the adjudications themselves and
+reports the corrected one alongside.
+
+**The judge itself is uncalibrated on the data it measures, and this module says so.**
+Its entire calibration is 15/16 on a *different* 16-claim set that was pre-labelled by
+the same model family that authored those claims -- Wilson `[0.72, 0.99]`, which is
+consistent with a judge that is right 72% of the time. "Self-consistency" measured as
+three runs of an identical prompt at temperature 0 measures decoding determinism, not
+judge stability. Label flips under whitespace-only prompt changes have been observed
+with no rate attached, and that flip rate is the largest single uncertainty in the
+number. `measure_prompt_stability` is the harness for measuring it and
+`export_for_review` / `score_review` are the scaffold for the human calibration that
+would bound the judge's error on the set the number is actually computed over. Neither
+is a measurement; both are the apparatus. They are here so the missing measurements are
+cheap enough to actually happen.
 
 **The judge is prompted to refute, and defaults to "not supported".** A permissive
 judge is worse than no judge: it converts an unmeasured risk into a number that reads
@@ -70,11 +132,13 @@ from __future__ import annotations
 
 import json
 import logging
+import math
+import random
 import re
 import sqlite3
 import urllib.error
 import urllib.request
-from collections.abc import Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
@@ -100,6 +164,28 @@ _STORE_VERDICT = {
     LABEL_UNCERTAIN: store.VERDICT_UNSUPPORTED,
 }
 
+# WHY a label arrived, which is a different question from what it is.
+#
+# Three of these produce `uncertain` and only one of them is evidence about the claim.
+# Before this existed they were one value in the data, so a run in which the judge was
+# fine and the transport was broken was indistinguishable from a run in which the judge
+# read 147 spans and could not make up its mind about two of them -- and both reported a
+# low faithfulness that a reader charges to the generator. The cause is recorded at the
+# point the parser makes the decision, because that is the only place the information
+# still exists.
+CAUSE_JUDGED = "judged"  # the label is the one the judge stated
+CAUSE_PARSE_FAILURE = "parse_failure"  # no verdict field anywhere in the response
+CAUSE_FORMAT_FAILURE = "format_failure"  # a verdict token that does not normalise
+CAUSE_NO_EVIDENCE = "no_evidence"  # not_supported, decided without asking a judge
+
+CAUSES = (CAUSE_JUDGED, CAUSE_PARSE_FAILURE, CAUSE_FORMAT_FAILURE, CAUSE_NO_EVIDENCE)
+
+# The two causes that are facts about the instrument rather than about the claim. Named
+# as a pair because every threshold, counter and warning below is about the pair: a
+# response with no verdict in it and a response with a verdict nobody recognises are
+# the same failure wearing different hats, and neither was produced by the generator.
+INSTRUMENT_CAUSES = (CAUSE_PARSE_FAILURE, CAUSE_FORMAT_FAILURE)
+
 DEFAULT_JUDGE_MODEL = "qwen3.5:9b"
 DEFAULT_OLLAMA_HOST = "http://localhost:11434"
 
@@ -117,6 +203,25 @@ DEFAULT_TIMEOUT_S = 180.0
 # than evicting whatever is resident, because it is not this tool's place to evict.
 DEFAULT_KEEP_ALIVE = "5m"
 
+# 1.959963985..., the two-sided normal quantile for 95%. Spelled to full precision
+# rather than as 1.96, because the rounded constant moves the third decimal of an
+# interval whose whole purpose is to say the third decimal is not real.
+Z_95 = 1.959963984540054
+
+# Above this share of INSTRUMENT failures, `adjudicate` stops rather than reporting.
+#
+# The judgement being made: a handful of unparseable responses is noise and the run is
+# still a measurement; a third of them means the harness is broken and every number the
+# run produces is about the parser rather than about the claims. The threshold is ~3x
+# the worst rate ever observed here (1-in-16 = 0.0625, before `_salvage_fields`), so a
+# normal bad day does not trip it and the 30% case cannot avoid it.
+#
+# The floor matters as much as the rate: without it a run whose first response is
+# malformed aborts at 1/1 = 1.0, which would make a single quote character in the first
+# claim's code fatal to the whole store.
+DEFAULT_MAX_INSTRUMENT_FAILURE_RATE = 0.2
+MIN_INSTRUMENT_FAILURE_SAMPLE = 10
+
 
 class JudgeUnavailable(RuntimeError):
     """The judge could not be reached, so there is no verdict -- not even a bad one.
@@ -128,6 +233,33 @@ class JudgeUnavailable(RuntimeError):
     every assertion in the store because ollama was not running. One is a verdict;
     the other must stop the run.
     """
+
+
+class JudgeMisbehaving(RuntimeError):
+    """The judge is answering, and enough of the answers are unreadable that the run
+    is no longer measuring the claims.
+
+    The third case, between `JudgeUnavailable` (no answers at all) and a normal run.
+    Deliberately NOT a subclass of `JudgeUnavailable`: a caller that retries on a
+    transport fault should not retry this, because nothing about running it again
+    changes a model that is emitting a shape the parser cannot read.
+
+    Why it aborts at all, when a parse failure is individually survivable and recorded
+    honestly as `uncertain`: the harm is not the missing verdict, it is that
+    `record=True` turns each one into `VERDICT_UNSUPPORTED` and `STATUS_REJECTED` in
+    the store. At a 30% instrument-failure rate, a run rejects 30% of a store's claims
+    for a formatting reason, writes a rationale that blames the claim, and reports a
+    faithfulness number that a reader charges to the generator. Counters make that
+    visible after the fact; only stopping makes it not happen.
+
+    The partial report is attached rather than lost. Verdicts already written stay
+    written -- `adjudicate` records as it goes precisely so an interrupted run keeps
+    what it reached -- and `report` is how a caller sees which claims those were.
+    """
+
+    def __init__(self, message: str, report: FaithfulnessReport | None = None) -> None:
+        super().__init__(message)
+        self.report = report
 
 
 @dataclass(frozen=True)
@@ -144,6 +276,7 @@ class Judgement:
     reasoning: str
     judge: str
     raw: str = ""
+    cause: str = CAUSE_JUDGED
 
     @property
     def verdict(self) -> str:
@@ -153,6 +286,17 @@ class Judgement:
     @property
     def supported(self) -> bool:
         return self.label == LABEL_SUPPORTED
+
+    @property
+    def instrument_failure(self) -> bool:
+        """True when this label came from the harness failing, not from a judge.
+
+        The distinction the counters, the abort threshold and the two scores are all
+        built on. It is a property of the cause and never of the label: `uncertain` is
+        the label all three routes land on, which is exactly why the label cannot be
+        asked.
+        """
+        return self.cause in INSTRUMENT_CAUSES
 
 
 @dataclass(frozen=True)
@@ -165,6 +309,14 @@ class Adjudication:
     citations: tuple[str, ...]
     judgement: Judgement
     verdict_id: int | None = None  # None when `record=False`
+    # Exactly the bytes the judge was shown, kept rather than re-derived.
+    #
+    # `render_evidence` reads the working tree, so re-rendering an hour later can
+    # produce a different string for the same citation -- and the two things that
+    # consume this (`export_for_review`, `measure_prompt_stability`) are both
+    # meaningless unless what they show a human, or perturb, is what the judge
+    # actually read. Empty for a claim decided without consulting a judge.
+    evidence: str = ""
 
     @property
     def supported(self) -> bool:
@@ -178,6 +330,133 @@ class Adjudication:
             f"  cited:    {', '.join(self.citations) or '(none)'}\n"
             f"  judge:    {self.judgement.reasoning.strip()}"
         )
+
+
+# --------------------------------------------------------------------------
+# how much of the number is real
+# --------------------------------------------------------------------------
+
+
+def wilson_interval(
+    successes: float, total: float, *, z: float = Z_95
+) -> tuple[float, float] | None:
+    """Wilson score interval for a proportion. None when `total` is not positive.
+
+    Wilson rather than the textbook normal approximation, and the reason is not
+    fussiness. `p ± z·sqrt(p(1-p)/n)` produces intervals that run past 0 and 1, has
+    zero width at p=0 and p=1 -- so a gate that refused 6,091 of 6,091 attacks would
+    report `[1.0, 1.0]`, a certainty nobody measured -- and under-covers badly at the
+    sample sizes this repo actually has. Wilson does none of those, needs no
+    dependency, and is four lines.
+
+    `successes` is a float rather than an int so a cluster-corrected effective sample
+    can be passed straight through: `wilson_interval(p * n_eff, n_eff)`.
+    """
+    if total <= 0:
+        return None
+    p = successes / total
+    denominator = 1.0 + z * z / total
+    centre = (p + z * z / (2.0 * total)) / denominator
+    half = (
+        z * math.sqrt(p * (1.0 - p) / total + z * z / (4.0 * total * total))
+    ) / denominator
+    return max(0.0, centre - half), min(1.0, centre + half)
+
+
+def format_interval(
+    point: float | None, interval: tuple[float, float] | None, *, places: int = 2
+) -> str:
+    """`0.54 [0.46, 0.62]` -- the only form this number should be quoted in.
+
+    Two decimals, because 0.544 on n=147 claims a resolution the interval says is not
+    there by two orders of magnitude, and a third decimal is read as precision by
+    every reader who does not stop to do the arithmetic.
+
+    Rounded to nearest rather than outward. Outward rounding is the more conservative
+    habit and it is wrong at this width: it would print `[0.46, 0.63]` for a bound of
+    0.6226, widening the interval by 0.0074 to protect against a rounding error of
+    0.0026.
+    """
+    if point is None:
+        return "n/a"
+    text = f"{point:.{places}f}"
+    if interval is None:
+        return text
+    return f"{text} [{interval[0]:.{places}f}, {interval[1]:.{places}f}]"
+
+
+@dataclass(frozen=True)
+class ClusterCorrection:
+    """The design effect of clustering, estimated from the outcomes themselves.
+
+    Wilson assumes `n` independent draws. These are not: 147 claims about one repo are
+    several claims per symbol and many per file, sharing a subject, a generator pass,
+    an evidence window and -- for the `sample_repo/` fixtures -- a toy that is not
+    representative of anything. Claims in one cluster fail together, so the effective
+    number of independent observations is below the number of rows, and an interval
+    computed from the row count is too narrow.
+
+    Kish's design effect with the one-way ANOVA estimator of the intra-cluster
+    correlation. It is an estimate with real limits, stated rather than buried: it
+    assumes a common ICC across clusters, it is noisy when the number of clusters is
+    small, and it is clamped at 0 because a negative ICC here means "no clustering
+    signal in this sample", not "narrower than binomial".
+
+    Not a substitute for the honest version, which is a cluster bootstrap or a
+    hierarchical model over more than one repo. It is the correction that can be
+    computed from what is already stored, and it is reported beside the uncorrected
+    interval rather than instead of it, so a reader can see what the assumption bought.
+    """
+
+    key: str
+    n: int
+    clusters: int
+    icc: float
+    design_effect: float
+
+    @property
+    def effective_n(self) -> float:
+        """The number of independent observations this sample is worth."""
+        return self.n / self.design_effect if self.design_effect > 0 else float(self.n)
+
+
+def cluster_correction(
+    outcomes: Sequence[tuple[str, bool]], *, key: str = "cluster"
+) -> ClusterCorrection | None:
+    """Estimate the design effect from `(cluster_id, outcome)` pairs. None if it cannot.
+
+    None rather than 1.0 when there is nothing to estimate from -- one cluster, or one
+    observation per cluster. A design effect of 1.0 asserts "measured, and there is no
+    clustering"; None says "this sample cannot answer that", and the two must not be
+    the same value in a report about how much of a number is real.
+    """
+    if not outcomes:
+        return None
+    sizes: dict[str, int] = {}
+    successes: dict[str, int] = {}
+    for cluster_id, outcome in outcomes:
+        sizes[cluster_id] = sizes.get(cluster_id, 0) + 1
+        successes[cluster_id] = successes.get(cluster_id, 0) + (1 if outcome else 0)
+    n = sum(sizes.values())
+    k = len(sizes)
+    if k < 2 or k >= n:
+        return None
+    overall = sum(successes.values()) / n
+    rates = {c: successes[c] / sizes[c] for c in sizes}
+    ss_within = sum(sizes[c] * rates[c] * (1.0 - rates[c]) for c in sizes)
+    ss_between = sum(sizes[c] * (rates[c] - overall) ** 2 for c in sizes)
+    mean_within = ss_within / (n - k)
+    mean_between = ss_between / (k - 1)
+    # Kish's m0: the average cluster size adjusted for how uneven the sizes are. Using
+    # the plain mean would understate the design effect whenever a few large clusters
+    # carry most of the rows, which is the shape a real repo has.
+    m0 = (n - sum(m * m for m in sizes.values()) / n) / (k - 1)
+    denominator = mean_between + (m0 - 1.0) * mean_within
+    icc = 0.0 if denominator <= 0 else (mean_between - mean_within) / denominator
+    icc = min(max(icc, 0.0), 1.0)
+    return ClusterCorrection(
+        key=key, n=n, clusters=k, icc=icc, design_effect=1.0 + (m0 - 1.0) * icc
+    )
 
 
 @dataclass
@@ -199,6 +478,48 @@ class FaithfulnessReport:
     def count(self, label: str) -> int:
         return sum(1 for a in self.adjudications if a.judgement.label == label)
 
+    def count_cause(self, cause: str) -> int:
+        return sum(1 for a in self.adjudications if a.judgement.cause == cause)
+
+    @property
+    def parse_failures(self) -> int:
+        """`uncertain` because nothing in the response was a verdict field.
+
+        A harness/transport fact. The judge may well have reached a verdict and said
+        so; what failed is the round trip between it and this parser.
+        """
+        return self.count_cause(CAUSE_PARSE_FAILURE)
+
+    @property
+    def format_failures(self) -> int:
+        """`uncertain` because the verdict token did not normalise to a known label."""
+        return self.count_cause(CAUSE_FORMAT_FAILURE)
+
+    @property
+    def instrument_failures(self) -> int:
+        """The two causes that are evidence about the instrument, not the claims."""
+        return self.parse_failures + self.format_failures
+
+    @property
+    def judge_uncertain(self) -> int:
+        """`uncertain` because the judge said so -- the only sanctioned route.
+
+        The one uncertain the prompt asks for, and the only one of the three that is
+        evidence about the claim: the judge read the evidence and reported that it was
+        unreadable or truncated past assessment.
+        """
+        return sum(
+            1
+            for a in self.adjudications
+            if a.judgement.label == LABEL_UNCERTAIN
+            and a.judgement.cause == CAUSE_JUDGED
+        )
+
+    @property
+    def decided(self) -> int:
+        """Claims the judge actually reached a supportive or refuting verdict on."""
+        return self.count(LABEL_SUPPORTED) + self.count(LABEL_NOT_SUPPORTED)
+
     @property
     def score(self) -> float | None:
         """RAGAS-style faithfulness: supported / adjudicated. None over an empty set.
@@ -208,10 +529,74 @@ class FaithfulnessReport:
         specifically looked for -- the same trap the store's `no_evidence` guard
         exists for. A caller that adjudicated nothing needs to find that out here,
         not from a perfect score it has no reason to distrust.
+
+        Still the headline, and still over the full denominator, after the audit that
+        added `score_decided`. It is a lower bound: it holds if an undecided claim is
+        at worst unfaithful, which needs no assumption about why it was undecided.
+        `score_decided` needs one -- that the undecided set is a random subset -- and
+        that assumption is known to be false here. And a headline that divides the
+        instrument's own failures out of its denominator is at its most flattering
+        exactly when the instrument is broken. The bad run is made visible by the
+        counters and stopped by `JudgeMisbehaving`, not by choosing a kinder quotient.
         """
         if not self.adjudications:
             return None
         return self.count(LABEL_SUPPORTED) / len(self.adjudications)
+
+    @property
+    def score_decided(self) -> float | None:
+        """supported / (supported + not_supported). None when nothing was decided.
+
+        The other question: of the claims this judge could read at all, what fraction
+        did their citations carry? Unlike `score` it does not move when the transport
+        breaks, which is what makes it worth reporting -- and it also does not move
+        when the transport breaks in a way that is *correlated with the claims*, which
+        is what makes it not worth reporting alone. The measured example: unescaped
+        quotes in the judge's own reasoning, which fire on claims about code containing
+        string literals.
+
+        Read as a pair with `score`. A small gap means the two agree about the
+        generator. A large gap means most of what `score` is reporting is the
+        instrument, and `instrument_failures` says whether that is the harness or the
+        judge's honest doubt.
+        """
+        if self.decided == 0:
+            return None
+        return self.count(LABEL_SUPPORTED) / self.decided
+
+    @property
+    def interval(self) -> tuple[float, float] | None:
+        """Wilson 95% on `score`, assuming 147 independent draws. They are not."""
+        if not self.adjudications:
+            return None
+        return wilson_interval(self.count(LABEL_SUPPORTED), len(self.adjudications))
+
+    @property
+    def interval_decided(self) -> tuple[float, float] | None:
+        """Wilson 95% on `score_decided`."""
+        if self.decided == 0:
+            return None
+        return wilson_interval(self.count(LABEL_SUPPORTED), self.decided)
+
+    def cluster_correction(self, *, key: str = "subject") -> ClusterCorrection | None:
+        """Design effect for `score`, clustering by `subject` or by `file`.
+
+        `subject` groups the claims about one symbol; `file` groups by the path of the
+        first citation, which is the coarser and usually the stronger clustering --
+        one badly-cited file produces a run of correlated failures. Both are available
+        because which one dominates is an empirical question about a given repo, and
+        the answer is not knowable from here.
+        """
+        outcomes = [(_cluster_id(a, key), a.supported) for a in self.adjudications]
+        return cluster_correction(outcomes, key=key)
+
+    def clustered_interval(self, *, key: str = "subject") -> tuple[float, float] | None:
+        """`interval` widened by the estimated design effect. None if not estimable."""
+        correction = self.cluster_correction(key=key)
+        if correction is None or self.score is None:
+            return None
+        effective = correction.effective_n
+        return wilson_interval(self.score * effective, effective)
 
     @property
     def unfaithful(self) -> list[Adjudication]:
@@ -227,19 +612,66 @@ class FaithfulnessReport:
             key=lambda a: (order.get(a.judgement.label, 2), a.assertion_id),
         )
 
+    def warnings(self) -> list[str]:
+        """What a reader must know before quoting the number. Empty on a clean run.
+
+        Returned as data rather than logged, so the surface that prints the score is
+        structurally unable to print it without them.
+        """
+        notes: list[str] = []
+        n = len(self.adjudications)
+        if n and self.instrument_failures:
+            rate = self.instrument_failures / n
+            notes.append(
+                f"{self.instrument_failures}/{n} ({rate:.0%}) of these labels came from "
+                f"the harness failing to read a response, not from a judge. They are "
+                f"counted in the denominator of `score` and excluded from "
+                f"`score_decided`; the gap between the two is what they cost."
+            )
+        if n and self.judge_uncertain:
+            notes.append(
+                f"{self.judge_uncertain}/{n} claims the judge declined to decide. "
+                f"`score` charges those to the generator; `score_decided` drops them."
+            )
+        return notes
+
     def summary(self) -> str:
-        score = "n/a (nothing adjudicated)" if self.score is None else f"{self.score:.3f}"
-        return (
-            f"faithfulness {score}  judge={self.judge}  "
-            f"n={len(self.adjudications)} "
+        if self.score is None:
+            headline = "faithfulness n/a (nothing adjudicated)"
+        else:
+            headline = f"faithfulness {format_interval(self.score, self.interval)}"
+        lines = [
+            f"{headline}  judge={self.judge}"
+            + ("" if self.recorded else "  (dry run -- no verdicts recorded)"),
+            f"  n={len(self.adjudications)} "
             f"supported={self.count(LABEL_SUPPORTED)} "
             f"not_supported={self.count(LABEL_NOT_SUPPORTED)} "
             f"uncertain={self.count(LABEL_UNCERTAIN)}"
-            + ("" if self.recorded else "  (dry run -- no verdicts recorded)")
-        )
+            f" (judge={self.judge_uncertain}"
+            f" parse_failures={self.parse_failures}"
+            f" format_failures={self.format_failures})",
+        ]
+        if self.score_decided is not None:
+            lines.append(
+                "  supported/(supported+not_supported) = "
+                f"{format_interval(self.score_decided, self.interval_decided)}"
+                f"  on {self.decided}/{len(self.adjudications)} decided"
+            )
+        correction = self.cluster_correction()
+        clustered = self.clustered_interval()
+        if correction is not None and clustered is not None:
+            lines.append(
+                f"  clustered by {correction.key} "
+                f"(k={correction.clusters}, icc={correction.icc:.2f}, "
+                f"deff={correction.design_effect:.2f}, "
+                f"n_eff={correction.effective_n:.0f}): "
+                f"{format_interval(self.score, clustered)}"
+            )
+        lines += [f"  ! {note}" for note in self.warnings()]
+        return "\n".join(lines)
 
     def format_report(self) -> str:
-        """The summary line plus every claim the judge would not support."""
+        """The summary block plus every claim the judge would not support."""
         lines = [self.summary()]
         failed = self.unfaithful
         if failed:
@@ -247,6 +679,16 @@ class FaithfulnessReport:
             lines.append(f"-- {len(failed)} claim(s) the judge would not support --")
             lines += [a.detail() for a in failed]
         return "\n".join(lines)
+
+
+def _cluster_id(adjudication: Adjudication, key: str) -> str:
+    """The cluster an adjudication belongs to, under `subject` or `file` grouping."""
+    if key == "subject":
+        return adjudication.subject_qualname
+    if key == "file":
+        first = adjudication.citations[0] if adjudication.citations else ""
+        return first.rsplit(":", 1)[0] if ":" in first else first
+    raise ValueError(f"unknown cluster key {key!r}; expected 'subject' or 'file'")
 
 
 # --------------------------------------------------------------------------
@@ -461,10 +903,12 @@ def parse_judgement(text: str, judge: str) -> Judgement:
                 reasoning=(
                     "no verdict field in the judge's response, so no verdict was read "
                     "from it. Failing closed: an unparseable answer is not a supported "
-                    "claim."
+                    "claim. This is a harness failure and not evidence about the "
+                    "claim -- see `parse_failures` on the report."
                 ),
                 judge=judge,
                 raw=text,
+                cause=CAUSE_PARSE_FAILURE,
             )
         parsed = {"verdict": salvaged[0], "reasoning": salvaged[1]}
         note = " [verdict recovered from malformed JSON]"
@@ -480,6 +924,7 @@ def parse_judgement(text: str, judge: str) -> Judgement:
             ),
             judge=judge,
             raw=text,
+            cause=CAUSE_FORMAT_FAILURE,
         )
     return Judgement(
         label=label,
@@ -699,6 +1144,10 @@ _NO_EVIDENCE = Judgement(
         "is the one way a claim resting on nothing gets reported as verified."
     ),
     judge="(not consulted)",
+    # Decided without a judge, and still a fact about the generator rather than about
+    # the instrument: a claim that cited nothing is the generator's doing. So it counts
+    # in BOTH denominators, and is not an instrument failure.
+    cause=CAUSE_NO_EVIDENCE,
 )
 
 
@@ -718,12 +1167,14 @@ def adjudicate_assertion(
     set is the only evidence the gate does anything.
     """
     citations = tuple(span.citation for span in assertion.spans)
+    evidence = ""
     if not assertion.spans:
         judgement = _NO_EVIDENCE
     else:
+        evidence = render_evidence(root, assertion)
         judgement = judge.judge(
             claim=assertion.claim,
-            evidence=render_evidence(root, assertion),
+            evidence=evidence,
             subject=assertion.subject_qualname,
         )
     verdict_id: int | None = None
@@ -745,6 +1196,7 @@ def adjudicate_assertion(
         citations=citations,
         judgement=judgement,
         verdict_id=verdict_id,
+        evidence=evidence,
     )
 
 
@@ -757,6 +1209,7 @@ def adjudicate(
     subject_qualname: str | None = None,
     limit: int | None = None,
     record: bool = True,
+    max_instrument_failure_rate: float | None = DEFAULT_MAX_INSTRUMENT_FAILURE_RATE,
 ) -> FaithfulnessReport:
     """Score every servable assertion for faithfulness to its own citations.
 
@@ -770,6 +1223,12 @@ def adjudicate(
     Verdicts are recorded as each claim is judged rather than in one batch at the
     end, so a run interrupted halfway leaves the verdicts it actually reached instead
     of losing all of them.
+
+    `max_instrument_failure_rate` stops the run when too much of what is coming back
+    cannot be read -- see `JudgeMisbehaving` for why that is worth an abort when an
+    individual parse failure is not. `None` disables it, which is the right setting
+    for deliberately measuring a judge's output shape and the wrong one for producing
+    a number anybody quotes.
     """
     # `repo_root` is passed through unresolved so that `store._repo_root` keeps its
     # refusal to guess. Defaulting to the cwd here would let a judge read "evidence"
@@ -786,16 +1245,644 @@ def adjudicate(
         report.adjudications.append(
             adjudicate_assertion(conn, judge, assertion, root, record=record)
         )
+        _check_instrument(report, max_instrument_failure_rate)
     return report
 
 
-def faithfulness(adjudications: Sequence[Adjudication]) -> float | None:
+def _check_instrument(
+    report: FaithfulnessReport, max_rate: float | None
+) -> None:
+    """Stop a run whose responses have stopped being readable. See `JudgeMisbehaving`.
+
+    Checked after every claim rather than at the end, because the harm being prevented
+    accrues per claim: each instrument failure recorded is one more live assertion
+    demoted to rejected for a formatting reason.
+    """
+    if max_rate is None:
+        return
+    n = len(report.adjudications)
+    failures = report.instrument_failures
+    if n < MIN_INSTRUMENT_FAILURE_SAMPLE or failures / n <= max_rate:
+        return
+    raise JudgeMisbehaving(
+        f"{failures} of the first {n} responses from {report.judge} could not be read "
+        f"({failures / n:.0%} > {max_rate:.0%}): "
+        f"{report.parse_failures} with no verdict field, {report.format_failures} with "
+        f"an unrecognised verdict. That is a fact about the harness, not about the "
+        f"claims -- continuing would reject live assertions for a formatting reason "
+        f"and report a faithfulness number that is really a parse rate. Verdicts "
+        f"already recorded are kept and are on the attached `report`.",
+        report,
+    )
+
+
+def faithfulness(
+    adjudications: Sequence[Adjudication], *, decided_only: bool = False
+) -> float | None:
     """RAGAS-style faithfulness over any set of adjudications. None over an empty set.
 
     Free function as well as a report property, so the metric can be recomputed over
     a subset -- one `kind` of claim, or one generator's output -- without re-running
     a judge.
+
+    `decided_only=True` is `FaithfulnessReport.score_decided`: the supported fraction
+    of the claims the judge reached a verdict on. Default False, matching the headline,
+    for the reasons on `score` -- the full denominator is the one that does not get
+    more flattering as the instrument gets worse.
     """
-    if not adjudications:
+    pool = (
+        [a for a in adjudications if a.judgement.label != LABEL_UNCERTAIN]
+        if decided_only
+        else list(adjudications)
+    )
+    if not pool:
         return None
-    return sum(1 for a in adjudications if a.supported) / len(adjudications)
+    return sum(1 for a in pool if a.supported) / len(pool)
+
+
+# --------------------------------------------------------------------------
+# measuring the instrument: prompt stability
+# --------------------------------------------------------------------------
+#
+# The largest unmeasured uncertainty in the faithfulness number. The judge's whole
+# calibration is 15/16 on a DIFFERENT 16-claim set -- Wilson [0.72, 0.99], consistent
+# with a judge that is right about three quarters of the time -- and the
+# "self-consistency" figure beside it is three runs of an identical prompt at
+# temperature 0, which measures whether decoding is deterministic and not whether the
+# judge is stable. Label flips under whitespace-only prompt changes have been observed
+# here and no rate was ever attached to them.
+#
+# This is the apparatus for attaching one. It re-adjudicates a stored set under
+# transformations of `render_evidence` that change no information a verdict could
+# legitimately depend on, and reports how often the label moved anyway. A flip is not a
+# wrong answer -- neither run is ground truth -- it is a demonstration that the answer
+# was not determined by the evidence. A 10% flip rate means roughly a tenth of every
+# faithfulness number this repo has published is the prompt's formatting.
+#
+# Deliberately NOT run by any test and NOT run here: this calls a model once per
+# (claim x perturbation), so 147 claims and the five default perturbations is 735 judge
+# calls on a shared card.
+
+
+def _perturb_identity(evidence: str) -> str:
+    """No change. The control, and the reason the rest of the numbers mean anything.
+
+    Without it a flip rate conflates prompt sensitivity with decoding nondeterminism,
+    and the two have opposite repairs: one is fixed by constraining the prompt, the
+    other by pinning the runtime. Whatever this perturbation flips is the floor every
+    other perturbation is measured against.
+    """
+    return evidence
+
+
+def _perturb_span_order(evidence: str) -> str:
+    """Reverse the span blocks, renumbering so the text stays well-formed.
+
+    The spans are an unordered set of citations -- each block names its own
+    `path:line-line` -- so the order carries no information about whether the evidence
+    entails the claim. A judge whose verdict depends on it is reading position.
+    """
+    blocks = _split_spans(evidence)
+    if len(blocks) < 2:
+        return evidence
+    reversed_blocks = list(reversed(blocks))
+    out: list[str] = []
+    total = len(reversed_blocks)
+    for i, (header, body) in enumerate(reversed_blocks, start=1):
+        citation = header.split(": ", 1)[-1].rsplit(" ---", 1)[0]
+        out.append(f"--- span {i} of {total}: {citation} ---\n{body}")
+    return "\n".join(out)
+
+
+def _perturb_trailing_whitespace(evidence: str) -> str:
+    """Two spaces at the end of every line. Whitespace only, changing nothing.
+
+    The direct test of the thing the README admitted and never measured. Source code
+    is whitespace-sensitive in ways that make a model attend to it, and trailing
+    spaces are the one whitespace change that alters no Python semantics at all.
+    """
+    return "\n".join(line + "  " for line in evidence.split("\n"))
+
+
+def _perturb_separator_style(evidence: str) -> str:
+    """`--- span 1 of 2: f.py:1-2 ---` becomes `=== span 1 of 2: f.py:1-2 ===`."""
+    return re.sub(r"^--- (span .*?) ---$", r"=== \1 ===", evidence, flags=re.MULTILINE)
+
+
+def _perturb_blank_lines(evidence: str) -> str:
+    """A blank line between span blocks."""
+    return re.sub(r"\n(--- span )", r"\n\n\1", evidence)
+
+
+# Named and individually selectable, so a flip rate can be attributed to a specific
+# transformation rather than to "perturbation" in general. A judge that is stable under
+# reordering and unstable under whitespace is a different finding, with a different
+# repair, from the reverse.
+PERTURBATIONS: dict[str, Callable[[str], str]] = {
+    "identity": _perturb_identity,
+    "span_order": _perturb_span_order,
+    "trailing_whitespace": _perturb_trailing_whitespace,
+    "separator_style": _perturb_separator_style,
+    "blank_lines": _perturb_blank_lines,
+}
+
+DEFAULT_PERTURBATIONS = tuple(PERTURBATIONS)
+BASELINE_PERTURBATION = "identity"
+
+
+def _split_spans(evidence: str) -> list[tuple[str, str]]:
+    """`render_evidence` output back into `(header, body)` pairs.
+
+    Exactly reversible: `"\\n".join(f"{h}\\n{b}")` reconstructs the input. That matters
+    more than it looks. A span's own bytes can end in a newline, and `render_evidence`
+    also joins blocks with one, so a splitter that strips greedily turns a reordering
+    perturbation into a reordering-plus-whitespace perturbation and the two flip rates
+    stop being separable -- which is the entire point of naming them individually.
+    """
+    parts = re.split(r"^(--- span \d+ of \d+: .*? ---)$", evidence, flags=re.MULTILINE)
+    blocks: list[tuple[str, str]] = []
+    for i in range(1, len(parts) - 1, 2):
+        body = parts[i + 1]
+        if body.startswith("\n"):
+            body = body[1:]
+        # Every body but the last is followed by the newline `render_evidence` joined
+        # with. That newline is the separator, not the span's content.
+        if i + 2 < len(parts) - 1 and body.endswith("\n"):
+            body = body[:-1]
+        blocks.append((parts[i], body))
+    return blocks
+
+
+@dataclass(frozen=True)
+class LabelFlip:
+    """One claim whose label moved when the evidence formatting did."""
+
+    assertion_id: int
+    subject_qualname: str
+    perturbation: str
+    baseline_label: str
+    perturbed_label: str
+
+    def detail(self) -> str:
+        return (
+            f"[{self.perturbation}] #{self.assertion_id} {self.subject_qualname}: "
+            f"{self.baseline_label} -> {self.perturbed_label}"
+        )
+
+
+@dataclass(frozen=True)
+class FlipRate:
+    """A flip rate with its interval, because a flip rate is also an estimate.
+
+    5 flips in 147 is 0.034 with a Wilson interval of roughly [0.015, 0.077] -- the
+    upper end is five times the lower, and a number quoted without it invites exactly
+    the over-reading this whole module is being repaired for.
+    """
+
+    perturbation: str
+    n: int
+    flips: int
+    correction: ClusterCorrection | None = None
+
+    @property
+    def rate(self) -> float | None:
+        return self.flips / self.n if self.n else None
+
+    @property
+    def interval(self) -> tuple[float, float] | None:
+        """Wilson, widened by the design effect when one was estimated."""
+        if not self.n:
+            return None
+        rate = self.flips / self.n
+        if self.correction is None:
+            return wilson_interval(self.flips, self.n)
+        effective = self.correction.effective_n
+        return wilson_interval(rate * effective, effective)
+
+    def format_rate(self) -> str:
+        return format_interval(self.rate, self.interval)
+
+
+@dataclass
+class StabilityReport:
+    """What the judge did when the evidence was reformatted and nothing else changed."""
+
+    judge: str
+    baseline: str
+    # (assertion_id, perturbation, flipped) for every re-judgement performed. Kept
+    # rather than reduced to counts because the pooled interval below needs to know
+    # which trials came from the same claim, and counts have thrown that away.
+    trials: list[tuple[int, str, bool]] = field(default_factory=list)
+    flips: list[LabelFlip] = field(default_factory=list)
+
+    @property
+    def rates(self) -> list[FlipRate]:
+        """One rate per perturbation, in the order they were run."""
+        order: list[str] = []
+        counts: dict[str, list[int]] = {}
+        for _, perturbation, flipped in self.trials:
+            if perturbation not in counts:
+                counts[perturbation] = [0, 0]
+                order.append(perturbation)
+            counts[perturbation][0] += 1
+            counts[perturbation][1] += 1 if flipped else 0
+        return [FlipRate(p, counts[p][0], counts[p][1]) for p in order]
+
+    @property
+    def pooled(self) -> FlipRate | None:
+        """Every non-baseline perturbation together, clustered by assertion.
+
+        Pooling is the whole point -- "how much of this number is formatting" is one
+        question -- and pooling naively would overstate its own precision, because one
+        claim contributes several correlated trials. A claim the judge is genuinely
+        torn about flips under everything; a claim it is sure about flips under
+        nothing. So the pooled interval is corrected by the design effect estimated
+        over the assertion, which is the cluster.
+        """
+        pooled = [t for t in self.trials if t[1] != self.baseline]
+        if not pooled:
+            return None
+        flips = sum(1 for t in pooled if t[2])
+        correction = cluster_correction(
+            [(str(aid), flipped) for aid, _, flipped in pooled], key="assertion"
+        )
+        return FlipRate("pooled", len(pooled), flips, correction)
+
+    def rate_for(self, perturbation: str) -> FlipRate | None:
+        for rate in self.rates:
+            if rate.perturbation == perturbation:
+                return rate
+        return None
+
+    def summary(self) -> str:
+        lines = [f"prompt stability  judge={self.judge}  baseline={self.baseline}"]
+        pooled = self.pooled
+        if pooled is not None:
+            lines.append(
+                f"  pooled flip rate {pooled.format_rate()} "
+                f"({pooled.flips}/{pooled.n} re-judgements changed label)"
+            )
+        for rate in self.rates:
+            marker = "  (control -- decoding nondeterminism, not sensitivity)" if (
+                rate.perturbation == self.baseline
+            ) else ""
+            lines.append(
+                f"    {rate.perturbation:<20} {rate.format_rate()} "
+                f"({rate.flips}/{rate.n}){marker}"
+            )
+        return "\n".join(lines)
+
+    def format_report(self) -> str:
+        lines = [self.summary()]
+        if self.flips:
+            lines.append("")
+            lines.append(f"-- {len(self.flips)} label flip(s) --")
+            lines += [f"  {f.detail()}" for f in self.flips]
+        return "\n".join(lines)
+
+
+def measure_prompt_stability(
+    conn: sqlite3.Connection,
+    judge: Judge,
+    repo_root: db.StrPath | None = None,
+    *,
+    perturbations: Sequence[str] = DEFAULT_PERTURBATIONS,
+    baseline: str = BASELINE_PERTURBATION,
+    kind: str | None = None,
+    subject_qualname: str | None = None,
+    limit: int | None = None,
+) -> StabilityReport:
+    """Re-judge a stored set under formatting-only perturbations; report the flip rate.
+
+    Mirrors `adjudicate`'s signature and candidate set on purpose: the number this
+    produces is only about the faithfulness score if it is measured over the same
+    claims, with the same judge, through the same evidence window.
+
+    **Never records.** There is no `record=` parameter and no way to reach one. This
+    measures the instrument, and letting a run that deliberately malformed the prompt
+    write verdicts would let an experiment about the judge reject live claims.
+
+    Cost, since the caller is the one paying it: `len(perturbations) x n` judge calls.
+    Over the 147 servable claims with the five defaults, 735.
+
+    `perturbations` names keys of `PERTURBATIONS` and is ordered; `baseline` names the
+    one every other is compared against and should stay `identity` unless the question
+    has changed. Selecting a subset is supported because attribution matters -- a
+    single "the judge is unstable" number cannot be acted on, and "it is stable under
+    reordering and flips 8% of the time on trailing whitespace" can.
+    """
+    unknown = [p for p in (*perturbations, baseline) if p not in PERTURBATIONS]
+    if unknown:
+        raise ValueError(
+            f"unknown perturbation(s) {unknown}; known: {sorted(PERTURBATIONS)}"
+        )
+    candidates = store.servable_assertions(
+        conn, repo_root=repo_root, kind=kind, subject_qualname=subject_qualname
+    )
+    root = Path(str(repo_root if repo_root is not None else db.stored_repo_root(conn)))
+    if limit is not None:
+        candidates = candidates[:limit]
+
+    report = StabilityReport(judge=judge.name, baseline=baseline)
+    for assertion in candidates:
+        if not assertion.spans:
+            continue  # never sent to a judge, so it cannot flip
+        rendered = render_evidence(root, assertion)
+        baseline_label = judge.judge(
+            claim=assertion.claim,
+            evidence=PERTURBATIONS[baseline](rendered),
+            subject=assertion.subject_qualname,
+        ).label
+        for name in perturbations:
+            label = judge.judge(
+                claim=assertion.claim,
+                evidence=PERTURBATIONS[name](rendered),
+                subject=assertion.subject_qualname,
+            ).label
+            flipped = label != baseline_label
+            report.trials.append((assertion.id, name, flipped))
+            if flipped:
+                report.flips.append(
+                    LabelFlip(
+                        assertion_id=assertion.id,
+                        subject_qualname=assertion.subject_qualname,
+                        perturbation=name,
+                        baseline_label=baseline_label,
+                        perturbed_label=label,
+                    )
+                )
+    return report
+
+
+# --------------------------------------------------------------------------
+# measuring the instrument: human calibration
+# --------------------------------------------------------------------------
+#
+# The other missing measurement. The judge has never been scored against a human on the
+# set the faithfulness number is computed over -- its calibration is 15/16 on a
+# different set, pre-labelled by the same model family that wrote those claims, which
+# is a measurement of agreement between two Qwen-adjacent processes.
+#
+# The obstacle is human time, so the obstacle this code removes is everything else:
+# pick a stratified sample, write it out blind, read it back, and compute the
+# agreement. Roughly thirty claims is an evening.
+
+
+REVIEW_FIELDS = ("assertion_id", "subject", "claim", "citations", "evidence", "human")
+
+
+@dataclass(frozen=True)
+class ReviewExport:
+    """Where the two files went and what ended up in them."""
+
+    review_path: Path
+    key_path: Path
+    n: int
+    per_label: dict[str, int]
+
+
+@dataclass(frozen=True)
+class CalibrationReport:
+    """Judge against human on the claims the number is actually computed over.
+
+    `supported` is the positive class, because the errors are not symmetric. A judge
+    that calls a supported claim `not_supported` costs a claim that would have been
+    served; a judge that calls an unsupported claim `supported` admits an unaccountable
+    claim to the store, which is the failure this whole tier exists to prevent. So
+    precision on `supported` is the number to read first.
+    """
+
+    n: int
+    agreements: int
+    confusion: dict[tuple[str, str], int]  # (judge, human) -> count
+    skipped: int = 0
+
+    @property
+    def agreement(self) -> float | None:
+        return self.agreements / self.n if self.n else None
+
+    @property
+    def agreement_interval(self) -> tuple[float, float] | None:
+        return wilson_interval(self.agreements, self.n) if self.n else None
+
+    def _cell(self, judge_label: str, human_label: str) -> int:
+        return self.confusion.get((judge_label, human_label), 0)
+
+    @property
+    def precision(self) -> float | None:
+        """Of the claims this judge called supported, how many a human agreed with."""
+        called = sum(v for (j, _), v in self.confusion.items() if j == LABEL_SUPPORTED)
+        if not called:
+            return None
+        return self._cell(LABEL_SUPPORTED, LABEL_SUPPORTED) / called
+
+    @property
+    def recall(self) -> float | None:
+        """Of the claims a human called supported, how many the judge also did."""
+        actual = sum(v for (_, h), v in self.confusion.items() if h == LABEL_SUPPORTED)
+        if not actual:
+            return None
+        return self._cell(LABEL_SUPPORTED, LABEL_SUPPORTED) / actual
+
+    @property
+    def kappa(self) -> float | None:
+        """Cohen's kappa: agreement above what two labellers get by guessing.
+
+        Raw agreement on a set stratified to be half supported is inflated by chance
+        alone -- two labellers flipping coins agree half the time -- and this sample is
+        deliberately balanced, so the raw number is the most misleading form available.
+        """
+        if not self.n:
+            return None
+        labels = {label for pair in self.confusion for label in pair}
+        expected = 0.0
+        for label in labels:
+            judge_marginal = sum(v for (j, _), v in self.confusion.items() if j == label)
+            human_marginal = sum(v for (_, h), v in self.confusion.items() if h == label)
+            expected += (judge_marginal / self.n) * (human_marginal / self.n)
+        if expected >= 1.0:
+            return None
+        observed = self.agreements / self.n
+        return (observed - expected) / (1.0 - expected)
+
+    def summary(self) -> str:
+        parts = [
+            f"judge vs human  n={self.n}"
+            + (f" (+{self.skipped} unreviewed)" if self.skipped else ""),
+            f"  agreement {format_interval(self.agreement, self.agreement_interval)}",
+            f"  precision(supported) "
+            f"{'n/a' if self.precision is None else f'{self.precision:.2f}'}"
+            f"  recall(supported) "
+            f"{'n/a' if self.recall is None else f'{self.recall:.2f}'}"
+            f"  kappa {'n/a' if self.kappa is None else f'{self.kappa:.2f}'}",
+        ]
+        for (judge_label, human_label), count in sorted(self.confusion.items()):
+            if judge_label != human_label:
+                parts.append(
+                    f"    judge={judge_label} human={human_label}: {count}"
+                )
+        return "\n".join(parts)
+
+
+def export_for_review(
+    adjudications: Sequence[Adjudication],
+    review_path: db.StrPath,
+    *,
+    n: int = 30,
+    seed: int = 0,
+    labels: Sequence[str] = (LABEL_SUPPORTED, LABEL_NOT_SUPPORTED),
+    key_path: db.StrPath | None = None,
+) -> ReviewExport:
+    """Write a stratified, blind sample of adjudications for a human to label.
+
+    **Blind on purpose, and this is the design decision in the function.** The review
+    file carries the claim, its citations and exactly the evidence the judge was shown,
+    and does NOT carry the judge's verdict. A reviewer who can see the label being
+    checked is anchored by it, and the resulting agreement number measures deference
+    rather than accuracy -- which would be a worse outcome than the current state,
+    because it would look like the missing calibration had been done. The labels go to
+    a separate key file that `score_review` reads and the reviewer does not open.
+
+    Stratified and balanced across `labels` (by default `supported` and
+    `not_supported`) because an unstratified 30 of a 0.54 store yields ~16 supported
+    and ~14 not_supported by luck, and precision and recall each rest on one of those
+    halves. `uncertain` is excluded by default: the target is the judge's error on the
+    claims it decided, and there were two of them in 147. Pass `labels` to include it.
+
+    Deterministic given `seed` -- a calibration sample that cannot be regenerated
+    cannot be extended or re-reviewed, and a second reviewer on a different sample
+    measures a different thing.
+    """
+    review = Path(str(review_path))
+    key = Path(str(key_path)) if key_path is not None else review.with_suffix(".key.jsonl")
+    strata: dict[str, list[Adjudication]] = {label: [] for label in labels}
+    for adjudication in adjudications:
+        bucket = strata.get(adjudication.judgement.label)
+        if bucket is not None:
+            bucket.append(adjudication)
+    rng = random.Random(seed)  # noqa: S311 -- reproducibility, not secrecy
+    for bucket in strata.values():
+        bucket.sort(key=lambda a: a.assertion_id)
+        rng.shuffle(bucket)
+
+    # Round-robin rather than n//len(labels) each: when one stratum is short the sample
+    # fills up from the others instead of silently returning fewer than n, and the
+    # actual composition is reported rather than assumed.
+    chosen: list[Adjudication] = []
+    while len(chosen) < n and any(strata.values()):
+        for label in labels:
+            if len(chosen) >= n:
+                break
+            if strata[label]:
+                chosen.append(strata[label].pop())
+    chosen.sort(key=lambda a: a.assertion_id)
+
+    with review.open("w", encoding="utf-8") as handle:
+        for adjudication in chosen:
+            handle.write(
+                json.dumps(
+                    {
+                        "assertion_id": adjudication.assertion_id,
+                        "subject": adjudication.subject_qualname,
+                        "claim": adjudication.claim,
+                        "citations": list(adjudication.citations),
+                        "evidence": adjudication.evidence,
+                        # The reviewer fills this in with `supported`, `not_supported`
+                        # or `uncertain`. Left empty rather than pre-filled: a default
+                        # is a vote, and it would be cast for every row nobody read.
+                        "human": "",
+                    }
+                )
+                + "\n"
+            )
+    with key.open("w", encoding="utf-8") as handle:
+        for adjudication in chosen:
+            handle.write(
+                json.dumps(
+                    {
+                        "assertion_id": adjudication.assertion_id,
+                        "judge": adjudication.judgement.judge,
+                        "label": adjudication.judgement.label,
+                        "cause": adjudication.judgement.cause,
+                    }
+                )
+                + "\n"
+            )
+    per_label: dict[str, int] = {}
+    for adjudication in chosen:
+        label = adjudication.judgement.label
+        per_label[label] = per_label.get(label, 0) + 1
+    return ReviewExport(review_path=review, key_path=key, n=len(chosen), per_label=per_label)
+
+
+def score_review(
+    review_path: db.StrPath,
+    key: db.StrPath | Sequence[Adjudication] | Mapping[int, str],
+) -> CalibrationReport:
+    """Score a filled-in review file against the judge's labels.
+
+    `key` is the key file `export_for_review` wrote, or the adjudications themselves,
+    or a plain `{assertion_id: label}` -- whichever the caller still has. The review
+    file never carried the judge's labels (see `export_for_review`), so one of these
+    is required rather than optional.
+
+    Rows with an empty `human` are counted as `skipped` and reported, not dropped: a
+    reviewer who labelled 18 of 30 has measured 18, and an agreement rate quoted over
+    a denominator of 18 while implying 30 is the same over-reading this module is being
+    repaired for. A row with a human label nobody recognises raises, because silently
+    discarding a typo biases the sample in whatever direction the typo was.
+    """
+    judge_labels = _key_labels(key)
+    confusion: dict[tuple[str, str], int] = {}
+    agreements = 0
+    scored = 0
+    skipped = 0
+    for lineno, line in enumerate(
+        Path(str(review_path)).read_text(encoding="utf-8").splitlines(), start=1
+    ):
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        assertion_id = int(row["assertion_id"])
+        raw = str(row.get("human", "")).strip()
+        if not raw:
+            skipped += 1
+            continue
+        human = normalise_label(raw)
+        if human is None:
+            raise ValueError(
+                f"{review_path}:{lineno}: unrecognised human label {raw!r} for "
+                f"assertion {assertion_id}. Expected one of {list(LABELS)}. Not "
+                f"skipped: a discarded row is a silent change to the sample."
+            )
+        if assertion_id not in judge_labels:
+            raise ValueError(
+                f"{review_path}:{lineno}: assertion {assertion_id} is not in the key, "
+                f"so there is no judge label to compare it against."
+            )
+        judged = judge_labels[assertion_id]
+        confusion[(judged, human)] = confusion.get((judged, human), 0) + 1
+        scored += 1
+        if judged == human:
+            agreements += 1
+    return CalibrationReport(
+        n=scored, agreements=agreements, confusion=confusion, skipped=skipped
+    )
+
+
+def _key_labels(
+    key: db.StrPath | Sequence[Adjudication] | Mapping[int, str],
+) -> dict[int, str]:
+    """`{assertion_id: judge_label}` from a key file, adjudications, or a mapping."""
+    if isinstance(key, Mapping):
+        return {int(k): str(v) for k, v in key.items()}
+    if isinstance(key, (str, Path)):
+        labels: dict[int, str] = {}
+        for line in Path(str(key)).read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                row = json.loads(line)
+                labels[int(row["assertion_id"])] = str(row["label"])
+        return labels
+    if isinstance(key, Iterable):
+        return {a.assertion_id: a.judgement.label for a in key}
+    raise TypeError(f"cannot read judge labels from {type(key).__name__}")

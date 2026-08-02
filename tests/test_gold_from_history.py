@@ -31,6 +31,7 @@ from codelearner.eval.gold_from_history import (
     METHOD_FILE_ADD,
     METHOD_LINE_LOG,
     REJECT_BOILERPLATE,
+    REJECT_COPIED_INTO_SIBLING,
     REJECT_COPIED_INTO_SOURCE,
     REJECT_NO_MENTION,
     REJECT_NO_PROVENANCE,
@@ -41,6 +42,7 @@ from codelearner.eval.gold_from_history import (
     assert_no_leak,
     assert_view_is_source_only,
     audit_leak_boundary,
+    blind_terms,
     body_purpose,
     docstring_purpose,
     extract_label,
@@ -50,6 +52,7 @@ from codelearner.eval.gold_from_history import (
     mentions_symbol,
     mine_labels,
     name_purpose,
+    run_purpose_eval,
     score_purposes,
     source_view,
     split_units,
@@ -765,3 +768,326 @@ def test_without_docstring_removes_the_docstring_from_the_source_too(repo):
     assert blinded.docstring is None
     assert view.docstring.strip() not in blinded.source
     assert docstring_purpose(blinded) == name_purpose(blinded)
+
+
+# --------------------------------------------------------------------------------
+# WP12 -- the cross-symbol leak boundary
+# --------------------------------------------------------------------------------
+
+
+# The clause the second commit's message shares, verbatim, with the FIRST symbol's
+# docstring. Longer than COPY_RUN_CHARS after whitespace normalisation, which is what
+# makes it a copied clause rather than shared vocabulary.
+SHARED_CLAUSE = "to the whole suite instead of narrowing in silence"
+
+
+@pytest.fixture
+def sibling_repo(tmp_path):
+    """Two labelled symbols, one file, and a clause that crosses between them.
+
+    Modelled on the real finding in swarm-sync: a clause of `_AffectedFiles`'s
+    held-out label sits verbatim in `_reverse_dep_files`'s docstring. The detail that
+    makes this fixture worth its length is that **the two symbols do not share an
+    introducing commit** -- the second commit wrote the second symbol's label AND
+    edited the first symbol's docstring, while the first symbol's own label still
+    comes from the commit that created its lines. A copy filter scoped to same-commit
+    siblings passes this fixture while leaving the leak in place.
+    """
+    root = tmp_path / "sibling"
+    (root / "pkg").mkdir(parents=True)
+    _git(root, "init", "-q", "-b", "main")
+    gate = root / "pkg" / "gate.py"
+
+    gate.write_text(
+        '"""Gate."""\n\n\n'
+        "def reverse_dep_files(changed):\n"
+        '    """Return the dependents."""\n'
+        "    return set()\n"
+    )
+    _commit(
+        root,
+        "Walk the reverse dependency graph for impact selection\n\n"
+        "`reverse_dep_files` returns every repo file that transitively depends on a "
+        "changed module, so a test that exercises the code only indirectly is still "
+        "selected by the gate.\n",
+    )
+
+    # The second commit writes the second symbol AND edits the first symbol's
+    # docstring, planting its own message's clause there.
+    gate.write_text(
+        '"""Gate."""\n\n\n'
+        "def reverse_dep_files(changed):\n"
+        '    """Return the dependents.\n\n'
+        "    When the graph cannot be built the caller widens "
+        + SHARED_CLAUSE
+        + ".\n"
+        '    """\n'
+        "    return set()\n\n\n"
+        "class AffectedFilesAnswer(set):\n"
+        '    """A set that also knows whether it is an answer."""\n\n'
+        "    unavailable_reason = None\n"
+    )
+    _commit(
+        root,
+        "Distinguish an empty answer from no answer at all\n\n"
+        "`AffectedFilesAnswer` makes the two states distinguishable, the failure now "
+        "logs at WARNING, and the gate widens "
+        + SHARED_CLAUSE
+        + ".\n",
+    )
+    return root
+
+
+def test_a_label_copied_into_a_different_symbols_source_is_rejected_at_mining_time(
+    sibling_repo,
+):
+    """The class `REJECT_COPIED_INTO_SOURCE` cannot see, because it is per-symbol.
+
+    `AffectedFilesAnswer`'s label is not in `AffectedFilesAnswer`'s source -- the old
+    filter therefore had nothing to fire on -- but a clause of it is sitting in
+    `reverse_dep_files`'s docstring, which is a view the harness builds and scores.
+    """
+    labels = _labels(sibling_repo)
+    answer = labels["pkg.gate.AffectedFilesAnswer"]
+    assert answer.reject == REJECT_COPIED_INTO_SIBLING
+    # And it is genuinely invisible to the per-symbol check: the prose is NOT in its
+    # own source, so the old rule had no way to reach it.
+    source = _view_for(sibling_repo, answer).source
+    assert find_leaks(source, [answer.prose]) == []
+
+
+def test_the_cross_symbol_copy_filter_is_not_scoped_to_one_commit(sibling_repo):
+    """The obvious design -- check same-commit siblings -- would miss the real leak.
+
+    Recorded as a test because it is the one assumption in WP12 that does not hold:
+    on swarm-sync the leaking pair is `_AffectedFiles` (982386a) into
+    `_reverse_dep_files` (d6e029a), two different introducing commits, because a
+    later commit edited the neighbour's docstring while the neighbour's LABEL still
+    came from the commit that first wrote its lines.
+    """
+    labels = _labels(sibling_repo)
+    answer = labels["pkg.gate.AffectedFilesAnswer"]
+    victim = labels["pkg.gate.reverse_dep_files"]
+    assert answer.commit != victim.commit, "the fixture must cross a commit boundary"
+    assert answer.reject == REJECT_COPIED_INTO_SIBLING
+
+
+def test_the_symbol_holding_the_copy_keeps_its_own_label(sibling_repo):
+    """The LABEL is dropped, not the symbol whose source happens to hold the copy.
+
+    `reverse_dep_files`' own label is still held out from its own view, so it is
+    still a measurement. Dropping it too would cost yield for nothing.
+    """
+    labels = _labels(sibling_repo)
+    assert labels["pkg.gate.reverse_dep_files"].usable
+
+
+def test_the_audit_comes_back_empty_once_the_sibling_filter_has_run(sibling_repo):
+    """The filter is closed with respect to the audit -- that is its acceptance test.
+
+    Rejecting the label rather than the view is what makes this true: the audit
+    checks every view against every surviving label, so removing the prose removes
+    every pair it could appear in.
+    """
+    report = mine_labels(sibling_repo)
+    checked, findings = audit_leak_boundary(sibling_repo, report.usable)
+    assert findings == []
+    assert checked == len(report.usable) >= 1
+
+    # Red without the filter: the same audit over the unfiltered set does find it.
+    unfiltered = [
+        lab
+        for lab in report.labels
+        if lab.reject in (None, REJECT_COPIED_INTO_SIBLING)
+    ]
+    _checked, leaked = audit_leak_boundary(sibling_repo, unfiltered)
+    assert leaked, "the fixture must actually leak before the filter removes it"
+    assert any(SHARED_CLAUSE[:20] in hit for hit in leaked)
+
+
+def test_run_purpose_eval_fails_the_run_on_a_cross_product_leak(
+    sibling_repo, monkeypatch
+):
+    """The audit is WIRED into the scored run, and a finding voids the run.
+
+    Before this, `audit_leak_boundary` was called by no reported code path: the only
+    check a scored run made was `assert_no_leak(view, [lab.prose])`, each view against
+    its own label. Disabling the mining filter is how the wire is made observable --
+    in normal operation nothing reaches the audit, which is exactly the shape of an
+    unwired guard that reads as a working one.
+    """
+    monkeypatch.setattr(gh, "_reject_cross_symbol_copies", lambda report, survivors: None)
+    with pytest.raises(LeakDetected, match="leak boundary audit"):
+        run_purpose_eval(sibling_repo)
+
+    # Green with the filter in place: same repo, same call, no exception.
+    monkeypatch.undo()
+    report, cards = run_purpose_eval(sibling_repo)
+    assert report.audit_findings == []
+    assert cards
+
+
+def test_the_run_publishes_the_pair_count_it_actually_checked(repo):
+    """`views x labels`, not `views`. The cross product is the claim being made."""
+    report, _cards = run_purpose_eval(repo)
+    usable = len(report.usable)
+    assert report.audit_views == usable
+    assert report.audit_pairs == usable * usable
+    assert f"{report.audit_pairs} view x label pairs" in gh.format_report(report, [])
+
+
+# --------------------------------------------------------------------------------
+# WP13 -- the null, the blinding, and the intervals
+# --------------------------------------------------------------------------------
+
+
+def test_the_null_is_many_derangements_rather_than_one_draw(repo):
+    """`lift` was a single sample from the null and carried its full sampling error.
+
+    Measured on swarm-sync at HEAD's own configuration: the one shipped draw put
+    `body identifiers` +2.28sd above the null mean and `name + signature` -1.24sd
+    below it, so two rows of the same table were biased in opposite directions by up
+    to 0.015 -- which is a comparison error, not a rounding error.
+    """
+    card = score_purposes(repo, mine_labels(repo).usable, body_purpose, "body")
+    assert card.draws == gh.NULL_DRAWS
+    assert card.null_sd > 0.0, "a null with no spread is a null with one draw in it"
+    assert card.p_value == pytest.approx(1 / (1 + gh.NULL_DRAWS))
+    # `shuffled` is the centre of the null, so it is the mean of the per-draw means.
+    assert card.shuffled == pytest.approx(sum(card.null_means) / len(card.null_means))
+
+
+def test_the_null_never_pairs_a_label_with_one_from_its_own_commit():
+    """Cross-commit constrained, because two labels from one commit are one message.
+
+    An unconstrained derangement of swarm-sync's 42 labels pairs ~3.0 views per draw
+    with a label mined from their own introducing commit (9 labels share one commit).
+    Those pairings share the commit's vocabulary, so the control they build is too
+    high and the lift measured against it too low -- the constraint is the LESS
+    flattering choice.
+    """
+    clusters = ["a"] * 5 + ["b"] * 5 + ["c", "d", "e", "f"]
+    orders = gh._null_orders(len(clusters), draws=50, clusters=clusters)
+    assert len(orders) == 50
+    for order in orders:
+        assert sorted(order) == list(range(len(clusters)))
+        for i, j in enumerate(order):
+            assert i != j
+            assert clusters[i] != clusters[j]
+    assert orders == gh._null_orders(len(clusters), draws=50, clusters=clusters)
+
+    # Unconstrained, the same clusters collide -- so the constraint is doing work.
+    loose = gh._null_orders(len(clusters), draws=50, clusters=None)
+    assert any(
+        clusters[i] == clusters[order[i]] for order in loose for i in range(len(clusters))
+    )
+
+
+def test_a_null_that_cannot_be_drawn_is_reported_as_empty_rather_than_faked():
+    """A cluster holding more than half the labels admits no cross-cluster permutation.
+
+    Returning nothing is the honest answer; relaxing the constraint silently and
+    printing a control would not be.
+    """
+    assert gh._null_orders(4, draws=10, clusters=["a", "a", "a", "b"]) == []
+    assert gh._null_orders(1, draws=10) == []
+
+
+def test_a_single_label_gets_no_control_instead_of_a_self_paired_one(repo):
+    """`_derangement(1)` returned `[0]` -- a control that scored the label against
+    itself, i.e. a lift of exactly zero for reasons that have nothing to do with the
+    generator. One label cannot have a null and now says so."""
+    label = mine_labels(repo).usable[0]
+    card = score_purposes(repo, [label], body_purpose, "one")
+    assert card.n == 1
+    assert card.control == []
+    assert card.null_means == []
+    assert card.p_value is None
+
+
+def test_blinding_covers_every_dotted_component_and_the_path_stem():
+    """Leaf-only blinding left the module and class tokens standing.
+
+    They are not incidental: `view.path` carries them verbatim and a method's `class`
+    statement carries its class name, so a generator reading the source is guaranteed
+    to emit them, and the mention rule makes the label likely to contain them too.
+    Measured on swarm-sync, 34 of 43 labels (79%) still shared a non-leaf token after
+    leaf-only blinding.
+    """
+    terms = blind_terms("swarmsync.coordinator.gate._reverse_dep_files", "swarmsync/coordinator/gate.py")
+    for token in ("swarmsync", "coordinator", "gate", "reverse", "dep", "files"):
+        assert token in terms
+    blinded = gh._blind("the coordinator gate reverse dep files widen the suite", terms)
+    assert "coordinator" not in blinded
+    assert "gate" not in blinded
+    assert "suite" in blinded
+
+
+def test_leaf_only_blinding_pays_for_the_module_and_class_echo():
+    """The unearned credit the old rule handed out, isolated to one pair.
+
+    Generator output and label agree on NOTHING except the module and class the symbol
+    lives in -- tokens `view.path` hands the generator for free. Leaf-only blinding
+    scores that as agreement; blinding every component scores it as what it is.
+
+    Stated as a token-level unit rather than as a fixture score because token-F1 is a
+    ratio: removing shared tokens shrinks the numerator AND both denominators, so
+    "more blinding lowers the score" is not an identity and a fixture that appeared to
+    show one would be showing an accident. On swarm-sync the direction does hold, and
+    unevenly -- the docstring condition's lift fell 20.8% under the correction against
+    the body condition's 7.1%, which moves the ORDERING of the table and not only its
+    levels.
+    """
+    qualname = "swarmsync.coordinator.gate.AffectedFiles"
+    path = "swarmsync/coordinator/gate.py"
+    inferred = "coordinator gate affected files"
+    label = "the coordinator gate widens"
+
+    leaf = frozenset(gh._split_identifier(qualname.rsplit(".", 1)[-1]))
+    assert token_f1(gh._blind(inferred, leaf), gh._blind(label, leaf)) > 0.0
+
+    full = blind_terms(qualname, path)
+    assert token_f1(gh._blind(inferred, full), gh._blind(label, full)) == 0.0
+
+
+def test_the_clustered_bootstrap_is_wider_than_an_iid_one():
+    """9 of swarm-sync's 42 labels share one commit, so iid is the wrong interval.
+
+    An iid bootstrap treats those 9 as 9 draws and returns an interval too narrow --
+    the direction that makes a between-condition difference look resolved when it is
+    not.
+    """
+    values = [0.0] * 10 + [1.0] * 10
+    clustered = gh._clustered_bootstrap(values, ["low"] * 10 + ["high"] * 10, resamples=500)
+    iid = gh._clustered_bootstrap(values, [str(i) for i in range(20)], resamples=500)
+    assert (clustered[1] - clustered[0]) > (iid[1] - iid[0])
+
+
+def test_intervals_and_p_values_are_reproducible_for_a_stated_seed(repo):
+    """A number nobody can reproduce is not a measurement. Seeds are printed, not hidden."""
+    labels = mine_labels(repo).usable
+    first = score_purposes(repo, labels, body_purpose, "body")
+    second = score_purposes(repo, labels, body_purpose, "body")
+    assert first.null_means == second.null_means
+    assert first.lift_ci() == second.lift_ci()
+    lo, hi = first.lift_ci()
+    assert lo <= first.lift <= hi
+
+    # The seed is a real input, not decoration. Checked on a set large enough to have
+    # more than a handful of distinct resamples -- the fixture's three clusters do not.
+    values = [i / 40 for i in range(40)]
+    clusters = [str(i) for i in range(40)]
+    assert gh._clustered_bootstrap(values, clusters, seed=1) != gh._clustered_bootstrap(
+        values, clusters, seed=2
+    )
+
+
+def test_format_report_prints_the_settings_its_numbers_depend_on(repo):
+    """Seed, draw count and resample count travel WITH the table, not in the source."""
+    report, cards = run_purpose_eval(repo)
+    text = gh.format_report(report, cards)
+    assert f"seed {gh.NULL_SEED}" in text
+    assert f"seed {gh.BOOTSTRAP_SEED}" in text
+    assert f"{gh.NULL_DRAWS} cross-commit derangements" in text
+    assert f"{gh.BOOTSTRAP_RESAMPLES} resamples" in text
+    assert "clustered bootstrap over" in text

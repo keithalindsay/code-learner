@@ -14,15 +14,37 @@ Metrics are the standard three, computed the standard way:
     answer at the top", which recall alone does not.
   - **hit@k** -- fraction of queries with at least one relevant hit in the top k.
 
-The gold set is small (16 queries) and hand-labelled, so treat differences of one or
-two points as noise. It is enough to tell a modality that works from one that does
-not, and not enough to justify fine-grained tuning -- a limit worth respecting
-rather than working around.
+## How small 16 queries actually is
+
+The gold set is 16 hand-labelled queries. WITHDRAWN: the band this module used to
+quote here -- one or two points -- sat below the instrument's own quantum, which
+made it worse than offering no band at all, because it invited exactly the
+fine-grained reading the set cannot support. The arithmetic it should have been:
+
+  - `hit@5` is the mean of 16 booleans, so **one query flipping moves it 6.25
+    points**. A difference of "one or two points" is not a small difference on this
+    instrument; it is a difference this instrument cannot express.
+  - 11 of the 16 queries carry exactly ONE relevant symbol, so `recall@5` has the
+    same 6.25-point quantum on two thirds of the set.
+  - The sampling sd is not the quantum. On n=16 the binomial sd of a rate is
+    `sqrt(p(1-p)/16)`: **12.5 points at p=0.5, 10.8 at p=0.75, 7.5 at p=0.9** --
+    the range the measured rows sit in. So the honest band is around **10 points,
+    not one or two**, and `Scorecard.ci` computes it per row rather than leaving it
+    to a sentence.
+
+Two consequences, both load-bearing. Nothing under ~10 points separates two rows on
+this set, so the sweep should be read for its SHAPE and not its ordering. And the
+comparison worth making is paired: `Scorecard.delta_ci` resamples the same query
+indices for both rows, which cancels the "some queries are just hard" variance that
+dominates two independent intervals and is the only way a 6-point difference on 16
+queries can be resolved at all.
 """
 from __future__ import annotations
 
 import json
+import random
 import sqlite3
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -35,6 +57,12 @@ from ..retrieve.rerank import Reranker
 from ..retrieve.search import search
 
 GOLD_DIR = Path(__file__).parent / "gold"
+
+#: Bootstrap settings, PRINTED by `format_table` rather than only living here. An
+#: interval whose resample count and seed are not next to the number is not something
+#: the reader can reproduce, and this table's whole job is to be checkable.
+BOOTSTRAP_RESAMPLES = 2000
+BOOTSTRAP_SEED = 20250801
 
 
 @dataclass
@@ -74,15 +102,91 @@ class Scorecard:
             ]
         )
 
+    def per_query(self, metric: str, k: int = 5) -> list[float]:
+        """One value per query, so the bootstrap has something to resample.
+
+        The unit of resampling is a QUERY, not a retrieved symbol: two symbols
+        relevant to the same query are not two independent trials of the retriever.
+        """
+        if metric == "recall":
+            return [r.recall_at(k) for r in self.results]
+        if metric == "hit":
+            return [1.0 if r.hit_at(k) else 0.0 for r in self.results]
+        if metric == "mrr":
+            return [
+                1.0 / r.first_relevant_rank if r.first_relevant_rank else 0.0
+                for r in self.results
+            ]
+        raise ValueError(f"unknown metric {metric!r}")
+
+    def ci(
+        self,
+        metric: str = "hit",
+        k: int = 5,
+        resamples: int = BOOTSTRAP_RESAMPLES,
+        seed: int = BOOTSTRAP_SEED,
+    ) -> tuple[float, float]:
+        """95% bootstrap interval over the 16 queries. See the module docstring."""
+        values = self.per_query(metric, k)
+        if not values:
+            return (0.0, 0.0)
+        draws = _resample_indices(len(values), resamples, seed)
+        return _percentile_ci([_mean([values[i] for i in idx]) for idx in draws])
+
+    def delta_ci(
+        self,
+        other: Scorecard,
+        metric: str = "hit",
+        k: int = 5,
+        resamples: int = BOOTSTRAP_RESAMPLES,
+        seed: int = BOOTSTRAP_SEED,
+    ) -> tuple[float, float]:
+        """PAIRED interval for `self - other`, resampling the same queries for both.
+
+        This is the comparison the table is for, and it is not the same thing as
+        looking at whether two `ci()` intervals overlap. Both rows answer the same 16
+        queries, so most of the variance in either interval is "this query is hard",
+        which cancels in the difference. Two overlapping marginal intervals routinely
+        sit either side of a difference whose paired interval excludes zero.
+        """
+        mine = self.per_query(metric, k)
+        theirs = other.per_query(metric, k)
+        if not mine or len(mine) != len(theirs):
+            return (0.0, 0.0)
+        diffs = [a - b for a, b in zip(mine, theirs, strict=True)]
+        draws = _resample_indices(len(diffs), resamples, seed)
+        return _percentile_ci([_mean([diffs[i] for i in idx]) for idx in draws])
+
     def row(self) -> str:
+        lo, hi = self.ci("hit", 5)
         return (
-            f"{self.name:<28} {self.recall_at(5):>8.3f} {self.recall_at(10):>9.3f} "
-            f"{self.hit_at(5):>7.3f} {self.mrr:>7.3f}"
+            f"{self.name:<30} {self.recall_at(5):>8.3f} {self.recall_at(10):>9.3f} "
+            f"{self.hit_at(5):>7.3f} [{lo:>5.3f},{hi:>5.3f}] {self.mrr:>7.3f}"
         )
 
 
 def _mean(values: list[float]) -> float:
     return sum(values) / len(values) if values else 0.0
+
+
+def _resample_indices(n: int, resamples: int, seed: int) -> list[list[int]]:
+    """Bootstrap index draws, a pure function of (n, resamples, seed).
+
+    Deliberately not a method: every scorecard over the same gold set must get the
+    IDENTICAL draws, because that is what makes `delta_ci` paired. A per-card RNG
+    would silently un-pair the comparison while still printing intervals.
+    """
+    rng = random.Random(seed)  # noqa: S311 -- reproducibility, not secrecy
+    return [[rng.randrange(n) for _ in range(n)] for _ in range(resamples)]
+
+
+def _percentile_ci(values: Sequence[float], alpha: float = 0.05) -> tuple[float, float]:
+    if not values:
+        return (0.0, 0.0)
+    ordered = sorted(values)
+    lo = ordered[min(len(ordered) - 1, int((alpha / 2) * len(ordered)))]
+    hi = ordered[min(len(ordered) - 1, int((1 - alpha / 2) * len(ordered)))]
+    return (lo, hi)
 
 
 def load_gold(name: str = "swarm_sync") -> dict:
@@ -243,22 +347,26 @@ def run_ablation(
     # good" are indistinguishable. Without the third, the largest lever measured so
     # far (test demotion) never gets asked whether it is still needed.
     #
-    # MEASURED, with `zerank-1-small-reranker` on the swarm-sync gold set:
+    # NO NUMBERS ARE RECORDED HERE, and their absence is the point.
     #
-    #   hybrid + prefer_impl          0.646  0.802  0.750  0.453   <- the baseline
-    #   hybrid + rerank               0.750  0.781  0.875  0.679
-    #   lex+dense pref_impl+rerank    0.750  0.781  0.875  0.679
-    #   hybrid + rerank no pref_impl  0.688  0.781  0.812  0.677
+    # This comment used to carry four measured reranking rows under the heading
+    # "MEASURED", plus three conclusions drawn from them -- including an MRR swing
+    # quoted to three decimals. Those figures were RETRACTED in the README (the live
+    # swing is smaller), and two of the three conclusions did not survive the re-run,
+    # but the retraction never reached this file. So the module that PRODUCES the
+    # table went on shipping the withdrawn version of it, in the most authoritative
+    # place a reader would look, for as long as nobody re-read the comment.
     #
-    # Answers, in order. Yes -- MRR +0.226, past even the 0.516 that lexical+dense
-    # +prefer_impl managed without the graph modality diluting it. No -- rows two and
-    # three tie exactly, so nothing here attributes any of that gain to graph
-    # expansion. And mostly yes on the third: the demotion no longer moves MRR (0.679
-    # vs 0.677) but still moves recall@5 (0.750 vs 0.688), so it stays on.
+    # A source comment cannot be re-measured when the reranker, the index, or the
+    # repo changes, so it will always drift toward exactly that failure. Reranked
+    # rows need a GPU pass; run them and read the output:
     #
-    # The row that is easy to skip: recall@10 FELL, 0.802 -> 0.781, in every reranked
-    # configuration. Reranking reorders a fixed candidate set and cannot add recall;
-    # here it traded a gold symbol sitting at rank 9-10 for better answers above it.
+    #     print(format_table(run_ablation(conn, embedder, reranker=reranker)))
+    #
+    # and publish that output stamped `repo@sha`, beside the `hit@5` intervals the
+    # table now prints -- which, at 16 queries, are wide enough that a four-row
+    # comparison quoted to three decimals was never the right shape for this result.
+    # `Scorecard.delta_ci` is the paired test for the three questions above.
     if reranker is not None:
         rerank_rows = [
             ("hybrid + rerank", {"use_graph": True, "prefer_implementation": True}),
@@ -337,7 +445,22 @@ def _weighted_hybrid(
 
 
 def format_table(cards: list[Scorecard]) -> str:
-    header = f"{'configuration':<28} {'recall@5':>8} {'recall@10':>9} {'hit@5':>7} {'MRR':>7}"
+    n = len(cards[0].results) if cards else 0
+    header = (
+        f"{'configuration':<30} {'recall@5':>8} {'recall@10':>9} {'hit@5':>7} "
+        f"{'95% CI':>13} {'MRR':>7}"
+    )
     lines = [header, "-" * len(header)]
     lines += [c.row() for c in cards]
+    if n:
+        # The caption travels with the table. Detached from these three facts the
+        # rows read as if a 0.02 difference meant something, which on 16 queries it
+        # does not.
+        lines += [
+            "-" * len(header),
+            f"n = {n} queries. hit@5 moves in steps of {1 / n:.4f} -- one query.",
+            f"CI: bootstrap over queries, {BOOTSTRAP_RESAMPLES} resamples, "
+            f"seed {BOOTSTRAP_SEED}. Marginal, so do NOT read row differences off it:"
+            " use Scorecard.delta_ci, which resamples the same queries for both rows.",
+        ]
     return "\n".join(lines)
