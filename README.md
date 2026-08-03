@@ -1229,158 +1229,164 @@ exists and invents entries in it. Under a byte-offset design every one of those 
 have become a plausible, permanently-verifying citation to code the claim was not
 about.
 
-### Measured, on swarm-sync
+### Measured, on swarm-sync@`3119a97`, code-learner@`9c2e6b2`
 
-> **Not re-run for this document** — it is a full generation pass and needs a model.
-> `llama3.1:8b` drafting, `qwen3.5:9b` judging; 223s for 150 symbols on a 10GB RTX
-> 3080, about 0.67 symbols/second. The store it wrote is still on
-> swarm-sync@`3119a97`'s index and the counts below are read back from it at
-> code-learner@`3212972`.
+Re-run in full at schema v6, on the corrected instruments. Every input to the numbers
+previously published here had changed since they were taken — decorated spans widened,
+the prompt rewritten after the signature-restatement failure, faithfulness given
+intervals and separated instrument failures, the purpose eval given full-qualname
+blinding, 500 cross-commit derangements and clustered intervals — so the old figures
+described a system that no longer existed.
 
-```
-admitted 147/150 (0.980)  generator=ollama/llama3.1:8b
-  considered=150 skipped_existing=0 no_offers=0
-  refused: empty_claim=0 no_valid_citation=3 generator_errors=0
-  refused by the gate: invalid_span=0 unverifiable=0 unknown_subject=0 stale_evidence=0 escaping_span=0
-  off-menu refs=23 across 10 draft(s); offers dropped: oversize=96 unreadable=0
-```
-
-State of that store today, after the v5→v6 carry:
+Two generators, the **same prompt byte for byte**, the same gold, and the same judge.
 
 ```
-150 assertions   73 active   67 rejected   10 stale (decorators_excluded)
-147 verdicts     80 supported   65 refuted   2 unsupported
+llama3.1:8b                              claude-opus-5 (via Claude Code)
+admitted 148/151 (0.980)                 admitted 136/151 (0.901)
+  empty_claim        0                     empty_claim       15
+  no_valid_citation  3                     no_valid_citation  0
+  off-menu refs     17 across 10            off-menu refs      0
+227s, ~0.67 sym/s                        ~1400s, ~0.11 sym/s
 ```
 
-| | |
+**The failure profiles are opposite, and that is the most legible difference between
+the two models.** `llama3.1:8b` never declines and invents menu references seventeen
+times. `claude-opus-5` declines fifteen times and never once cites off the menu. The
+lower admission rate is the prompt working: *"if the only thing you can write is the
+signature, write nothing."*
+
+The three refusals on the llama side are also worth naming, because two of them are the
+same failure seen a third time: the model reciting `_next_ticket`, the **invented**
+symbol from the prompt's own worked example. It still fails closed — that symbol does
+not exist, so there is nothing to cite — which is why the examples were made synthetic
+in the first place.
+
+| | faithfulness | n |
+|---|---|---|
+| `llama3.1:8b` | 0.55 [0.47, 0.63] | 148 |
+| `claude-opus-5` | **0.70 [0.62, 0.77]** | 136 |
+
+Judged by `qwen3.5:9b` in both cases — deliberately not Claude. A generator grading its
+own output shares its blind spots, and if Claude both authored and judged, faithfulness
+would stop being an audit and become self-assessment.
+
+**Read the gap with the abstention in mind.** Claude declined fifteen symbols that llama
+attempted, and declining the hard ones raises the average of what remains. Some unknown
+part of 0.70 − 0.55 is selection rather than quality, and this eval cannot separate them:
+the honest phrasing is *0.70 among the claims it chose to make*. The instrument-failure
+counters were 2/136 and 3/148 — small, and visible rather than folded into the score,
+which is the whole reason they were split out.
+
+### Purpose accuracy: a frontier model halves the gap and still loses
+
+Scored against labels mined from commit prose both generators are structurally
+prevented from seeing. **Both LLM conditions were run together, over the same 42
+labels, in one pass** — that is what makes the paired test below a genuine pairing
+rather than two runs subtracted.
+
+| condition | n | gold | shuffled | lift | lift 95% CI | suspect |
+|---|---|---|---|---|---|---|
+| body identifiers | 42 | **0.193** | 0.041 | **0.152** | [0.107, 0.205] | 0 |
+| LLM `claude-opus-5` | 42 | 0.142 | 0.027 | 0.115 | [0.074, 0.168] | 10 |
+| docstring first sentence | 42 | 0.125 | 0.017 | 0.109 | [0.063, 0.171] | 0 |
+| body identifiers, doc-blind | 42 | 0.119 | 0.031 | 0.089 | [0.052, 0.143] | 0 |
+| LLM `claude-opus-5`, doc-blind | 42 | 0.114 | 0.023 | 0.091 | [0.053, 0.147] | 24 |
+| LLM `llama3.1:8b` | 42 | 0.091 | 0.017 | 0.074 | [0.046, 0.116] | 2 |
+| LLM `llama3.1:8b`, doc-blind | 42 | 0.061 | 0.014 | 0.047 | [0.019, 0.092] | 9 |
+| name + signature only | 42 | 0.019 | 0.004 | 0.014 | [0.002, 0.032] | 0 |
+
+Null: 500 cross-commit derangements, seed 20250729. Intervals: clustered bootstrap over
+the 17 introducing commits, 2000 resamples, seed 20250801.
+
+Paired differences, **resampling commits rather than labels** — nine of these labels
+come from one commit, so label-level resampling would report an interval narrower than
+the data supports:
+
+```
+claude  -  llama3.1:8b        +0.0515  [+0.0270,+0.0807]  *
+claude  -  body identifiers   -0.0508  [-0.0774,-0.0126]  *
+claude  -  docstring          +0.0172  [-0.0038,+0.0360]
+llama   -  body identifiers   -0.1024  [-0.1374,-0.0580]  *
+claude  -  llama (doc-blind)  +0.0527  [+0.0179,+0.0940]  *
+```
+
+Three things follow.
+
+**A frontier model is significantly better than an 8B local one, and it survives
+blinding.** `+0.052` sighted, `+0.053` doc-blind. The advantage is not docstring
+copying — it holds when the docstring is stripped.
+
+**It still loses significantly to a bag of body identifiers.** It halves the gap
+(`−0.102` → `−0.051`) and cannot close it. It lands statistically level with a
+docstring copier.
+
+**That is a finding about the metric, not the model.** This file has warned from the
+start that token-F1 rewards vocabulary rather than meaning; the warning was reasoning,
+and this is the measurement behind it. When a much stronger model, given an identical
+prompt, cannot beat *mechanically extracting identifiers from the function body*, the
+metric is rewarding lexical overlap — a commit message about a symbol tends to contain
+that symbol's identifiers, and the identifier bag emits exactly those. The number that
+should be read from this table is the ordering and the paired intervals, not the levels.
+
+#### The `suspect` column is not a leak detector here — it is a quality signal
+
+`suspect` counts a rare token shared by the model's output and the held-out label but
+absent from the view it was shown. Claude scores 10 sighted and **24** doc-blind against
+llama's 2 and 9, and a jump like that in a leak counter is the kind of thing this
+project does not wave through. All 18 flagged rows of one doc-blind run were read
+individually.
+
+**None is a leak.** Every flagged token is the ordinary English word for something the
+model could see:
+
+| token | what the view literally contains |
 |---|---|
-| **faithfulness** | **0.54 [0.46, 0.62]** — see [Faithfulness](#faithfulness-does-a-claim-follow-from-what-it-cites) |
-| **purpose agreement** | gold 0.102, lift 0.081 against 43 labels mined from git history |
+| `ascending` ×2 | `ORDER BY seq ASC` |
+| `environment` ×3 | `os.environ`, in three `config.*` readers |
+| `subclass` | `class BlackboardUnreachable(httpx.HTTPError)` |
+| `different` | `if stored != root: raise ManagedRootMismatchError` |
+| `positive` | `gate_timeout`'s positive-number validation |
+| `events`, `response`, `validation` | `EventOut`, a pydantic response model |
 
-The `refused by the gate` line prints even when every count is zero, and that is
-deliberate: these are the numbers a reader would not think to ask for, and a line that
-appears only when something is wrong is a line nobody learns to read. Before those five
-outcomes existed, three of four reproducible store refusals simply *ended* a learn run
-as an unhandled exception.
+The detector compares exact token strings, so it cannot see that *ascending* is the
+English for `ASC`, or *subclass* for `class X(Y)`. The model and the committer reached
+for the same word because it is the right word for a visible fact.
 
-`admitted` is deliberately not the headline. A generator that cites whatever is put in
-front of it produces the same count as one that read the code, and the numbers that
-separate them are the rest of the line: how often it abstained, how often its references
-missed the menu it was given, how often it was simply unreachable. Those stay apart
-rather than summing, because a run that refused everything because the claims came back
-empty and a run that refused everything because the references all missed are the same
-total and entirely different repairs.
+So the counter is measuring **vocabulary convergence with the committer, and a better
+writer converges more often** — which is precisely why the stronger model scores higher
+on it. It remains worth reporting, and worth reading as a prompt to go and look rather
+than as evidence of a boundary failure. `assert_no_leak` is the hard gate and it is
+still clean: 1,764 view × label pairs, 0 findings.
 
-### The number that is supposed to be low
-
-0.54 is the honest number, and the first version of this generator would have scored
-close to 1.0 while being worthless. That is the finding worth keeping.
-
-Told only to prefer "a narrow claim you can support to a broad one you cannot",
-`llama3.1:8b` complied exactly, over real symbols:
-
-```
-demo._crash_agent.main    -> "The `main` function requires a `--base-url` argument."
-demo.run_demo._free_port  -> "The function `_free_port` returns an integer."
-```
-
-Restating a type signature is the global optimum of narrow-and-supportable. The span
-entails it, so an adversarial judge supports every one, and a store full of them scores
-~1.0 on faithfulness while saying nothing about any symbol in the repo — a number
-indistinguishable, from the outside, from one earned by good claims. The prompt now
-states the question first, names the signature shape as a rejected answer with a
-bad/good pair, and re-scopes narrowness to mean claiming less of the *job* rather than
-retreating to syntax. Faithfulness fell from what would have been ~1.0 to 0.54, and
-that fall is the improvement.
-
-**Read 0.54 as a lower bound, not an accuracy.** The judge is written to refute and it
-does: it declines `sample_repo.calc.sub is used to compute the difference between two
-numbers` on the grounds that one passing test "does not prove the function is used to
-compute differences in all cases". That is a defensible reading of the instruction it
-was given, and it means the not_supported set contains claims a reasonable reviewer
-would keep. The set is printed in full rather than summarised for exactly this reason;
-the number is a prompt to go read it, not a verdict.
-
-### The example that leaked, and the failure it turned into
-
-The bad/good pair in the first revision used the real symbols it had been derived from
-— `main` and `_free_port`, out of swarm-sync's demo package. On the next run the model
-answered for `demo.run_demo.main` with the GOOD example nearly word for word, and that
-is a *different function* from the one the example described. The claim was fluent,
-purpose-shaped, cited a real span, and was about the wrong code. Nothing downstream
-could have caught it: the gate hashes the citation and it verifies, and a menu holding a
-plausible `main` can entail it.
-
-The fix is that examples name symbols which cannot exist in a repo under index
-(`_next_ticket`, `_drain_outbox`). The interesting part is what happened next. The model
-**still copies the example** — twice in this run, against `swarmsync.config.require_python`
-and `swarmsync.hooks.adapter.cmd_release`:
-
-```
-[refused_no_citation] swarmsync.config.require_python
-  claim:  The `_next_ticket` function is used to prevent two writers from appending
-          to the same slot simultaneously.
-```
-
-But `_next_ticket` is not in the repo, so there was no span to cite, so the reference
-missed the menu, so `write_assertion` refused it and no row exists. Making the examples
-synthetic did not stop the fabrication. It converted a silent, plausible, admitted
-fabrication into a loud refusal — which is the only outcome the rest of the system can
-act on.
-
-### Purpose accuracy: the generator loses to a bag of identifiers
-
-Scored against labels mined from commit prose the generator is structurally prevented
-from seeing. Same run, same caveat — not re-run for this document, and the four
-baseline rows here predate the statistical corrections applied to the swarm-sync table
-above, so the *levels* in this table are the overstated ones and only the ordering
-should be read from it:
-
-| condition | n | gold | shuffled | lift |
-|---|---|---|---|---|
-| docstring first sentence | 43 | 0.155 | 0.034 | 0.121 |
-| name + signature only | 43 | 0.020 | 0.001 | 0.019 |
-| body identifiers | 43 | **0.205** | 0.065 | **0.140** |
-| body identifiers, doc-blind | 43 | 0.124 | 0.039 | 0.085 |
-| LLM `llama3.1:8b` | 43 | 0.102 | 0.021 | 0.081 |
-| LLM `llama3.1:8b`, doc-blind | 43 | 0.072 | 0.019 | 0.053 |
-
-**The LLM is beaten by a bag of body identifiers, on both conditions.** That is the
-result, and it is not softened here. What *is* required is the interval: on the
-corrected corpus the between-condition resolution on lift is about ±0.04–0.05, so "the
-LLM is beaten by a bag of body identifiers" is solid on `gold` (0.205 against 0.102)
-and **marginal on `lift`** (0.140 against 0.081) — and lift is the number this file
-correctly says to read. It has not been re-run under the corrected null and blinding.
-
-It is also not quite the humiliation it looks like, and the reason is stated in this
-README's own warning about the metric: token-F1 rewards vocabulary, not meaning. A
-commit message about a symbol tends to *contain that symbol's identifiers*, and the
-body-identifier baseline emits exactly those, so it is playing the metric's strongest
-suit. The LLM paraphrases into fluent English — "hands out the sequence number a
-writer stamps on a record" — and pays for every word that is not the word the
-committer used. The comparison that survives is the one the harness was built to
-support: the LLM's lift over its own shuffled control is positive, so it is carrying
-real signal about the symbol rather than repo-wide vocabulary. It is simply carrying
-less *lexical* signal than extraction does.
-
-What this does not license is the conclusion that the LLM understands the code better
-and the metric is unfair. Nothing here measures that. A generator that reads well and
-scores badly on token-F1 and a generator that is wrong are indistinguishable under this
-eval, which is why faithfulness is reported beside it and the refusal set is printed.
-
-One flag on the doc-blind row: `suspect` — output tokens present in the held-out label
-but not in the source view — is 2 for the sighted LLM condition and **9** for the
-doc-blind one. Nine is small enough to be coincidence across 43 short strings and large
-enough that it should not be waved through. It is reported rather than explained.
+Sandbox leakage is separately ruled out for the Claude condition. The subprocess runs
+with no tools at all, verified against a planted canary: the deny-list form
+(`--disallowedTools`) **leaked** it in 7 turns by searching the tool namespace for an
+unblocked shell, and the shipped allow-list form (`--tools ""`) blocked it in 1.
 
 ### What this run does not establish
 
-- **150 symbols of one repo, and swarm-sync includes a `sample_repo/` fixture.**
+- **151 symbols of one repo, and swarm-sync includes a `sample_repo/` fixture.**
   Several admitted claims are about `calc.add` and `calc.sub` — toy functions whose
   purpose is their name. They inflate the count and tell you nothing.
-- **One generator, one judge, one prompt, one run.** Temperature is 0, which removes the
-  variance that is free to remove and does not make the run reproducible across ollama
-  or driver versions.
+- **Two generators, one judge, one prompt, one repo.** Temperature is 0 for the local
+  model, which removes the variance that is free to remove and does not make a run
+  reproducible across ollama or driver versions. The Claude condition is not
+  temperature-controlled at all — it goes through an agent harness — and its paired
+  numbers moved by about 0.005 between two runs, which is the size of the
+  nondeterminism to expect from it.
+- **The faithfulness gap is confounded with abstention.** Claude declined 15 symbols
+  llama attempted, and this eval cannot say how many of those llama got wrong. A
+  generator that refuses the hard cases scores better on what remains, so `0.70`
+  against `0.55` is an upper bound on the quality difference, not a measurement of it.
+  Scoring abstentions as failures would be the other extreme and equally wrong: a
+  refusal to guess is the behaviour the prompt asks for.
+- **One run of the Claude condition reached its numbers on the second attempt.** The
+  first aborted at symbol 98 when the harness answered with a different model. No
+  claim from the substituted model was ever stored — the guard fires before the draft
+  returns — but the run had to be restarted on a clean index rather than resumed,
+  because 33 claims already carried verdicts and `adjudicate` only scores servable
+  ones, so resuming would have quietly dropped the refuted claims and inflated the
+  score.
 - **`oversize=96` is a budget decision, not a defect.** Those neighbours were longer
   than `max_offer_bytes` and were dropped rather than truncated — a model that reads
   the first 4KB and cites a span covering 40KB would produce a citation that verifies.
