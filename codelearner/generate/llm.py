@@ -117,6 +117,7 @@ __all__ = [
     "build_generation_prompt",
     "collides_with_judge",
     "model_family",
+    "model_lineage",
     "parse_draft",
     "render_menu",
 ]
@@ -188,16 +189,76 @@ def model_family(model: str) -> str:
     return match.group(0) if match else name
 
 
-def collides_with_judge(model: str) -> bool:
-    """True when this generator shares a model family with the faithfulness judge.
+# Families that a leading-run-of-letters test cannot see are the same thing.
+#
+# `model_family` is a lexical rule over a marketing name, and its false negatives all sit
+# in the dangerous direction: a model derived from another family and published under its
+# own name reads as unrelated. `bakllava` is a Llama derivative and comes back as
+# `bakllava`; `qwq` is Qwen's own reasoning line and comes back as `qwq`; a Claude model
+# named by the CLI flag word (`--model opus`) comes back as `opus`.
+#
+# The Anthropic entries are the ones that motivated this map. Claude tags share one
+# post-training pipeline, so `claude-opus-5` grading `claude-haiku-4-5` is not two
+# independent readers disagreeing -- it is one set of preferences and one set of blind
+# spots, applied twice. The correct unit of collision for a hosted model is the vendor's
+# lineage, and it only looked like the prefix rule handled that because every Claude tag
+# happens to begin with `claude`.
+#
+# This map is a floor and is not claimed to be complete. It cannot see a fine-tune
+# published under an unrelated brand, and it cannot see a distillation at all. What closes
+# that gap is not a longer table -- it is that `LearnReport` records the generator's name
+# and the scorecard records the judge's, so a reader can see both and decide. The
+# predicate's job is to catch the ACCIDENT, never to certify independence.
+_LINEAGE_ALIASES = {
+    "anthropic": "claude",
+    "opus": "claude",
+    "sonnet": "claude",
+    "haiku": "claude",
+    "bakllava": "llama",
+    "llava": "llama",
+    "codellama": "llama",
+    "tinyllama": "llama",
+    "qwq": "qwen",
+    "qvq": "qwen",
+}
+
+
+def model_lineage(model: str) -> str:
+    """`model_family`, then the known aliases -- `bakllava:latest` -> `llama`.
+
+    Kept separate from `model_family` rather than folded into it. `model_family` answers
+    "what does this tag call itself", which several callers and tests depend on being the
+    literal answer; this answers "whose model is it, really", which is the question the
+    collision check needed and the only one it should ever have been asking.
+    """
+    family = model_family(model)
+    return _LINEAGE_ALIASES.get(family, family)
+
+
+def collides_with_judge(model: str, *, judge: str = JUDGE_FAMILY) -> bool:
+    """True when this generator and the faithfulness judge are not independent readers.
 
     The hazard made checkable. A Qwen generator judged by a Qwen judge produces a
     faithfulness score that measures agreement between two models with the same blind
     spots, and reads exactly like a score that measured truth. Nothing in the code can
     forbid it -- comparing the two families deliberately is a legitimate experiment --
     so the least this module can do is let a caller, a report, or a test ask.
+
+    **`judge` is an argument, because independence is a relation and not a property.** The
+    original form compared one model against the `JUDGE_FAMILY` constant, which answers
+    "is this a Qwen?" when the question is "is this related to whatever is grading it". It
+    was therefore blind by construction to a Claude generator under a Claude judge: the
+    constant names today's judge, so any pairing that does not involve Qwen came back
+    clean no matter how closely the two were related. Passing the judge makes the check
+    say what it means, and the default keeps every existing caller byte-identical.
+
+    **The comparison is on lineage rather than on the tag**, so `bakllava` collides with a
+    Llama judge and `--model opus` collides with a Claude one. See `_LINEAGE_ALIASES` for
+    what that map can and cannot see; it is a floor, and a name-based test can never be
+    more than one. Over-warning costs a reader ten seconds. Under-warning costs the
+    faithfulness number its meaning, with no other symptom.
     """
-    return model_family(model) == JUDGE_FAMILY
+    return model_lineage(model) == model_lineage(judge)
 
 
 # --------------------------------------------------------------------------

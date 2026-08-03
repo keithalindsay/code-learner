@@ -942,6 +942,16 @@ def cmd_index(args: Any, factory: EmbedderFactory) -> int:
         },
     }
 
+    # Close before returning, and not as tidiness. A `sqlite3.Connection` forms a
+    # reference cycle with its own statement cache, so dropping the last reference does
+    # NOT finalize it -- only the cyclic collector does, and only then does SQLite
+    # checkpoint and unlink `index.db-wal`. Leaving that to the collector makes the
+    # moment a build's WAL disappears depend on unrelated allocation pressure, which is
+    # how `test_an_unmeasurable_tree_is_not_reported_as_a_clean_one` came to fail in
+    # roughly a quarter of full-suite runs and never when run alone: a directory listing
+    # taken before the collector fired was walked after it did.
+    conn.close()
+
     if args.json:
         print(json.dumps(payload, indent=2))
         return 0

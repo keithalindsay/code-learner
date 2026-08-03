@@ -19,6 +19,13 @@ Four pieces, in dependency order:
   `OllamaPurposeModel` for the purpose eval's plainer seam. Its default model is
   deliberately not a Qwen model, because the judge is, and `collides_with_judge` makes
   that hazard checkable rather than merely documented.
+- `claude_code` is the same two seams behind the `claude` CLI, for the question `llm`'s
+  measured numbers raise but cannot answer: whether a stronger model changes the result
+  or the method is what is weak. It re-uses `llm`'s prompts verbatim -- a prompt tuned
+  per backend would make the comparison answer a different question -- and its interesting
+  work is the sandbox, since a subprocess running an agent CLI could open the very file
+  the purpose eval's `docstring_blind` condition just stripped. Read its module docstring
+  for the measured run where a tool DENY list did not hold.
 - `pipeline` walks a repo, builds each menu from the call graph, and admits what
   survives through `write_assertion` -- never around it. Its report keeps the refusal
   modes apart, because "the model abstained", "the model cited nothing on the menu" and
@@ -48,6 +55,15 @@ the AST of every file here, because a rule that lives only in a docstring is a r
 that has already been broken once.
 """
 
+from .claude_code import (
+    CLAUDE_LINEAGE,
+    DENIED_TOOLS,
+    ClaudeCodeClaimGenerator,
+    ClaudeCodePurposeModel,
+    ModelSubstituted,
+    answering_model,
+    build_argv,
+)
 from .llm import (
     DEFAULT_GENERATOR_MODEL,
     JUDGE_FAMILY,
@@ -56,6 +72,7 @@ from .llm import (
     build_generation_prompt,
     collides_with_judge,
     model_family,
+    model_lineage,
     parse_draft,
     render_menu,
 )
@@ -87,10 +104,12 @@ from .purpose import (
 from .types import ClaimGenerator, Draft, GeneratorUnavailable, Offer
 
 __all__ = [
+    "CLAUDE_LINEAGE",
     "DEFAULT_GENERATOR_MODEL",
     "DEFAULT_MAX_OFFERS",
     "DEFAULT_MAX_OFFER_BYTES",
     "DEFAULT_MIN_LINES",
+    "DENIED_TOOLS",
     "JUDGE_FAMILY",
     "MAX_PURPOSE_WORDS",
     "NORMALISATION_RULE",
@@ -99,17 +118,22 @@ __all__ = [
     "ROLE_SUBJECT",
     "Candidate",
     "ClaimGenerator",
+    "ClaudeCodeClaimGenerator",
+    "ClaudeCodePurposeModel",
     "Draft",
     "GeneratorUnavailable",
     "LLMPurposeGenerator",
     "LearnProgress",
     "LearnReport",
     "LearnResult",
+    "ModelSubstituted",
     "Offer",
     "OllamaClaimGenerator",
     "OllamaPurposeModel",
     "PurposeModel",
+    "answering_model",
     "assert_source_only",
+    "build_argv",
     "build_generation_prompt",
     "build_offers",
     "candidate_symbols",
@@ -118,6 +142,7 @@ __all__ = [
     "llm_condition",
     "llm_conditions",
     "model_family",
+    "model_lineage",
     "normalise_purpose",
     "parse_draft",
     "render_menu",
