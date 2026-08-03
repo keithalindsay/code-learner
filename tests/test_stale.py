@@ -20,6 +20,7 @@ import pytest
 
 from codelearner import db
 from codelearner.assertions import stale, store
+from codelearner.ingest.types import content_hash
 
 SOURCE = (
     'def acquire(parcel_id):\n'
@@ -44,6 +45,15 @@ EDIT_LONGER = SOURCE.replace("return True", "return NotImplemented")
 EDIT_SAME_LEN = SOURCE.replace("return True", "return Fal5")
 assert len(EDIT_SAME_LEN) == len(SOURCE)
 assert EDIT_SAME_LEN != SOURCE
+
+# A SECOND file, for the one test that needs a claim citing two of them. The
+# `verified_at` and `method` rules are both about reconciling several citations, and
+# with one span there is nothing to reconcile.
+AUDIT_SOURCE = (
+    'def audit(parcel_id):\n'
+    '    """Record that a lease changed hands."""\n'
+    '    return None\n'
+)
 
 
 def _build(root_dir, db_path):
@@ -159,9 +169,13 @@ def test_editing_a_cited_span_expires_the_assertion_and_withholds_it(repo):
     assert [a.id for a in store.assertions_with_status(conn, store.STATUS_STALE)] == [aid]
     assert _reasons(conn) == [stale.REASON_HASH_MISMATCH]
 
+    # The log names both sides by value, not merely "two different strings". Whoever
+    # reads this row has to be able to tell which binding was broken and by what --
+    # `is not None` would go on passing if the two columns were swapped, or if either
+    # were filled with a hash of the wrong bytes.
     event = store.staleness_events(conn, aid)[0]
-    assert event["expected_hash"] is not None
-    assert event["observed_hash"] is not None
+    assert event["expected_hash"] == content_hash(SOURCE.encode()[:ACQUIRE_END])
+    assert event["observed_hash"] == content_hash(EDIT_LONGER.encode()[:ACQUIRE_END])
     assert event["expected_hash"] != event["observed_hash"]
 
 
@@ -272,6 +286,91 @@ def test_a_baseline_never_vouches_for_a_hash_it_did_not_witness(repo):
     assert _reasons(conn) == [stale.REASON_HASH_MISMATCH]
 
 
+def test_a_claim_citing_two_files_reports_the_WEAKER_stage_and_the_OLDER_hash(tmp_path):
+    """The two fields the module's honesty claim is made of, on the only shape that
+    can tell them apart.
+
+    Every other test in this file cites one span, and with one span `min(seen)` and
+    `max(seen)` are the same value and `any(... == 'stat')` and `all(... == 'stat')`
+    are the same predicate. So both of the rules the docstring stakes the module on --
+    "one stat-confirmed span makes the whole claim stat-confirmed" and "the OLDEST
+    confirmation, not the newest; reporting the newest would flatter it" -- could be
+    inverted with the suite still green.
+
+    The setup is the minimum that separates them: one claim citing two files, both
+    hashed on the first pass, then ONE of them touched so it re-hashes on the second
+    while the other stays on the fast path. That leaves the claim with one
+    hash-confirmed span timestamped now and one stat-confirmed span timestamped
+    earlier, and the two fields have to pick the weaker and the older of each.
+
+    Both halves matter for the same reason. `method='stat', verified_at=<recent>` is
+    the string a caller is told to read as "these bytes were witnessed recently,
+    cheaply"; a claim that is really "one span witnessed three days ago, one today"
+    reported as `hash` (from `all`) or as today's timestamp (from `max`) is that
+    string describing a check that did not happen to the evidence it names.
+    """
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "leases.py").write_text(SOURCE)
+    (root / "audit.py").write_text(AUDIT_SOURCE)
+    conn = db.init_db(tmp_path / "index.db")
+    db.bind_repo_root(conn, root)
+
+    aid = store.write_assertion(
+        conn,
+        subject_qualname="leases.acquire",
+        kind="purpose",
+        claim="acquire takes a lease and audit records that it did",
+        spans=[
+            store.span_for(root, "leases.py", 0, ACQUIRE_END),
+            store.span_for(root, "audit.py", 0, len(AUDIT_SOURCE)),
+        ],
+        generator="test-model/v1",
+        confidence=0.9,
+        allow_unindexed_subject=True,
+    )
+
+    # Pass one: neither span has a baseline, so both are read and hashed together and
+    # both are witnessed at the same instant.
+    (first,) = stale.serve_assertions(conn)
+    assert first.assertion.id == aid
+    assert first.method == stale.METHOD_HASH
+    assert {c.method for c in first.checks} == {stale.METHOD_HASH}
+    witnessed_first = first.verified_at
+
+    time.sleep(0.01)  # SQLite stamps milliseconds; make the two instants orderable
+
+    # Touch ONE file. Same bytes, new mtime, so stage one misses on `audit.py` alone
+    # and `leases.py` keeps the baseline it already has.
+    audit = root / "audit.py"
+    moved = audit.stat().st_mtime_ns + 5_000_000_000
+    os.utime(audit, ns=(moved, moved))
+
+    (second,) = stale.serve_assertions(conn)
+    assert second.stale is False
+    by_path = {c.span.path: c for c in second.checks}
+
+    # The fixture is doing what it claims: one span on each stage, the re-hashed one
+    # strictly newer. Without these three the assertions below could not discriminate.
+    assert by_path["leases.py"].method == stale.METHOD_STAT
+    assert by_path["audit.py"].method == stale.METHOD_HASH
+    assert by_path["audit.py"].verified_at > by_path["leases.py"].verified_at
+
+    # Weakest link: one stat-confirmed span makes the whole claim stat-confirmed.
+    # `all` instead of `any` reports `hash` here -- the stronger word, for a claim
+    # half of whose evidence nobody read.
+    assert second.method == stale.METHOD_STAT
+
+    # The OLDER of the two confirmations. `max` would report today's re-hash of
+    # `audit.py` as the age of a binding `leases.py` has not renewed since pass one.
+    assert second.verified_at == witnessed_first
+    assert second.verified_at == by_path["leases.py"].verified_at
+    assert second.verified_at < by_path["audit.py"].verified_at
+
+    # And it says so out loud, in the one line a caller is likely to read.
+    assert second.label == f"fresh (checked by stat, hash verified {witnessed_first})"
+
+
 # --------------------------------------------------------------------------------
 # A touch is not an edit.
 # --------------------------------------------------------------------------------
@@ -338,6 +437,68 @@ def test_shortened_file_marks_span_truncated(repo):
 
     assert stale.serve_assertions(conn) == []
     assert _reasons(conn) == [stale.REASON_SPAN_TRUNCATED]
+
+
+def test_a_truncation_that_puts_the_mtime_back_is_still_caught(repo):
+    """The fast path's SIZE guard, exercised on its own -- and the live bug its
+    deletion causes.
+
+    `check_span`'s shortcut is `mtime unchanged AND size unchanged AND the baseline
+    vouches for this hash`. Every other fast-path test here preserves all three or
+    moves all three, so no test fails when one conjunct is deleted, and the size one
+    is the one whose deletion is not academic: the truncation check
+    (`st.size < span.byte_end`) sits AFTER the fast path, so a file that lost its tail
+    and had its mtime restored takes the shortcut before anything notices the bytes
+    are gone -- and the claim is served `fresh, method='stat'` citing a byte range the
+    file no longer contains.
+
+    Restoring an mtime is not exotic. `git checkout`, `rsync --times`, `tar -p`,
+    `cp -p` and every editor that writes-and-restores do it, and truncation is what a
+    crashed or interrupted write leaves behind.
+    """
+    root, conn = repo
+    aid = _admit(conn, root)
+    assert _served_ids(stale.serve_assertions(conn)) == [aid]  # baseline established
+
+    target = root / "leases.py"
+    before = target.stat()
+    target.write_text(SOURCE[:2])  # far shorter than the cited range
+    os.utime(target, ns=(before.st_atime_ns, before.st_mtime_ns))
+
+    after = target.stat()
+    # The fixture has to isolate the size guard, so the mtime really must be back. If a
+    # filesystem cannot round-trip the nanoseconds the claim would expire via the mtime
+    # conjunct instead and this test would pass while proving nothing.
+    assert after.st_mtime_ns == before.st_mtime_ns
+    assert after.st_size < before.st_size
+
+    assert stale.serve_assertions(conn) == []
+    assert [a.id for a in store.assertions_with_status(conn, store.STATUS_STALE)] == [aid]
+    assert _reasons(conn) == [stale.REASON_SPAN_TRUNCATED]
+
+
+def test_an_edit_that_puts_the_mtime_back_is_caught_by_the_size_guard(repo):
+    """The same conjunct, reached the other way: same mtime, DIFFERENT size, bytes
+    that changed rather than vanished.
+
+    Separate from the truncation above because the two exit `check_span` at different
+    places -- truncation stops at `st.size < span.byte_end` without a read, this one
+    goes through to the hash -- and a fix that only restored one of them would leave
+    the other serving stale bytes as fresh.
+    """
+    root, conn = repo
+    aid = _admit(conn, root)
+    assert _served_ids(stale.serve_assertions(conn)) == [aid]
+
+    target = root / "leases.py"
+    before = target.stat()
+    target.write_text(EDIT_LONGER)  # inside the cited range, and longer
+    os.utime(target, ns=(before.st_atime_ns, before.st_mtime_ns))
+    assert target.stat().st_mtime_ns == before.st_mtime_ns
+    assert target.stat().st_size != before.st_size
+
+    assert stale.serve_assertions(conn) == []
+    assert _reasons(conn) == [stale.REASON_HASH_MISMATCH]
 
 
 def test_assertion_with_no_spans_is_never_served(repo):

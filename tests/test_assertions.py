@@ -497,6 +497,170 @@ def test_a_rejected_claim_is_not_downgraded_to_merely_stale(repo):
     assert store.staleness_events(conn, aid) == []
 
 
+def test_a_stale_claim_is_not_demoted_to_rejected(repo):
+    """The other direction of the same rule, and the direction the guard was written
+    for. `record_verdict` names it in a comment -- "a claim already stale stays stale,
+    and its staleness is the more actionable fact" -- and nothing tested it.
+
+    The two states are not interchangeable labels for "not servable". `stale` says the
+    cited bytes moved, which is a repair instruction: re-derive this claim against the
+    code as it is now. `rejected` says a judge read the claim against its evidence and
+    refused it, which is a verdict on text that, once the file has moved, no longer
+    describes the repository -- so overwriting the first with the second replaces a
+    fact about the code with an opinion about a version of it nobody can see any more.
+
+    Dropping the `AND status = ?` from `_TOUCH_STATUS` leaves the rejected -> stale
+    direction (tested directly above) still refusing, because `mark_stale` checks
+    `rowcount`; only this direction goes silently wrong.
+    """
+    root, conn = repo
+    aid = _admit(conn, [_acquire_span(root)])
+    assert store.mark_stale(conn, aid, store.REASON_HASH_MISMATCH) is True
+
+    store.record_verdict(conn, aid, "judge/v1", store.VERDICT_REFUTED, "it returns True")
+
+    row = conn.execute("SELECT status FROM assertions WHERE id=?", (aid,)).fetchone()
+    assert row["status"] == store.STATUS_STALE
+    assert [a.id for a in store.assertions_with_status(conn, store.STATUS_STALE)] == [aid]
+    assert store.assertions_with_status(conn, store.STATUS_REJECTED) == []
+    # The verdict is still RECORDED. Refusing the demotion is not refusing the
+    # adjudication -- the judge's finding is kept in `verdicts`, it just does not
+    # overwrite a status that already says the more useful thing.
+    assert [v["verdict"] for v in store.verdicts_for(conn, aid)] == [store.VERDICT_REFUTED]
+
+
+def test_reading_a_status_bucket_does_not_re_check_or_re_promote_anything(repo):
+    """`assertions_with_status` is the UN-verified reader, and reviewing what the gate
+    threw out must not be an act that changes it.
+
+    The rejected and stale sets are the measurement of whether the gate works, so they
+    get read by exactly the code that has the least business writing: a report, a `by
+    status` listing, an operator looking at what expired. Nothing in this function's
+    signature warns a caller that reading might cost them a status transition, so
+    nothing downstream defends against it -- an audit of the rejected set would arrive
+    at a different set than the one it was asked to audit, and the difference would
+    look like data rather than like a bug.
+
+    Pinned by a snapshot of every status and the whole staleness log taken either side
+    of reading all three buckets. Adding any write to this function -- a `mark_stale`,
+    a re-verification, a promotion of something that hashes again -- moves one of them.
+    """
+    root, conn = repo
+    active = _admit(conn, [_acquire_span(root)])
+    expired = _admit(conn, [_release_span(root)], claim="release returns False")
+    refused = _admit(conn, [_acquire_span(root)], claim="acquire takes a lease first")
+    store.mark_stale(conn, expired, store.REASON_HASH_MISMATCH)
+    store.record_verdict(conn, refused, "judge/v1", store.VERDICT_REFUTED)
+
+    def snapshot():
+        return (
+            [tuple(r) for r in conn.execute("SELECT id, status FROM assertions ORDER BY id")],
+            [tuple(r) for r in store.staleness_events(conn)],
+            [tuple(r) for r in conn.execute("SELECT * FROM verdicts ORDER BY id")],
+        )
+
+    before = snapshot()
+    assert before[0] == [
+        (active, store.STATUS_ACTIVE),
+        (expired, store.STATUS_STALE),
+        (refused, store.STATUS_REJECTED),
+    ]
+
+    read = {
+        status: store.assertions_with_status(conn, status)
+        for status in (store.STATUS_ACTIVE, store.STATUS_STALE, store.STATUS_REJECTED)
+    }
+    # Every bucket is non-empty, or "nothing changed" would be a claim about nothing.
+    assert [a.id for a in read[store.STATUS_ACTIVE]] == [active]
+    assert [a.id for a in read[store.STATUS_STALE]] == [expired]
+    assert [a.id for a in read[store.STATUS_REJECTED]] == [refused]
+
+    assert snapshot() == before
+    # And reading twice returns the same thing, which it would not if the first read
+    # had moved anything.
+    assert [
+        [a.id for a in store.assertions_with_status(conn, s)]
+        for s in (store.STATUS_ACTIVE, store.STATUS_STALE, store.STATUS_REJECTED)
+    ] == [[active], [expired], [refused]]
+
+
+# --------------------------------------------------------------------------
+# loading at repo scale -- the `IN (...)` that used to have a size limit
+# --------------------------------------------------------------------------
+
+
+def _bulk_rows(conn, count, *, spans_per=1, status=store.STATUS_ACTIVE):
+    """Write `count` assertion rows and their spans directly, bypassing the gate.
+
+    Directly, because the point is the SIZE of the id list `_load_assertions` binds,
+    and 33,000 real files hashed through `write_assertion` would take minutes to prove
+    something about a `?` count. Nothing here is a claim about admission; the rows only
+    have to be shaped like admitted ones.
+    """
+    with db.transaction(conn):
+        conn.executemany(
+            "INSERT INTO assertions (subject_qualname, kind, claim, status) "
+            "VALUES (?,?,?,?)",
+            [(f"m.f{i}", "purpose", f"claim {i}", status) for i in range(count)],
+        )
+        ids = [
+            r["id"]
+            for r in conn.execute(
+                "SELECT id FROM assertions WHERE status = ? ORDER BY id", (status,)
+            )
+        ]
+        conn.executemany(
+            "INSERT INTO evidence_spans (assertion_id, path, line_start, line_end, "
+            " byte_start, byte_end, content_hash) VALUES (?,?,?,?,?,?,?)",
+            [
+                (aid, f"m{aid}.py", 1, 2, 0, 10 + n, f"hash-{aid}-{n}")
+                for aid in ids
+                for n in range(spans_per)
+            ],
+        )
+    return ids
+
+
+def test_loading_more_assertions_than_one_batch_returns_all_of_them_with_their_spans(tmp_path):
+    """One over the batch size: the smallest input that has to cross a boundary.
+
+    Chunking is the kind of fix that is easy to write so it only works on the first
+    chunk, or so spans found in the second one overwrite rather than join the first.
+    `_BATCH + 1` catches both -- one assertion lands alone in the second batch, and it
+    has to come back carrying its citations like every other.
+    """
+    conn = db.init_db(tmp_path / "big.db")
+    ids = _bulk_rows(conn, store._BATCH + 1, spans_per=2)
+
+    loaded = store.assertions_with_status(conn, store.STATUS_ACTIVE)
+
+    assert [a.id for a in loaded] == ids
+    assert len(loaded) == store._BATCH + 1
+    # Spans accumulate ACROSS batches rather than the later one replacing the earlier.
+    assert {len(a.spans) for a in loaded} == {2}
+    assert loaded[-1].spans[0].path == f"m{ids[-1]}.py"
+
+
+def test_loading_past_sqlites_variable_limit_does_not_raise(tmp_path):
+    """The bug this batching exists for, at the size where it fired.
+
+    SQLITE_MAX_VARIABLE_NUMBER is 32,766, and an unbatched `IN (...)` binds one
+    variable per assertion, so at 32,767 active claims `_load_assertions` raised
+    `too many SQL variables` -- and it sits under `servable_assertions`,
+    `assertions_with_status`, `serve_assertions` and `refresh_staleness`, so the whole
+    tier-2 surface stopped answering at once, at exactly the index size it was built
+    for. 33,000 rows is the smallest round number past the limit.
+    """
+    conn = db.init_db(tmp_path / "huge.db")
+    ids = _bulk_rows(conn, 33_000)
+    assert len(ids) > 32_766  # or this test is not past the limit it names
+
+    loaded = store.assertions_with_status(conn, store.STATUS_ACTIVE)
+
+    assert len(loaded) == 33_000
+    assert all(len(a.spans) == 1 for a in loaded)
+
+
 def test_a_status_the_schema_does_not_know_is_refused(repo):
     """The CHECK lives in the schema because a typo'd status is otherwise
     indistinguishable from a rejected one -- both merely fail to be 'active', so the

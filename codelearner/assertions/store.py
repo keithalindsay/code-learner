@@ -159,6 +159,26 @@ _TOUCH_STATUS = (
     "WHERE id = ? AND status = ?"
 )
 
+# SQLite refuses a statement carrying more than SQLITE_MAX_VARIABLE_NUMBER bound
+# parameters -- 32,766 on every build this project runs against. A variable-length
+# `IN (...)` binds one variable per element, so any query built that way has a size at
+# which it stops working, and the size is "a repo with enough claims in it". Batching
+# is the fix, and the number only has to be comfortably under the limit; 500 keeps the
+# round-trip count sane without going near it.
+#
+# Defined HERE rather than in `stale`, which had its own copy: `stale` batches its
+# `span_verifications` and `staleness_log` lookups against this hazard and then called
+# `_load_assertions`, which did not batch -- so a sweep large enough to need the
+# batching raised inside the one query that had none. One constant, one chunker, both
+# imported by the module that reads them.
+_BATCH = 500
+
+
+def _chunks(items: Sequence[object], size: int = _BATCH) -> Iterator[Sequence[object]]:
+    """`items` in slices of at most `size`, so an `IN (...)` can never overflow."""
+    for start in range(0, len(items), size):
+        yield items[start:start + size]
+
 
 class EvidenceRequired(ValueError):
     """An assertion was submitted with no evidence spans, and was not written.
@@ -959,6 +979,17 @@ def _load_assertions(
     caller's string -- every value a caller supplies arrives as a bound parameter.
     The two interpolations here (this predicate and the `IN` placeholder run below)
     exist because SQLite cannot bind a column list or a variable-length `IN`.
+
+    The span lookup is CHUNKED, and that is a correctness fix rather than a tuning
+    one. One `IN (...)` over every matching id binds one variable per assertion, so
+    this query -- which sits under `servable_assertions`, `assertions_with_status`,
+    `serve_assertions` and `refresh_staleness`, i.e. every path that serves or sweeps
+    -- raised `too many SQL variables` above 32,766 active claims and took all four
+    down at once. `stale` had already batched its own `IN` lookups against exactly
+    this hazard; the query they all depend on had not, so the batching stopped one
+    statement short of the one that would fail first. Spans accumulate ACROSS batches
+    into one dict, so an assertion's citations are never split by where a batch
+    boundary happened to land.
     """
     rows = list(
         conn.execute(
@@ -972,24 +1003,25 @@ def _load_assertions(
         return []
     spans: dict[int, list[EvidenceSpan]] = {}
     ids = [r["id"] for r in rows]
-    placeholders = ",".join("?" * len(ids))
-    for s in conn.execute(
-        "SELECT id, assertion_id, path, line_start, line_end, byte_start, "  # noqa: S608
-        "       byte_end, content_hash FROM evidence_spans "
-        f"WHERE assertion_id IN ({placeholders}) ORDER BY id",
-        tuple(ids),
-    ):
-        spans.setdefault(s["assertion_id"], []).append(
-            EvidenceSpan(
-                path=s["path"],
-                line_start=s["line_start"],
-                line_end=s["line_end"],
-                byte_start=s["byte_start"],
-                byte_end=s["byte_end"],
-                content_hash=s["content_hash"],
-                id=s["id"],
+    for batch in _chunks(ids):
+        placeholders = ",".join("?" * len(batch))
+        for s in conn.execute(
+            "SELECT id, assertion_id, path, line_start, line_end, byte_start, "  # noqa: S608
+            "       byte_end, content_hash FROM evidence_spans "
+            f"WHERE assertion_id IN ({placeholders}) ORDER BY id",
+            tuple(batch),
+        ):
+            spans.setdefault(s["assertion_id"], []).append(
+                EvidenceSpan(
+                    path=s["path"],
+                    line_start=s["line_start"],
+                    line_end=s["line_end"],
+                    byte_start=s["byte_start"],
+                    byte_end=s["byte_end"],
+                    content_hash=s["content_hash"],
+                    id=s["id"],
+                )
             )
-        )
     return [
         Assertion(
             id=r["id"],

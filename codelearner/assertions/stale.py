@@ -110,7 +110,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import stat as stat_module
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -118,6 +118,10 @@ from .. import db
 from ..ingest.types import content_hash
 from .store import (
     _ABSENT,
+    # Re-exported so `stale._BATCH` keeps naming the same number it always did, now
+    # that there is only one of it. Used by the tests that pin the chunking; the
+    # chunker itself takes it as a default.
+    _BATCH,  # noqa: F401
     _UNREADABLE,
     # Re-exported, not used directly any more: `_stat_file` and `_read_file` now
     # return `_ABSENT`, which already carries this reason. The five reasons must stay
@@ -134,6 +138,7 @@ from .store import (
     Assertion,
     EvidenceSpan,
     _atomic,
+    _chunks,
     _load_assertions,
     _repo_root,
     _Unread,
@@ -152,10 +157,12 @@ METHOD_HASH = "hash"
 # created" gets into the data.
 _NOW_SQL = "SELECT strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
 
-# SQLite's variable limit is in the tens of thousands, and a repo-scale sweep can have
-# more spans than that. Batching the `IN` lookups keeps the sweep from failing at
-# exactly the size it was built for.
-_BATCH = 500
+# `_BATCH` and `_chunks` are imported from `store` rather than defined again here.
+# SQLite's variable limit is in the tens of thousands and a repo-scale sweep can have
+# more spans than that, so the `IN` lookups below are batched -- but this module's
+# batching used to sit next to an UNbatched `store._load_assertions`, which every one
+# of these paths calls first. Two copies of the number were two chances for only one
+# of them to be applied, and that is exactly what happened.
 
 
 @dataclass(frozen=True, slots=True)
@@ -428,11 +435,6 @@ def _read_file(root: Path, path: str) -> bytes | _Unread:
 def _now(conn: sqlite3.Connection) -> str:
     """The current time, from SQLite's clock -- the one that stamps the rows."""
     return str(conn.execute(_NOW_SQL).fetchone()[0])
-
-
-def _chunks(items: Sequence[int], size: int = _BATCH) -> Iterator[Sequence[int]]:
-    for start in range(0, len(items), size):
-        yield items[start:start + size]
 
 
 def _load_baselines(

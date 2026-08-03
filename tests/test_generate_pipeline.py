@@ -321,6 +321,7 @@ def test_off_menu_refs_are_dropped_and_counted_while_valid_ones_still_admit(repo
     assert report.admitted == 2
     assert report.invalid_refs == 2  # one per draft
     assert report.drafts_citing_off_menu == 2
+    assert len(report.results) == 2  # or the per-result checks below are vacuous
     for result in report.results:
         assert result.invalid_refs == (999,)
         assert len(result.citations) == 1
@@ -528,9 +529,16 @@ def test_a_menu_with_no_room_for_the_subject_is_refused(repo):
 def test_the_offered_text_is_exactly_the_bytes_the_citation_covers(repo):
     """`Offer` carries `span` and `text` together so that what the model read and what
     a reader will later verify cannot drift apart. A header, a docstring appended, or
-    a widened window here would break that quietly."""
+    a widened window here would break that quietly.
+
+    Floored, because the whole check is a loop body: a `build_offers` that returned
+    nothing -- the exact failure that empties the model's menu -- would make this pass
+    without comparing a single byte.
+    """
     root, conn = repo
-    for offer in build_offers(conn, root, _symbol_id(conn, "leases.acquire")):
+    offers = build_offers(conn, root, _symbol_id(conn, "leases.acquire"))
+    assert len(offers) >= 2, "the subject and at least one neighbour, or nothing is compared"
+    for offer in offers:
         source = (root / offer.span.path).read_bytes()
         expected = source[offer.span.byte_start : offer.span.byte_end]
         assert offer.text == expected.decode()

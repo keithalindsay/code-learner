@@ -47,6 +47,9 @@ class FakeReranker:
     def __init__(self, name: str = "fake/reranker-v1") -> None:
         self._name = name
         self.calls: list[tuple[str, int]] = []  # (query, candidates seen)
+        # The candidate LIST, not just its length: "reranking reorders a fixed set and
+        # cannot manufacture a symbol" is only checkable against what went in.
+        self.seen: list[list[Hit]] = []
 
     @property
     def name(self) -> str:
@@ -59,6 +62,7 @@ class FakeReranker:
 
     def rerank(self, query: str, hits, k: int = 10):
         self.calls.append((query, len(hits)))
+        self.seen.append(list(hits))
         ordered = sorted(hits, key=lambda h: -self._score(query, h))
         return list(ordered[:k])
 
@@ -145,16 +149,30 @@ def test_search_without_a_reranker_still_answers(tmp_path):
 
 
 def test_reranker_reorders_the_fused_result(tmp_path):
+    """Reordering, and only reordering: the model decides the ORDER of a candidate set
+    it is not allowed to add to.
+
+    The second assertion used to read `reranked <= baseline | reranked`, which is
+    `A ⊆ B ∪ A` -- true of every A and B, including a reranker that returned symbols
+    from another repository. Checked against what the reranker was actually HANDED
+    instead, which is the set the claim is about and which a broken stage can fail.
+    """
     repo = _mkrepo(tmp_path / "r", REPO_FILES)
     conn, _ = index_repo(repo, index_path=tmp_path / "i.db")
 
-    baseline = search(conn, "remove worktree", k=3).hits
-    reranked = search(conn, "remove worktree", k=3, reranker=FakeReranker()).hits
+    baseline = [h.qualname for h in search(conn, "remove worktree", k=3).hits]
+    fake = FakeReranker()
+    reranked = [h.qualname for h in search(conn, "remove worktree", k=3, reranker=fake).hits]
 
-    assert [h.qualname for h in reranked][0] == "worktree.remove_worktree"
-    assert {h.qualname for h in reranked} <= {h.qualname for h in baseline} | {
-        h.qualname for h in reranked
-    }
+    assert reranked[0] == "worktree.remove_worktree"
+    # Fusion did NOT already rank it first, so the assertion above is about the
+    # cross-encoder rather than about RRF.
+    assert baseline[0] != "worktree.remove_worktree"
+    assert reranked != baseline
+
+    candidates = {h.qualname for h in fake.seen[0]}
+    assert candidates, "the reranker was handed nothing, so nothing below is checked"
+    assert set(reranked) <= candidates
 
 
 def test_search_marks_a_reranked_result_as_reranked(tmp_path):
@@ -192,10 +210,69 @@ def test_reranker_receives_the_query_verbatim(tmp_path):
     assert fake.calls[0][0] == "how does lease acquisition work"
 
 
-def test_reranker_output_is_capped_at_k(tmp_path):
+def test_search_hands_the_cap_to_the_reranker_and_takes_its_word_for_it(tmp_path):
+    """Where the `k` cap actually lives, said plainly, because the old test here did
+    not say it and could not fail.
+
+    It asserted `len(search(..., k=2, reranker=FakeReranker()).hits) <= 2`. But
+    `search()` returns the reranker's list untruncated -- it fuses to
+    `k * CANDIDATE_MULTIPLIER` on purpose and then trusts the stage it handed `k` to
+    -- and `FakeReranker.rerank` ends in `ordered[:k]`. So the test measured the
+    FAKE's cap: deleting the real `[:k]` in `CrossEncoderReranker.rerank` left it
+    green. The real cap is pinned directly below, on the real class.
+
+    What is worth pinning at this level is the contract between the two: `search` must
+    pass its own `k` down, and must not silently re-truncate afterwards, or the
+    "append the unscored tail rather than dropping it" rule one layer down would be
+    undone by the caller.
+    """
     repo = _mkrepo(tmp_path / "r", REPO_FILES)
     conn, _ = index_repo(repo, index_path=tmp_path / "i.db")
-    assert len(search(conn, "lease worktree sqlite", k=2, reranker=FakeReranker()).hits) <= 2
+
+    class OverReturning(FakeReranker):
+        """Returns everything it was given, ignoring `k`."""
+
+        def rerank(self, query, hits, k=10):
+            super().rerank(query, hits, k=k)
+            return list(hits)
+
+    fake = OverReturning()
+    hits = search(conn, "lease worktree sqlite", k=2, reranker=fake).hits
+
+    assert fake.calls[0][1] > 2, "fusion must widen past k before the reranker sees it"
+    assert [q for q, _ in fake.calls] == ["lease worktree sqlite"]
+    # `search` passed its own k down and did not re-cap on the way out: what came back
+    # is exactly what the reranker returned.
+    assert [h.qualname for h in hits] == [h.qualname for h in fake.seen[0]]
+    assert len(hits) > 2
+
+
+def test_the_reranker_itself_is_what_caps_the_result_at_k(monkeypatch):
+    """The real `[:k]`, on the real class, with more candidates than `k`.
+
+    The pre-existing cap test could not reach this line: it went through `search()`,
+    which does not truncate, with a fake that truncated itself. The one nearby test
+    that does exercise `CrossEncoderReranker.rerank` past the candidate cap
+    (`..._appends_rather_than_drops_beyond_the_candidate_cap`) passes `k=5` for 5 hits,
+    so `reranked + unscored` is already length 5 and `[:k]` is a no-op there too.
+
+    This is the shape that separates them: 5 candidates, only 2 of them scored, and
+    `k=3`. Without the cap a caller asking for 3 gets 5, and the extra two are the
+    UNSCORED tail -- fused-order candidates the model never looked at, arriving inside
+    a result the caller was told is reranked.
+    """
+    _install_stub(monkeypatch)
+    r = CrossEncoderReranker("stub/model", device="cpu", max_candidates=2, warmup=False)
+    hits = [_hit(i, f"h{i}", header="x" * i) for i in range(1, 6)]
+
+    out = r.rerank("q", hits, k=3)
+
+    assert len(out) == 3
+    # The two scored candidates, best first, then the head of the untouched tail.
+    assert [h.qualname for h in out] == ["h2", "h1", "h3"]
+    # The stage really did have more to hand back than it did.
+    assert len(StubCrossEncoder.instances[0].seen[0]) == 2
+    assert len(r.rerank("q", hits, k=5)) == 5
 
 
 # --------------------------------------------------------------------------

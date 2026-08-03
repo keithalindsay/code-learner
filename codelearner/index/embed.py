@@ -250,6 +250,43 @@ def ensure_vec_table(conn: sqlite3.Connection, dim: int) -> None:
     )
 
 
+# Test chunks are embedded like everything else, and that is a MEASURED decision
+# rather than an oversight. `files.is_test` is right there and this module ignores it
+# on purpose.
+#
+# On 170 hand-written leak-controlled gold queries across swarm-sync, kalshi-bot and
+# TradingAgents, test code was 57.2% of dense retrieval's top 10. That is semantically
+# correct behaviour -- a test named `test_two_agents_disjoint_functions_same_file`
+# really is the closest match for "what stops two agents editing the same file at
+# once" -- and it is the wrong answer to the question asked.
+# `retrieve.fuse.prefer_implementation` repairs it at query time and still leaves
+# 20.1%, which is the argument for repairing it HERE instead.
+#
+# Not embedding test chunks does repair it, and on the dense modality alone it beats
+# the query-time heuristic outright: nDCG@10 0.179 -> 0.293 against the heuristic's
+# 0.275 (+0.019, paired bootstrap 95% CI [+0.008, +0.031], 2000 resamples, seed
+# 20250801), dense test share 57.2% -> 0.0%, and 64-74% of the embedding work
+# disappears with it. Replicated on held-out kalshi-bot, which was not tuned against.
+#
+# It is not the default because of what the gold set cannot see. None of the 317
+# labelled relevant symbols is a test, so no gold query can reward finding one. On a
+# separate 40-query "show me the test that covers X" probe, the shipping default
+# (lexical + dense + prefer_implementation) finds the intended test 100% of the time
+# and dropping tests from the vectors takes that to 0%. The mechanism is specific: the
+# demotion in `fuse` is a multiplicative factor on an RRF score, and it works today
+# only because a test wins votes from BOTH modalities. Remove its dense vote and the
+# same factor stops being a nudge and becomes a filter -- the demoted test falls below
+# every dense-only candidate. Sweeping that factor does not buy both: at 1.0 the probe
+# holds at 90% and the nDCG gain goes non-significant (+0.016, [-0.009, +0.040]); at
+# anything <= 0.9 the gain is real (+0.027) and the probe is <= 35%.
+#
+# So the ordering is: fix the demotion cliff in `retrieve.fuse` first, then exclude
+# here. Two ingest-side alternatives were measured and both lost. Dropping tests from
+# the LEXICAL corpus as well is significantly worse in fusion (-0.017, [-0.034,
+# -0.001]) and makes tests unreachable outright. Summarising test chunks to their
+# header instead of excluding them -- the "down-weight, do not exclude" arm -- barely
+# moves the dense test share at all (79.6% -> 77.1% on swarm-sync), because the signal
+# that makes a test win is its NAME and docstring, which a summary keeps, not its body.
 def embed_chunks(
     conn: sqlite3.Connection,
     embedder: Embedder,
