@@ -104,6 +104,44 @@ that day -- a page-cache miss, an NFS mount or an encrypted volume moves the re-
 column and leaves this one alone. On a small warm repo it is a real loss, and
 `store.servable_assertions` remains the better call there; saying so here is cheaper
 than someone discovering it later.
+
+**NOT WIRED TO ANY SHIPPED SURFACE, deliberately.** Nothing outside this module and
+its tests calls `serve_assertions` or `refresh_staleness`. The MCP server's
+`get_symbol` calls `store.servable_assertions`, the unconditional-rehash reference,
+and no CLI command reaches either. `span_verifications` -- the table the v4 -> v5
+schema bump exists for -- is therefore written and read only by tests. That is a real
+gap between what the schema implies and what runs, and it is written down here rather
+than left to be discovered from the callers.
+
+It is a gap and not an oversight, for three reasons, in order of weight:
+
+1. **The measurement says the fast path is the slower one at every size anybody has.**
+   1.4x slower on both real repositories in the table above; the crossover is around
+   1.5 MiB of cited bytes per query, and the largest assertion store in existence is
+   about 150 rows. Wiring it today means either a default that is measurably worse or
+   a flag whose documented benefit no caller can reach. `store.servable_assertions`
+   is not the fallback here -- on the data that exists it is the right answer.
+2. **What it would put on the surface is a weaker guarantee.** Stage one promises
+   mtime and size are unchanged, not that the bytes are; a writer that restores mtime
+   defeats it. Returning `method='stat'` to an agent is only honest if the agent reads
+   the field and knows what it means, and the whole reason tier 2 is trustworthy here
+   is that a served claim has been re-hashed. Trading that for a documented slowdown
+   is the wrong direction of a real trade.
+3. **`serve_assertions` writes, and `_atomic`'s transaction sniff is connection-global
+   (WP17.7, open).** Not on every call -- in steady state `flush` has nothing to write
+   -- but the first pass over each span, and every pass after an edit or an index
+   rebuild, goes through `_atomic` to record baselines and to expire what moved. The
+   MCP server shares one connection across MCP's thread pool, so wiring this into
+   `get_symbol` would route a read tool through the exact sniff WP17.7 demonstrates is
+   unsound there. `store.servable_assertions` writes too, but only when a claim has
+   actually failed verification, which is rare; this would make it routine.
+
+Reason 3 is the one that would still hold if the benchmark reversed, so it is the one
+to re-check first. **What would change this decision:** cited bytes per query above
+~1.5 MiB (the only regime where the shape argument becomes a speed argument), an index
+served off a filesystem where the re-hash column is not page-cache-cheap, or WP17.7
+closed and a caller who genuinely wants `method`/`verified_at` on the wire. Until then
+this is a measured alternative, kept correct and kept tested, and not serving traffic.
 """
 from __future__ import annotations
 

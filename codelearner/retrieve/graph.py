@@ -95,7 +95,7 @@ def expand(
             break
         next_frontier: dict[int, tuple[float, str]] = {}
         for symbol_id, (activation, origin) in frontier.items():
-            for neighbour, direction in _neighbours(conn, symbol_id, include_callers):
+            for neighbour, direction in neighbours(conn, symbol_id, include_callers):
                 weight = OUT_WEIGHT if direction == "calls" else IN_WEIGHT
                 delivered = activation * weight * (DECAY**hop)
                 if delivered <= 0.0:
@@ -124,10 +124,23 @@ def expand(
     return _hydrate(conn, ranked)
 
 
-def _neighbours(
+def neighbours(
     conn: sqlite3.Connection, symbol_id: int, include_callers: bool
 ) -> list[tuple[int, str]]:
-    """Resolved graph neighbours of `symbol_id`, capped at `MAX_FANOUT` per direction."""
+    """Resolved graph neighbours of `symbol_id`, capped at `MAX_FANOUT` per direction.
+
+    Public, and exported from `retrieve/__init__`, because `generate/pipeline.py`
+    depends on it across a package boundary with a documented reason: the evidence
+    a claim is offered over must be reached by the SAME traversal that retrieval
+    uses, or the pipeline is quietly answering a different question about the graph
+    than `search` is. That makes the fanout cap, the `calls`-only restriction and
+    the confidence ordering part of a contract between two packages.
+
+    It was `_neighbours`. A leading underscore on a name another package must import
+    says "nobody depends on this, change it freely", which was false, and the cost of
+    a wrong marker here is a refactor that silently changes what a claim is grounded
+    in. `_neighbours` remains as an alias so nothing breaks.
+    """
     out = conn.execute(
         "SELECT dst_symbol_id AS id FROM edges "
         "WHERE src_symbol_id = ? AND dst_symbol_id IS NOT NULL AND kind = 'calls' "
@@ -185,3 +198,9 @@ def _hydrate(conn: sqlite3.Connection, ranked: list[tuple[int, _Node]]) -> list[
             )
         )
     return hits
+
+
+# The old private name, kept so `generate/pipeline.py` and any out-of-tree caller keep
+# working across the rename. An alias, not a wrapper: the same function object, so
+# patching one patches the other and a test cannot pass against a stale copy.
+_neighbours = neighbours

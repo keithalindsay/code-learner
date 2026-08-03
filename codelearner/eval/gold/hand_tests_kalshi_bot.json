@@ -1,0 +1,1058 @@
+{
+  "schema_version": 2,
+  "source": "hand",
+  "repo": "kalshi-bot",
+  "repo_path": "/home/keith/projects/kalshi-bot",
+  "index_path": "/home/keith/projects/kalshi-bot/.codelearner/index.db",
+  "commit_note": "Hand-written against kalshi-bot @ 340 indexed files, 7531 symbols, 107 of those files tests (4831 test symbols) (.codelearner/index.db, 2026-08-02). Author read the name and docstring of all 3513 test functions, and the BODY of every symbol labelled here -- which corrected four labels whose docstrings promised more than their bodies establish.",
+  "labelling_rule": "TEST-SEEKING gold: the correct answer IS a test symbol. Relevant = the test a competent engineer would open to see how a behaviour is actually pinned down. The implementation is listed ONLY where the question is 'how is this verified', which genuinely wants both -- never as padding. Written because every other gold file in this repo labels 0 test symbols across 978 relevant labels, so an experiment that deletes tests from the corpus can improve nDCG while taking test-seeking retrieval from 100% to 0% and no gold set can see it.",
+  "authoring_rule": "A test is usually named after the thing it tests, so 'the test for kelly sizing' retrieves TestKellySizing by name alone -- a lexical benchmark in a costume, and worthless for the comparison this file exists to enable. So every query is phrased by WHAT THE TEST ESTABLISHES or HOW IT IS SET UP, never by the name of the code under test and never by the test's own identifier. In particular the word 'test' is avoided outright: every pytest function is named test_* (and every class Test*), so it is a name-token of every possible target. Drafted from the test bodies and docstrings, then measured for token overlap against the target's own symbol name and against its chunk text (exactly what BM25 indexes); anything that leaked a target identifier was reworded and re-measured rather than flagged and kept.",
+  "overlap_method": {
+    "tokenizer": "lowercase, split on non-alphanumeric and camelCase boundaries, drop <3 chars, drop the in-repo stoplist codelearner.eval.gold_from_history._STOPWORDS (~100 English + generic-software words). Pinned to an importable constant rather than an ad-hoc list so the measurement is reproducible from this checkout alone.",
+    "corpus": "chunks.text for every symbol in this repo's index (the field chunks_fts indexes, i.e. exactly what BM25 scores)",
+    "name_overlap": "fraction of distinct query tokens that appear in some relevant symbol's OWN name (symbols.name / last dotted component). NOTE for this file: every pytest function is named test_*, so the bare token 'test' is in EVERY target's name -- a query that says 'the test for X' leaks by construction. Queries here are worded to avoid it.",
+    "source_overlap": "fraction of distinct query tokens that appear in a relevant symbol's chunk text",
+    "rare_source_overlap": "fraction of distinct query tokens that appear in a relevant symbol's chunk text AND have document frequency <= 2% of chunks -- the high-IDF terms BM25 actually ranks on",
+    "idf_weighted_source_overlap": "sum of idf over query tokens present in a relevant chunk, divided by sum of idf over all query tokens",
+    "name_bearing": "true iff name_overlap > 0, i.e. the query names the target. Not automatically wrong but must be scored as its own row.",
+    "answer_kind": "DERIVED from files.is_test over `relevant`: 'test_only' when every relevant symbol lives in a test file, 'test_and_impl' when the set spans both. Asserted in tests/test_hand_gold.py -- it is the property this file exists for, so a query that drifted into a non-test answer set fails rather than silently stops closing the hole.",
+    "calibration": "This implementation reproduces the sibling hand_*.json overlap numbers exactly on 166/170 of their queries for name_overlap (169/170 for the derived name_bearing verdict); the residual disagreements are single stopword-membership decisions in the denominator, since those files' ~100-word stoplist was not itself checked in."
+  },
+  "coverage_codes": {
+    "undocumented": "target symbol has no docstring in the index",
+    "private": "target is a _-prefixed helper, a nested function, or a module-level symbol with no public export",
+    "generic_name": "target's name is generic or misleading so the name carries no query signal",
+    "cross_module": "answering requires reading symbols in 2+ modules",
+    "error_path": "the question is about a failure, edge case, or refusal rather than the happy path",
+    "hard_negative": "the obvious keyword match in this repo is the WRONG symbol; a lexical-only retriever is actively penalised"
+  },
+  "queries": [
+    {
+      "query": "the constructed scenario where the gross advantage barely clears the floor but transaction costs push it back under",
+      "relevant": [
+        "tests.test_kelly.TestFeeAdjustment.test_fee_heavy_position_edge_gates_correctly"
+      ],
+      "coverage": [],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "The whole answer is the construction: you need a price where the charge is large enough to matter, and that choice is what makes the case exist.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.364,
+        "rare_source_overlap": 0.364,
+        "idf_weighted_source_overlap": 0.372
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "when a single unit costs more than everything we have, the sizer must answer with nothing at all",
+      "relevant": [
+        "tests.test_kelly.TestSmallBankroll.test_small_bankroll_zero_when_price_exceeds_bankroll"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "A degenerate-capital boundary phrased as the arithmetic that produces it.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.25,
+        "rare_source_overlap": 0.125,
+        "idf_weighted_source_overlap": 0.234
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "rounding the exchange charge upward on purpose so the estimate always errs on the cautious side",
+      "relevant": [
+        "tests.test_kelly.TestKalshiFeeFormula.test_fee_is_ceiling_not_floor"
+      ],
+      "coverage": [],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "A deliberate direction of rounding, described by its motive.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.2,
+        "rare_source_overlap": 0.1,
+        "idf_weighted_source_overlap": 0.084
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "why charging a whole batch at once means the total grows monotonically but not exactly in proportion to quantity",
+      "relevant": [
+        "tests.test_kelly.TestKalshiFeeFormula.test_fee_scales_with_contracts"
+      ],
+      "coverage": [],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "Subadditivity of a ceiling, explained rather than named. The docstring works through it; nothing in the implementation does.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.182,
+        "rare_source_overlap": 0.182,
+        "idf_weighted_source_overlap": 0.184
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "hand-checked arithmetic showing a 0.64 chance of getting filled shrinks the order to about eighty percent",
+      "relevant": [
+        "tests.test_kelly.TestFillProbabilityDiscount.test_sqrt_p_fill_applied_correctly"
+      ],
+      "coverage": [],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "A worked example. The number 0.64 and its square root are the retrieval signal, and they exist only in the case.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.083,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.043
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "we never take more than half of what is resting on the book, worked through with concrete numbers",
+      "relevant": [
+        "tests.test_kelly.TestOrderBookDepthCap.test_depth_cap_formula"
+      ],
+      "coverage": [],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "The rule stated in words plus the arithmetic that pins it, which is what a reader wants when the constant looks arbitrary.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.111,
+        "rare_source_overlap": 0.111,
+        "idf_weighted_source_overlap": 0.086
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "importing the module must not open a socket or touch the disk",
+      "relevant": [
+        "tests.test_kelly.TestRegressionCases.test_importable_without_side_effects"
+      ],
+      "coverage": [],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "A property of the module as a whole. There is no function that implements it, so a test-free corpus cannot answer this at all.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.167,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.092
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "the explicit number written into the plan: a fourteen dollar balance holds a high-conviction stake to about one fifteen",
+      "relevant": [
+        "tests.test_kelly.TestRL03AdaptiveKelly.test_hc_bankroll_cap_acceptance_criterion",
+        "tests.test_kelly.TestRL03AdaptiveKelly.test_hc_bankroll_cap_limits_position_to_8_pct"
+      ],
+      "coverage": [],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "An acceptance criterion transcribed from a spec document into an executable one; the pair is the criterion and the invariant behind it.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.154,
+        "rare_source_overlap": 0.077,
+        "idf_weighted_source_overlap": 0.093
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "an unrecognised direction string yields no position and says clearly why",
+      "relevant": [
+        "tests.test_kelly.TestSideMismatch.test_unknown_side_returns_zero"
+      ],
+      "coverage": [
+        "error_path",
+        "hard_negative"
+      ],
+      "hard_negative": true,
+      "answer_kind": "test_only",
+      "note": "The sizing entry point is the obvious lexical match and it is the wrong answer; the question is about one refusal branch inside it.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.286,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.179
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "how do we know the per-lane ceiling actually travels from the incoming dictionary all the way into the sizing arithmetic",
+      "relevant": [
+        "tests.test_kelly.TestRL03AdaptiveKelly.test_max_bankroll_pct_flows_from_signal_to_size_position",
+        "src.risk.kelly.kelly_size_for_signal",
+        "src.risk.kelly.size_position"
+      ],
+      "coverage": [
+        "cross_module"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_and_impl",
+      "note": "The honest multi-relevant case: a pass-through claim spans two functions and is only pinned in one place.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.333,
+        "rare_source_overlap": 0.25,
+        "idf_weighted_source_overlap": 0.28
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "doubling the capital about doubles the stake, provided neither the ceiling nor the available quantity is binding",
+      "relevant": [
+        "tests.test_kelly.TestLargeBankrollScaling.test_position_scales_roughly_linearly_with_bankroll"
+      ],
+      "coverage": [],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "A scaling property that only holds under stated conditions -- and the conditions are the interesting half.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.25,
+        "rare_source_overlap": 0.167,
+        "idf_weighted_source_overlap": 0.252
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "omitting the newer liquidity argument entirely must give byte-identical answers to the older signature",
+      "relevant": [
+        "tests.test_kelly.TestFillProbabilityDiscount.test_no_depth_arg_backward_compat",
+        "tests.test_kelly.TestOrderBookDepthCap.test_kelly_result_dataclass_backward_compat"
+      ],
+      "coverage": [],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "Backward compatibility of an added parameter, at both the call and the record it returns.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.455,
+        "rare_source_overlap": 0.364,
+        "idf_weighted_source_overlap": 0.388
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "something bought at a very low quote that is up half again is deliberately not sold yet",
+      "relevant": [
+        "tests.test_exit_engine.TestTakeProfit.test_cheap_entry_50pct_holds"
+      ],
+      "coverage": [],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "A ladder that branches on entry price. The query gives the branch by its situation rather than its threshold constant.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.0,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.0
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "which check wins when two of them trigger at once, ranked by how much each is trusted",
+      "relevant": [
+        "tests.test_exit_engine.TestEdgeCases.test_rule_priority_metar_beats_stop_loss",
+        "tests.test_exit_engine.TestEdgeCases.test_confidence_order_respected"
+      ],
+      "coverage": [],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "Precedence between rules, which exists nowhere as a declaration -- only as the order of branches and these two cases.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.125,
+        "rare_source_overlap": 0.125,
+        "idf_weighted_source_overlap": 0.096
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "the observed reading has already gone past the level we bet against, so leave immediately",
+      "relevant": [
+        "tests.test_exit_engine.TestMetarImpossiblePace.test_metar_impossible_pace_no"
+      ],
+      "coverage": [],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "Phrased from the situation an operator would recognise; no station or threshold identifier appears.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.1,
+        "rare_source_overlap": 0.1,
+        "idf_weighted_source_overlap": 0.075
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "valuing the opposite leg from the complement of the quoted ask, then breaching the protective floor on it",
+      "relevant": [
+        "tests.test_exit_engine.TestNoSideValuation.test_no_side_stop_loss"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "The complement arithmetic is easy to get backwards, so the case is the documentation.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.111,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.046
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "a cost basis recorded as nothing at all must not blow up the percentage arithmetic",
+      "relevant": [
+        "tests.test_exit_engine.TestEdgeCases.test_zero_entry_price_returns_hold"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "A division guard, stated by what it guards rather than by the branch that does it.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.0,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.0
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "an identifier that does not match the expected layout comes back as nothing rather than raising",
+      "relevant": [
+        "tests.test_exit_engine.TestParseTicker.test_parse_invalid_returns_none"
+      ],
+      "coverage": [
+        "error_path",
+        "hard_negative"
+      ],
+      "hard_negative": true,
+      "answer_kind": "test_only",
+      "note": "The parser is the obvious lexical match; the answer is the one case that pins its failure convention.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.0,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.0
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "a malformed holding in the list must degrade to a wait verdict rather than taking the whole sweep down",
+      "relevant": [
+        "tests.test_exit_engine.TestEvaluateAllPositions.test_evaluate_all_positions_bad_position_does_not_crash",
+        "src.trading.exit_engine.ExitEngine.evaluate_all_positions"
+      ],
+      "coverage": [
+        "cross_module",
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_and_impl",
+      "note": "'What happens to the batch when one row is junk' wants both the loop and the case that proves it survives.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.182,
+        "rare_source_overlap": 0.091,
+        "idf_weighted_source_overlap": 0.128
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "with under two hours to go a modest gain is closed out, but the identical gain with the deadline exactly two hours out is held",
+      "relevant": [
+        "tests.test_exit_engine.TestTimeCompressed.test_time_compressed_take_profit",
+        "tests.test_exit_engine.TestTimeCompressed.test_not_time_compressed_at_2hrs"
+      ],
+      "coverage": [],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "A boundary and its control on the other side of it -- the pair is what shows the boundary is exclusive.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.333,
+        "rare_source_overlap": 0.222,
+        "idf_weighted_source_overlap": 0.256
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "a collaborator blowing up must still leave a usable summary rather than propagating out",
+      "relevant": [
+        "tests.test_edge_attribution.TestAnalyzeEdge.test_watcher_exception_is_caught_gracefully",
+        "tests.test_edge_attribution.TestAnalyzeEdge.test_bias_tracker_exception_is_caught_gracefully"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "Two independent dependencies, same containment claim. Retrieving one only tells half the story.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.125,
+        "rare_source_overlap": 0.125,
+        "idf_weighted_source_overlap": 0.073
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "strong agreement among the models is ignored once the quote sits beyond the narrow band we care about",
+      "relevant": [
+        "tests.test_edge_attribution.TestEnsembleDisagreementDetection.test_price_outside_precision_lane_rejected"
+      ],
+      "coverage": [],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "A gate that is easy to assume away; the query describes it as a suppression rather than by the band's label.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.077,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.045
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "a systematic lean toward higher readings benefits one way of being positioned and actively hurts the other",
+      "relevant": [
+        "tests.test_edge_attribution.TestBiasCorrectionDetection.test_bias_in_wrong_direction_rejected",
+        "tests.test_edge_attribution.TestBiasCorrectionDetection.test_significant_warm_bias_helps_short"
+      ],
+      "coverage": [],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "The sign convention, which is the single most reversible thing in this module, pinned in both directions.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.182,
+        "rare_source_overlap": 0.182,
+        "idf_weighted_source_overlap": 0.203
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "the contractual boundary: whose job is it to apply the time window, the caller or the source it reads from",
+      "relevant": [
+        "tests.test_edge_attribution.TestEdgeCases.test_stale_shift_not_returned_by_watcher"
+      ],
+      "coverage": [
+        "cross_module"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "A responsibility split between two components, recorded because the code alone cannot express which side owns it.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.3,
+        "rare_source_overlap": 0.1,
+        "idf_weighted_source_overlap": 0.272
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "when every independent reason triggers at once they each appear, and their magnitudes add up to the reported figure",
+      "relevant": [
+        "tests.test_edge_attribution.TestEdgeCases.test_all_four_sources_can_fire_simultaneously",
+        "tests.test_edge_attribution.TestAnalyzeEdge.test_multiple_sources_sum_total_edge"
+      ],
+      "coverage": [],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "Composition, which no single branch demonstrates.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.111,
+        "rare_source_overlap": 0.111,
+        "idf_weighted_source_overlap": 0.121
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "identical quotes on two nested outcomes are not an inconsistency, neither one exceeds the other",
+      "relevant": [
+        "tests.test_cross_market.TestTemperatureBrackets.test_exactly_equal_prices_no_violation"
+      ],
+      "coverage": [],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "A strict-versus-loose comparison boundary. The wrong choice is invisible outside this case.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.125,
+        "rare_source_overlap": 0.125,
+        "idf_weighted_source_overlap": 0.146
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "two quotes only ever get compared when they describe the same place and the same day",
+      "relevant": [
+        "tests.test_cross_market.TestTemperatureBrackets.test_different_cities_not_grouped",
+        "tests.test_cross_market.TestTemperatureBrackets.test_different_dates_not_grouped"
+      ],
+      "coverage": [],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "The grouping key, stated as the pairs it must never produce.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.125,
+        "rare_source_overlap": 0.125,
+        "idf_weighted_source_overlap": 0.17
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "the ordering guarantee that the largest discrepancy comes back at the front of the list",
+      "relevant": [
+        "tests.test_cross_market.TestScanAll.test_scan_all_sorted_by_violation_descending"
+      ],
+      "coverage": [],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "A sort order that callers depend on and that nothing declares.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.125,
+        "rare_source_overlap": 0.125,
+        "idf_weighted_source_overlap": 0.15
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "an index-level identifier with no up or down suffix is assumed to mean upward",
+      "relevant": [
+        "tests.test_cross_market.TestTickerParsers.test_parse_sp500_without_direction"
+      ],
+      "coverage": [
+        "hard_negative"
+      ],
+      "hard_negative": true,
+      "answer_kind": "test_only",
+      "note": "The parsing helper is the obvious lexical match; the defaulting convention lives only in the case that pins it.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.25,
+        "rare_source_overlap": 0.125,
+        "idf_weighted_source_overlap": 0.192
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "a lopsided book in only one snapshot out of eight is not enough to fire anything",
+      "relevant": [
+        "tests.test_price_action_detectors.TestSmartMoneyDetector.test_insufficient_persistence_no_signal"
+      ],
+      "coverage": [],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "A persistence requirement given as the counterexample that must stay silent.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.143,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.065
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "activity surges while the quote sits unmoved, and we hand back nothing rather than an undirected verdict",
+      "relevant": [
+        "tests.test_price_action_detectors.TestVolumeSpikeNoNeutral.test_flat_price_spike_returns_none",
+        "tests.test_price_action_detectors.TestSpreadCompressionNoNeutral.test_compression_without_direction_returns_none"
+      ],
+      "coverage": [],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "The deliberate removal of a third, directionless outcome -- pinned separately for two of the finders.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.0,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.0
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "every one of the pattern finders copes with a completely bare history without crashing",
+      "relevant": [
+        "tests.test_price_action_detectors.TestDetectorContracts.test_all_detectors_return_none_on_empty_list"
+      ],
+      "coverage": [
+        "cross_module",
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "A contract asserted across every subclass at once. There is no single implementation of it.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.0,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.0
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "tightening during the opening couple of hours is deliberately suppressed",
+      "relevant": [
+        "tests.test_price_action_detectors.TestSpreadCompressionNoNeutral.test_market_open_suppression"
+      ],
+      "coverage": [],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "A time-of-day suppression window, described by when rather than by the constant.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.429,
+        "rare_source_overlap": 0.286,
+        "idf_weighted_source_overlap": 0.304
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "a five to one lopsidedness used to be enough and no longer is, after the bar was lifted",
+      "relevant": [
+        "tests.test_price_action_detectors.TestSmartMoneyThinBookRejection.test_imbalance_threshold_raised"
+      ],
+      "coverage": [
+        "hard_negative"
+      ],
+      "hard_negative": true,
+      "answer_kind": "test_only",
+      "note": "A tuning change recorded as a case. The detector is the obvious keyword match and does not say what the previous bar was.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.143,
+        "rare_source_overlap": 0.143,
+        "idf_weighted_source_overlap": 0.144
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "in rehearsal mode nothing whatsoever should go out over the wire",
+      "relevant": [
+        "tests.test_rl08_orderbook_gate.TestDryRunNoOrderbookFetch.test_dry_run_no_api_calls_at_all",
+        "tests.test_rl08_orderbook_gate.TestDryRunNoOrderbookFetch.test_dry_run_skips_orderbook_fetch"
+      ],
+      "coverage": [],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "A no-side-effects promise, which is only ever demonstrable by a case that watches for calls.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.333,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.15
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "when the book cannot be read at all we fall back to the sizing that has no liquidity input, and nothing is raised",
+      "relevant": [
+        "tests.test_rl08_orderbook_gate.TestOrderbookFetchFailure.test_orderbook_fetch_exception_proceeds_without_depth",
+        "tests.test_rl08_orderbook_gate.TestOrderbookFetchFailure.test_orderbook_fetch_exception_no_raise"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "Degradation rather than refusal, plus the containment that makes it invisible to the caller.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.091,
+        "rare_source_overlap": 0.091,
+        "idf_weighted_source_overlap": 0.085
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "a book with too little resting size stops the order before it is placed, and the control above the bar only gets as far as showing the resting quantity was read",
+      "relevant": [
+        "tests.test_rl08_orderbook_gate.TestThinBookRejection.test_30_cent_depth_rejects_trade",
+        "tests.test_rl08_orderbook_gate.TestThinBookRejection.test_exactly_at_min_depth_allowed"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "The refusal and its control. Deliberately labelled as a pair: the allowed case is named for the boundary but is set up above it, so on its own it does not establish inclusivity.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.188,
+        "rare_source_overlap": 0.125,
+        "idf_weighted_source_overlap": 0.155
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "only the resting rungs priced at or under the quote we would pay contribute to what is available",
+      "relevant": [
+        "tests.test_rl08_orderbook_gate.TestAutoTraderLiveOrderbookFetch.test_only_levels_at_or_below_ask_counted"
+      ],
+      "coverage": [],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "The summation rule for available quantity, which the implementation performs but never explains.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.143,
+        "rare_source_overlap": 0.143,
+        "idf_weighted_source_overlap": 0.122
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "the two different upstream spellings for how many are resting at a rung both have to parse the same way",
+      "relevant": [
+        "tests.test_rl08_orderbook_gate.TestOrderbookFieldVariants.test_count_field",
+        "tests.test_rl08_orderbook_gate.TestOrderbookFieldVariants.test_quantity_field"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "Tolerating two upstream shapes for one field -- the sort of thing that is only discoverable from the cases.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.111,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.054
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "the most severe standstill survives the overnight rollover and needs a human to clear it, while the milder one clears itself",
+      "relevant": [
+        "tests.test_backtest_pipeline.TestCircuitBreakerReset.test_reset_cb_for_day_does_not_recover_black",
+        "tests.test_backtest_pipeline.TestCircuitBreakerReset.test_reset_cb_for_day_recovers_halt"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "Two states with opposite recovery behaviour on the same daily reset -- the contrast is the answer.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.083,
+        "rare_source_overlap": 0.083,
+        "idf_weighted_source_overlap": 0.062
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "a cautious verdict from the review committee halves the order instead of blocking it outright",
+      "relevant": [
+        "tests.test_backtest_pipeline.TestPipelineEvaluateTrade.test_analyst_panel_reduce_size_applies_multiplier"
+      ],
+      "coverage": [],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "A middle verdict between accept and refuse, described by its effect.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.222,
+        "rare_source_overlap": 0.222,
+        "idf_weighted_source_overlap": 0.186
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "rows with no category recorded get bucketed together instead of vanishing from the summary",
+      "relevant": [
+        "tests.test_backtest_pipeline.TestLaneBreakdown.test_lane_breakdown_unknown_lane_falls_back"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "A grouping fallback whose failure mode is silent data loss in a report.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.0,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.0
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "the printed summary has to look exactly as it did before whenever the newer path is switched off",
+      "relevant": [
+        "tests.test_backtest_pipeline.TestDataclassBackwardCompatibility.test_backtest_result_format_output_unchanged_without_pipeline",
+        "tests.test_backtest_pipeline.TestPipelineRunIntegration.test_non_pipeline_mode_behavior_unchanged"
+      ],
+      "coverage": [],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "The control that makes every claim about the new mode attributable to the new mode.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.1,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.036
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "cheap and expensive quotes are thrown out before the expensive machinery is consulted at all",
+      "relevant": [
+        "tests.test_backtest_pipeline.TestPipelineEvaluateTrade.test_price_filter_rejects_below_min",
+        "tests.test_backtest_pipeline.TestPipelineEvaluateTrade.test_price_filter_rejects_above_max"
+      ],
+      "coverage": [],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "Ordering of a cheap filter relative to a costly stage, asserted at both ends of the range.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.125,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.071
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "how does a standstill actually prevent new orders, and where is the scaling factor of zero that carries that decision",
+      "relevant": [
+        "src.risk.circuit_breaker.CircuitBreaker.position_size_multiplier",
+        "tests.test_backtest_pipeline.TestPipelineEvaluateTrade.test_circuit_breaker_halt_blocks_trade"
+      ],
+      "coverage": [
+        "cross_module",
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_and_impl",
+      "note": "The trading path never asks the breaker for its state -- it asks for a multiplier and refuses on zero. That indirection is the whole answer, and it is only visible with both symbols in front of you.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.0,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.0
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "how are mispriced nested outcomes gathered, and what shows the tiny discrepancies are dropped before reporting",
+      "relevant": [
+        "src.trading.cross_market.CrossMarketScanner.scan_all",
+        "tests.test_cross_market.TestScanAll.test_scan_all_filters_small_violations"
+      ],
+      "coverage": [
+        "cross_module"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_and_impl",
+      "note": "The collector and the threshold behaviour, which is a default argument in the code and an assertion in the case.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.0,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.0
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "where is the band a quote falls into decided, and what pins each boundary including the case that belongs to none of them",
+      "relevant": [
+        "src.trading.rules_engine.TradingRulesEngine.classify_lane",
+        "tests.test_backtest_pipeline.TestLaneClassification.test_classify_lane_ranges",
+        "tests.test_backtest_pipeline.TestLaneClassification.test_classify_lane_outside_all_ranges_is_dead_zone"
+      ],
+      "coverage": [
+        "cross_module"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_and_impl",
+      "note": "The classifier reads its ranges from configuration, so the boundaries exist as data plus two cases and nowhere else in the source.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.1,
+        "rare_source_overlap": 0.1,
+        "idf_weighted_source_overlap": 0.09
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "how does a thin book shrink the order, and at what point does it stop being worth doing at all",
+      "relevant": [
+        "src.risk.kelly.size_position",
+        "tests.test_kelly.TestFillProbabilityDiscount.test_partial_fill_reduces_contracts",
+        "tests.test_kelly.TestFillProbabilityDiscount.test_low_fill_prob_declines_trade"
+      ],
+      "coverage": [
+        "cross_module"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_and_impl",
+      "note": "A continuous discount and a discrete abandon threshold live in the same function; the two cases are what separate them.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.2,
+        "rare_source_overlap": 0.1,
+        "idf_weighted_source_overlap": 0.146
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "an advantage a hair under the required floor is turned away",
+      "relevant": [
+        "tests.test_kelly.TestZeroAndNegativeEdge.test_edge_just_below_minimum_blocked"
+      ],
+      "coverage": [
+        "error_path",
+        "hard_negative"
+      ],
+      "hard_negative": true,
+      "answer_kind": "test_only",
+      "note": "The sizing function is the obvious lexical match; the refusal at 0.049 against a floor of 0.05 is recorded only here. Deliberately NOT paired with its named companion: that one is called 'exactly at minimum' but its body sets the floor to zero, so it does not establish the boundary its name claims.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.0,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.0
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    },
+    {
+      "query": "doubling your money to the cent is enough to close the whole thing, the comparison is not strict",
+      "relevant": [
+        "tests.test_exit_engine.TestTakeProfit.test_take_profit_boundary_exactly_100pct"
+      ],
+      "coverage": [
+        "hard_negative"
+      ],
+      "hard_negative": true,
+      "answer_kind": "test_only",
+      "note": "The evaluator is the obvious keyword match and its branch reads the same either way; the boundary choice is recorded only here.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.0,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.0
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "kalshi-bot"
+    }
+  ]
+}

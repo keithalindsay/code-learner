@@ -1,0 +1,1550 @@
+{
+  "schema_version": 2,
+  "source": "hand",
+  "repo": "swarm-sync",
+  "repo_path": "/home/keith/projects/swarm-sync",
+  "index_path": "/home/keith/projects/swarm-sync/.codelearner/index.db",
+  "commit_note": "Hand-written against swarm-sync @ 75 indexed files, 1345 symbols, 38 of those files tests (990 test symbols) (.codelearner/index.db, 2026-08-02). Author read every test module under tests/ before writing a query, and re-read the BODY of every symbol labelled here to confirm each query describes what the case actually does rather than what its docstring claims.",
+  "labelling_rule": "TEST-SEEKING gold: the correct answer IS a test symbol. Relevant = the test a competent engineer would open to see how a behaviour is actually pinned down. The implementation is listed ONLY where the question is 'how is this verified', which genuinely wants both -- never as padding. Written because every other gold file in this repo labels 0 test symbols across 978 relevant labels, so an experiment that deletes tests from the corpus can improve nDCG while taking test-seeking retrieval from 100% to 0% and no gold set can see it.",
+  "authoring_rule": "A test is usually named after the thing it tests, so 'the test for lease expiry' retrieves test_lease_expiry by name alone -- a lexical benchmark in a costume, and worthless for the comparison this file exists to enable. So every query is phrased by WHAT THE TEST ESTABLISHES or HOW IT IS SET UP, never by the name of the code under test and never by the test's own identifier. In particular the word 'test' is avoided outright: every pytest function is named test_*, so it is a name-token of every possible target. Drafted from the test bodies and docstrings, then measured for token overlap against the target's own symbol name and against its chunk text (exactly what BM25 indexes); anything that leaked a target identifier was reworded and re-measured rather than flagged and kept.",
+  "overlap_method": {
+    "tokenizer": "lowercase, split on non-alphanumeric and camelCase boundaries, drop <3 chars, drop the in-repo stoplist codelearner.eval.gold_from_history._STOPWORDS (~100 English + generic-software words). Pinned to an importable constant rather than an ad-hoc list so the measurement is reproducible from this checkout alone.",
+    "corpus": "chunks.text for every symbol in this repo's index (the field chunks_fts indexes, i.e. exactly what BM25 scores)",
+    "name_overlap": "fraction of distinct query tokens that appear in some relevant symbol's OWN name (symbols.name / last dotted component). NOTE for this file: every pytest function is named test_*, so the bare token 'test' is in EVERY target's name -- a query that says 'the test for X' leaks by construction. Queries here are worded to avoid it.",
+    "source_overlap": "fraction of distinct query tokens that appear in a relevant symbol's chunk text",
+    "rare_source_overlap": "fraction of distinct query tokens that appear in a relevant symbol's chunk text AND have document frequency <= 2% of chunks -- the high-IDF terms BM25 actually ranks on",
+    "idf_weighted_source_overlap": "sum of idf over query tokens present in a relevant chunk, divided by sum of idf over all query tokens",
+    "name_bearing": "true iff name_overlap > 0, i.e. the query names the target. Not automatically wrong but must be scored as its own row.",
+    "answer_kind": "DERIVED from files.is_test over `relevant`: 'test_only' when every relevant symbol lives in a test file, 'test_and_impl' when the set spans both. Asserted in tests/test_hand_gold.py -- it is the property this file exists for, so a query that drifted into a non-test answer set fails rather than silently stops closing the hole.",
+    "calibration": "This implementation reproduces the sibling hand_*.json overlap numbers exactly on 166/170 of their queries for name_overlap (169/170 for the derived name_bearing verdict); the residual disagreements are single stopword-membership decisions in the denominator, since those files' ~100-word stoplist was not itself checked in."
+  },
+  "coverage_codes": {
+    "undocumented": "target symbol has no docstring in the index",
+    "private": "target is a _-prefixed helper, a nested function, or a module-level symbol with no public export",
+    "generic_name": "target's name is generic or misleading so the name carries no query signal",
+    "cross_module": "answering requires reading symbols in 2+ modules",
+    "error_path": "the question is about a failure, edge case, or refusal rather than the happy path",
+    "hard_negative": "the obvious keyword match in this repo is the WRONG symbol; a lexical-only retriever is actively penalised"
+  },
+  "queries": [
+    {
+      "query": "where do we prove an in-memory mutex would not have been enough, by holding the claim from a separate child program",
+      "relevant": [
+        "tests.test_repo_lock.test_the_lock_is_os_level_not_process_local",
+        "tests.test_repo_lock.test_a_second_server_on_the_same_repo_refuses_to_boot"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "Phrased by the apparatus (a real child holding the claim) rather than by the mechanism's name. The pair is the claim and its falsifying setup.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.222,
+        "rare_source_overlap": 0.222,
+        "idf_weighted_source_overlap": 0.208
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "the refusal that outliving the first coordinator would make every subsequent launch fail, so the claim is given up when the owning program ends",
+      "relevant": [
+        "tests.test_repo_lock.test_the_lock_is_released_on_shutdown_so_a_restart_boots"
+      ],
+      "coverage": [],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "Asks for the consequence the assertion protects against, not the operation.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.308,
+        "rare_source_overlap": 0.077,
+        "idf_weighted_source_overlap": 0.193
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "the assertion that over-deletion is impossible: a directory belonging to a creator that has not exited is left completely alone by the reclaim pass",
+      "relevant": [
+        "tests.test_git_ops.test_sweep_never_touches_a_worktree_whose_owner_is_still_alive",
+        "tests.test_git_ops.test_sweep_never_touches_a_worktree_this_process_owns"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "The dangerous direction of a cleanup rule. Both halves (another process, and this one) are the honest answer.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.083,
+        "rare_source_overlap": 0.083,
+        "idf_weighted_source_overlap": 0.096
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "the exploit reproduced end to end, where a crafted identifier recursively wipes a folder beyond the project tree",
+      "relevant": [
+        "tests.test_git_ops.test_add_worktree_traversal_cannot_delete_a_directory_outside_the_repo"
+      ],
+      "coverage": [
+        "error_path",
+        "hard_negative"
+      ],
+      "hard_negative": true,
+      "answer_kind": "test_only",
+      "note": "Lexically the words point at the sanitiser in git_ops; the answer is the reproduction that shows what happened before it existed.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.273,
+        "rare_source_overlap": 0.182,
+        "idf_weighted_source_overlap": 0.246
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "when saving the bytes fails, leaking the directory is the deliberate choice over destroying the only copy of those edits",
+      "relevant": [
+        "tests.test_git_ops.test_orphan_is_left_alone_when_its_work_cannot_be_preserved"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "A design tradeoff stated as a behaviour. The query names the tradeoff, not the function.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.6,
+        "rare_source_overlap": 0.4,
+        "idf_weighted_source_overlap": 0.543
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "the reproduction where waiting on a busy database hands back a claim that is dead on arrival",
+      "relevant": [
+        "tests.test_leases.test_acquire_never_mints_an_already_expired_lease"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "Setup-first: the busy write slot is what makes the bug reachable at all.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.333,
+        "rare_source_overlap": 0.222,
+        "idf_weighted_source_overlap": 0.289
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "many threads let go simultaneously against a single row, so that precisely one of them wins",
+      "relevant": [
+        "tests.test_leases.test_barrier_gated_write_acquires_on_one_parcel_grant_exactly_once"
+      ],
+      "coverage": [],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "Purely how it is set up. A reader who wants the contention harness has nothing else to search for.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.222,
+        "rare_source_overlap": 0.111,
+        "idf_weighted_source_overlap": 0.189
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "the double-grant invariant stated as the thing it protects, with no background sweeper running at all",
+      "relevant": [
+        "tests.test_leases.test_expired_holders_heartbeat_cannot_create_a_second_live_write_lease"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "The absence of the reaper is the point of the setup, and it is what makes this the right answer rather than a reaper case.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.6,
+        "rare_source_overlap": 0.5,
+        "idf_weighted_source_overlap": 0.586
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "the case proving a renewal cannot revive a hold whose deadline already passed",
+      "relevant": [
+        "tests.test_leases.test_heartbeat_on_expired_lease_is_a_noop"
+      ],
+      "coverage": [
+        "error_path",
+        "hard_negative"
+      ],
+      "hard_negative": true,
+      "answer_kind": "test_only",
+      "note": "The obvious keyword match is the renewal function itself, whose chunk text says all of this in its docstring; the answer is the case that pins it.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.3,
+        "rare_source_overlap": 0.1,
+        "idf_weighted_source_overlap": 0.273
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "when several shared holders block a request, we name the one that will free up first",
+      "relevant": [
+        "tests.test_leases.test_denied_write_among_only_readers_picks_soonest_to_expire"
+      ],
+      "coverage": [],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "A tie-break rule, phrased as the rule rather than as the field it reads.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.25,
+        "rare_source_overlap": 0.125,
+        "idf_weighted_source_overlap": 0.221
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "one client could mint unlimited rows before this, so each caller now has its own ceiling that never becomes a system-wide brake",
+      "relevant": [
+        "tests.test_leases.test_acquire_denied_at_per_agent_lease_cap",
+        "tests.test_leases.test_lease_cap_is_per_agent_not_global"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "A denial-of-service bound and the control that keeps it scoped. Written from the repro, not from the config knob.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.5,
+        "rare_source_overlap": 0.25,
+        "idf_weighted_source_overlap": 0.512
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "a pair of editors sitting in unrelated working directories must contend over the same physical file rather than minting separate keys",
+      "relevant": [
+        "tests.test_hook_adapter.test_two_agents_in_different_cwds_collide_on_one_lease"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "Names the wrong outcome that used to happen. Nothing in the wording points at the id-construction helper.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.231,
+        "rare_source_overlap": 0.154,
+        "idf_weighted_source_overlap": 0.201
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "a pair of anonymous runs carrying no identifier at all must not be mistaken for one another",
+      "relevant": [
+        "tests.test_hook_adapter.test_agent_id_neither_present_two_invocations_do_not_share_identity",
+        "tests.test_hook_adapter.test_agent_id_neither_present_is_degraded_unique_not_shared_main"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "The false-sharing footgun made concrete. A shared identity is under-protection for a lock, which is why this is a case rather than a comment.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.0,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.0
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "silence read as contention rather than absence, but only when there is fresh evidence we were talking recently",
+      "relevant": [
+        "tests.test_hook_adapter.test_fail_closed_when_unreachable_during_active_coordination_with_recent_contact",
+        "tests.test_hook_adapter.test_fail_closed_tier_ignores_stale_contact"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "A tier boundary and the guard that stops it over-applying -- both are needed to see where the line is.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.444,
+        "rare_source_overlap": 0.333,
+        "idf_weighted_source_overlap": 0.493
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "contention has to be auditable on the path that actually produces it, not merely returned to the caller",
+      "relevant": [
+        "tests.test_hook_adapter.test_a_hook_denial_reaches_the_event_log"
+      ],
+      "coverage": [],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "A regression about observability. The query says what must be true, not which call was replaced.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.5,
+        "rare_source_overlap": 0.25,
+        "idf_weighted_source_overlap": 0.558
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "how is it verified that a long editing session outlives a single lifetime because every save renews the hold",
+      "relevant": [
+        "tests.test_hook_adapter.test_keepalive_prevents_expiry_across_a_ttl_window",
+        "swarmsync.hooks.adapter._keepalive"
+      ],
+      "coverage": [
+        "cross_module"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_and_impl",
+      "note": "The honest multi-relevant case: 'how is this verified' wants the pinning case AND the helper it exercises.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.182,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.12
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "editing a link and editing the file it points at must compete for one claim rather than two",
+      "relevant": [
+        "tests.test_hook_adapter.test_in_repo_symlink_alias_shares_one_lease_with_its_target"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "The aliasing bug in a sentence. No identifier from the resolution helper appears.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.5,
+        "rare_source_overlap": 0.25,
+        "idf_weighted_source_overlap": 0.395
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "an operator's exported shell options must not be able to reach into the merge check and weaken it",
+      "relevant": [
+        "tests.test_config.test_subprocess_env_strips_pytest_vars_so_the_gate_cannot_be_hijacked"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "A hijacking vector described as a threat rather than by the variable name it strips.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.444,
+        "rare_source_overlap": 0.111,
+        "idf_weighted_source_overlap": 0.357
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "the same accessor has to observe a change between two calls, because caching it at import would freeze the first value",
+      "relevant": [
+        "tests.test_config.test_accessors_read_env_at_call_time"
+      ],
+      "coverage": [],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "Stated as the failure mode the assertion rules out.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.833,
+        "rare_source_overlap": 0.25,
+        "idf_weighted_source_overlap": 0.778
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "the rule that no module may reach for an operating-system setting directly, checked by parsing the source rather than importing it",
+      "relevant": [
+        "tests.test_architecture.test_only_config_reads_the_environment"
+      ],
+      "coverage": [
+        "cross_module"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "Both the rule and the technique (AST, never execute). A layering rule has no single implementation to retrieve instead.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.077,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.066
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "pinning the lowest tier of the system so it never grows a dependency on a sibling package",
+      "relevant": [
+        "tests.test_architecture.test_blackboard_imports_no_other_swarmsync_layer"
+      ],
+      "coverage": [],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "There is no implementation of this rule anywhere -- the assertion IS the rule, which is exactly the retrieval case a test-free corpus loses.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.222,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.183
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "guarding the guard: an empty or mislocated traversal must not pass for lack of anything to check",
+      "relevant": [
+        "tests.test_architecture.test_walk_actually_sees_modules"
+      ],
+      "coverage": [],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "A vacuity control. Only a test can be the answer to 'where is the vacuity control'.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.444,
+        "rare_source_overlap": 0.111,
+        "idf_weighted_source_overlap": 0.374
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "every write endpoint turns away an unauthenticated caller, and the enumeration itself is pinned so a newly added one cannot slip past",
+      "relevant": [
+        "tests.test_security.test_every_mutating_route_401s_without_a_token",
+        "tests.test_security.test_the_mutating_route_list_is_complete"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "The sweep plus its completeness tripwire. Retrieving one without the other misses how the sweep is kept honest.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.357,
+        "rare_source_overlap": 0.214,
+        "idf_weighted_source_overlap": 0.348
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "a path whose parent directory name merely extends the allowed tree is a different tree and must be turned away",
+      "relevant": [
+        "tests.test_security.test_index_rejects_sibling_prefix_of_managed_root"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "A prefix-matching bug class stated precisely enough to be unambiguous without naming the check.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.75,
+        "rare_source_overlap": 0.25,
+        "idf_weighted_source_overlap": 0.671
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "a branch whose checks never terminate has to be turned away rather than wedging the whole coordinator",
+      "relevant": [
+        "tests.test_integrator.test_run_impact_tests_kills_a_hanging_gate_and_rejects"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "The hang is the setup; the refusal is the claim.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.364,
+        "rare_source_overlap": 0.091,
+        "idf_weighted_source_overlap": 0.305
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "how do we know the ceiling still binds when a grandchild outlives the notice sent to the whole family and holds the pipe open",
+      "relevant": [
+        "tests.test_integrator.test_gate_timeout_is_bounded_even_when_a_descendant_escapes_the_group_kill",
+        "swarmsync.coordinator.gate.run_impact_tests"
+      ],
+      "coverage": [
+        "cross_module",
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_and_impl",
+      "note": "'How do we know' genuinely wants the timing code and the case that reproduces the escaped descendant.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.538,
+        "rare_source_overlap": 0.231,
+        "idf_weighted_source_overlap": 0.443
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "the guard proving a timed-out subprocess cleanup cannot end up taking down the coordinator itself",
+      "relevant": [
+        "tests.test_integrator.test_kill_process_group_never_signals_our_own_group"
+      ],
+      "coverage": [
+        "error_path",
+        "hard_negative"
+      ],
+      "hard_negative": true,
+      "answer_kind": "test_only",
+      "note": "Lexically this reads as a request for the signalling helper; the answer is the case bounding what it may signal.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.364,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.309
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "the decision, pinned so it cannot rot, that losing the dependency signal costs wall-clock but never a verdict",
+      "relevant": [
+        "tests.test_gate_graph_unavailable.test_an_unavailable_graph_does_not_fail_the_gate"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "A refused temptation (reject when impact cannot be computed) recorded as an assertion.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.333,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.237
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "the control that stops a warning banner from being printed unconditionally on healthy runs",
+      "relevant": [
+        "tests.test_gate_graph_unavailable.test_an_ordinary_gate_run_says_nothing_about_widening"
+      ],
+      "coverage": [],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "A negative control -- the case that makes the positive one attributable. Never an implementation.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.444,
+        "rare_source_overlap": 0.333,
+        "idf_weighted_source_overlap": 0.495
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "a merge that removes a module gets a truthful nothing-to-do reply, and that must not be confused with the signal being unavailable",
+      "relevant": [
+        "tests.test_gate_graph_unavailable.test_a_genuinely_empty_graph_answer_does_not_widen"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "The distinction between 'nothing' and 'cannot tell', which only shows up as a pair of cases.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.364,
+        "rare_source_overlap": 0.091,
+        "idf_weighted_source_overlap": 0.282
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "how is it established that running recovery twice does not wipe work that arrived between the two boots",
+      "relevant": [
+        "tests.test_integrator.test_reconcile_does_not_destroy_landed_merges_on_a_second_restart",
+        "swarmsync.coordinator.integrator.reconcile_orphaned_integrations"
+      ],
+      "coverage": [
+        "cross_module",
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_and_impl",
+      "note": "Idempotency of a destructive recovery path. The question wants the routine and the case that pins its idempotency.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.4,
+        "rare_source_overlap": 0.2,
+        "idf_weighted_source_overlap": 0.383
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "the durable marker and its lookup record must both land or neither, so a crash cannot fall between them",
+      "relevant": [
+        "tests.test_integrator.test_start_emit_and_projection_row_are_atomic"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "An atomicity claim about two writes, phrased without naming either table.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.4,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.373
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "an outcome record has to name the exact attempt it closes by its ordinal, not by branch and destination",
+      "relevant": [
+        "tests.test_integrator.test_verdict_events_carry_the_started_seq_that_they_close"
+      ],
+      "coverage": [],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "Came out of adversarial review: a reused branch name makes the tuple ambiguous.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.333,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.214
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "a repository that is genuinely gone must eventually be given up on instead of being retried on every boot forever",
+      "relevant": [
+        "tests.test_integrator.test_a_permanently_dead_repo_is_abandoned_after_a_bounded_number_of_attempts",
+        "tests.test_integrator.test_the_attempt_counter_is_per_orphan_not_global"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "The bound, plus the case that stops one dead repository starving another's budget.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.6,
+        "rare_source_overlap": 0.4,
+        "idf_weighted_source_overlap": 0.589
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "an operator interrupting during the checks must not leave unverified work sitting on the shared branch",
+      "relevant": [
+        "tests.test_integrator.test_keyboard_interrupt_mid_gate_rolls_trunk_back_and_reraises"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "The un-verified window described by what an operator does to reach it.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.4,
+        "rare_source_overlap": 0.2,
+        "idf_weighted_source_overlap": 0.375
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "one busy-database blip in a single sweep must not kill the housekeeping loop",
+      "relevant": [
+        "tests.test_reaper.test_run_survives_transient_error_and_reaps_on_next_pass"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "Transient failure containment for a long-lived loop.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.5,
+        "rare_source_overlap": 0.25,
+        "idf_weighted_source_overlap": 0.444
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "closing down mid-sweep has to let the cycle already under way complete instead of interrupting it partway",
+      "relevant": [
+        "tests.test_reaper.test_lifespan_shutdown_lets_inflight_pass_finish"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "Reproduced with a proof of concept before the fix; the query says what the shutdown must not do.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.167,
+        "rare_source_overlap": 0.083,
+        "idf_weighted_source_overlap": 0.158
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "the shape check that forbids going back to read-modify-write on the strength column",
+      "relevant": [
+        "tests.test_events.test_decay_pheromone_is_a_single_update_statement"
+      ],
+      "coverage": [],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "A code-shape guard. It has no implementation counterpart at all -- reverting the code passes every behavioural case and fails only here.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.4,
+        "rare_source_overlap": 0.1,
+        "idf_weighted_source_overlap": 0.31
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "forcing the interpreter-side exponent branch on a build that actually has the native maths function compiled in",
+      "relevant": [
+        "tests.test_events.test_decay_pheromone_works_through_the_python_pow_fallback"
+      ],
+      "coverage": [],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "Coverage of a fallback that this machine's SQLite would never take on its own -- setup is the whole answer.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.091,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.004
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "the pruner must not become its own growth source: a cycle that removes zero rows writes no marker",
+      "relevant": [
+        "tests.test_events.test_compact_events_noop_pass_emits_nothing"
+      ],
+      "coverage": [],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "The self-defeating failure mode of an audit marker, stated directly.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.6,
+        "rare_source_overlap": 0.2,
+        "idf_weighted_source_overlap": 0.51
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "the tripwire that fails when somebody adds a new public function accepting a scope argument",
+      "relevant": [
+        "tests.test_broker.test_every_granularity_taking_entry_point_is_covered_by_the_guard_sweep"
+      ],
+      "coverage": [],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "A meta-assertion about future code. Only a test can answer it.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.556,
+        "rare_source_overlap": 0.333,
+        "idf_weighted_source_overlap": 0.445
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "a refusal has to land before any side effect, or the caller believes none of it happened when some of it did",
+      "relevant": [
+        "tests.test_broker.test_refused_symbol_mode_run_leases_nothing_and_leaves_no_events"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "Ordering of a guard relative to its own side effects, phrased as the reader's wrong belief.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.7,
+        "rare_source_overlap": 0.4,
+        "idf_weighted_source_overlap": 0.665
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "one exploding unit of work must not abort the whole batch, and its neighbours' outcomes still come back",
+      "relevant": [
+        "tests.test_broker.test_broker_contains_a_crashing_task_and_keeps_sibling_results"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "Containment at the dispatch layer rather than inside the worker.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.273,
+        "rare_source_overlap": 0.091,
+        "idf_weighted_source_overlap": 0.257
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "the next stumble gets no further chance: reattempting happens exactly once, not in a loop",
+      "relevant": [
+        "tests.test_broker.test_broker_gitops_retry_is_bounded_second_failure_records_the_error"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "A bound on a retry, described by its arithmetic rather than by the exception type.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.2,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.129
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "proof that a unit of work is never parallel-safe with a second copy of the very same unit, whatever scope is asked for",
+      "relevant": [
+        "tests.test_graph.test_co_schedulable_false_for_a_parcel_against_itself"
+      ],
+      "coverage": [
+        "hard_negative"
+      ],
+      "hard_negative": true,
+      "answer_kind": "test_only",
+      "note": "The scheduling predicate is the obvious lexical match and it is the wrong answer; the question is about the property, which lives only in the case.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.083,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.037
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "a module that parsed cleanly when it was catalogued is now half-written or binary garbage on the filesystem, and the traversal must not blow up",
+      "relevant": [
+        "tests.test_graph.test_build_graph_survives_a_file_that_is_broken_on_disk_right_now",
+        "tests.test_graph.test_build_graph_survives_an_undecodable_file_on_disk"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "Two reachable arms of one guard -- a syntax break and binary garbage. Routine in a live swarm.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.273,
+        "rare_source_overlap": 0.273,
+        "idf_weighted_source_overlap": 0.297
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "the discrimination control that holds everything constant except the shape of the statement being written, between two otherwise identical cases",
+      "relevant": [
+        "tests.test_graph.test_import_form_is_the_only_variable"
+      ],
+      "coverage": [],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "An experimental control. There is nothing else in the repo it could be confused with.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.133,
+        "rare_source_overlap": 0.067,
+        "idf_weighted_source_overlap": 0.162
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "a hold that runs out in the gap between the permission check and the write itself",
+      "relevant": [
+        "tests.test_server.test_parcel_update_refuses_a_lease_that_lapses_after_the_ownership_gate"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "A time-of-check to time-of-use window, described by the window rather than by the statement that closed it.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.625,
+        "rare_source_overlap": 0.125,
+        "idf_weighted_source_overlap": 0.581
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "the unauthenticated status page an operator hits first has to answer while the rest of the surface stays gated",
+      "relevant": [
+        "tests.test_server.test_health_needs_no_token_even_when_auth_is_on",
+        "tests.test_server.test_health_reports_an_operational_snapshot"
+      ],
+      "coverage": [],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "Why one route is deliberately outside the gate: it is what you use to discover reachability.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.545,
+        "rare_source_overlap": 0.091,
+        "idf_weighted_source_overlap": 0.533
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "one request blocked part-way through its update while another looks, proving separate handles never observe unfinished changes",
+      "relevant": [
+        "tests.test_connection_model.test_reader_does_not_see_a_writers_uncommitted_row"
+      ],
+      "coverage": [],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "Isolation described by the barrier apparatus that makes it observable.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.333,
+        "rare_source_overlap": 0.067,
+        "idf_weighted_source_overlap": 0.277
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "the boot-time refusal when the database's own notion of time and the interpreter's do not line up",
+      "relevant": [
+        "tests.test_serve.test_serve_refuses_to_start_when_clocks_disagree"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "An unstated cross-clock invariant made explicit; the query names the two clocks, not the assertion helper.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.143,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.071
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "the previous store is renamed with its bytes intact rather than deleted, and where it went is printed",
+      "relevant": [
+        "tests.test_serve.test_serve_fresh_moves_existing_db_aside_and_boots_an_empty_schema"
+      ],
+      "coverage": [],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "Data-loss avoidance on a destructive-looking flag.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.444,
+        "rare_source_overlap": 0.222,
+        "idf_weighted_source_overlap": 0.446
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "where is it shown that a configuration document we cannot read is never replaced, and never left truncated either",
+      "relevant": [
+        "tests.test_cli.test_init_hooks_refuses_to_write_over_an_unparseable_settings_file",
+        "tests.test_cli.test_init_hooks_leaves_no_partial_file_when_the_rename_fails"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "Two distinct data-loss routes for one writer: refusing a bad read, and atomicity of the write.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.6,
+        "rare_source_overlap": 0.2,
+        "idf_weighted_source_overlap": 0.495
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "the setup-time explanation for why every merge is being turned away: the python it runs the suite with does not have the project on its path",
+      "relevant": [
+        "tests.test_cli.test_doctor_flags_a_gate_interpreter_that_cannot_import_the_repos_tests"
+      ],
+      "coverage": [
+        "cross_module"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "Written as the operator's symptom, which is how somebody actually arrives at this case.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.5,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.413
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "ordinary file changes must cost nothing at all, pinned per subcommand so no child process is even spawned",
+      "relevant": [
+        "tests.test_hook_guard.test_dormant_edit_path_never_launches_python"
+      ],
+      "coverage": [],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "A performance promise turned into an assertion about process creation.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.462,
+        "rare_source_overlap": 0.231,
+        "idf_weighted_source_overlap": 0.427
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "the opposite mutation: exempting one subcommand from the opt-in check must not become an unconditional launch",
+      "relevant": [
+        "tests.test_hook_guard.test_only_release_is_ungated_others_still_pay_nothing"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "The over-application of a fix, guarded explicitly. A reviewer 'simplifying' the fix fails here.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.778,
+        "rare_source_overlap": 0.667,
+        "idf_weighted_source_overlap": 0.714
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "containment swallows ordinary failures but an operator killing the process must still get through",
+      "relevant": [
+        "tests.test_agent.test_run_agent_does_not_mask_keyboard_interrupt"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "The boundary between Exception and BaseException stated as an operator-visible consequence.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.5,
+        "rare_source_overlap": 0.2,
+        "idf_weighted_source_overlap": 0.484
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "on a refusal the only surviving reference to that work must not be deleted during teardown",
+      "relevant": [
+        "tests.test_agent.test_run_agent_keeps_its_branch_when_integrate_does_not_land",
+        "tests.test_agent.test_run_agent_still_deletes_its_branch_when_the_merge_lands"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "Both halves: keep it when the work is unreachable otherwise, drop it once it is redundant.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.286,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.214
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "a background keepalive thread that hits an exception must never die, and the miss has to leave a trace",
+      "relevant": [
+        "tests.test_agent.test_heartbeater_survives_a_raising_heartbeat_and_keeps_beating",
+        "tests.test_agent.test_heartbeater_logs_a_failed_beat_and_does_not_raise"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "Survival and observability are separate claims about the same daemon thread.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.6,
+        "rare_source_overlap": 0.3,
+        "idf_weighted_source_overlap": 0.571
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "a live-socket connection must not silently inherit a five second ceiling that the long merge call would blow straight through",
+      "relevant": [
+        "tests.test_agent.test_client_over_a_real_url_does_not_use_httpx_5s_default_timeout"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "Found by review and reproduced against a live server. Query gives the number and the consequence, not the library call.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.286,
+        "rare_source_overlap": 0.143,
+        "idf_weighted_source_overlap": 0.294
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "a task that obtains some of its claims and is then turned down partway must give every one of them back",
+      "relevant": [
+        "tests.test_agent.test_run_agent_releases_already_held_leases_on_a_mid_acquire_denial"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "Partial-acquisition rollback, described as the sequence rather than the routine.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.375,
+        "rare_source_overlap": 0.125,
+        "idf_weighted_source_overlap": 0.293
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "where a stated hypothesis was recorded as disproved rather than quietly weakened into something that would pass",
+      "relevant": [
+        "tests.scale.test_trunk_integrity.test_h1_strong_form_is_falsified_the_broken_merge_lands_then_reverts"
+      ],
+      "coverage": [],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "An honest negative result, kept as an executable record. Nothing in the implementation says this.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.111,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.061
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "feeding an interleaved log to the checker on purpose, so we know it can actually complain about something",
+      "relevant": [
+        "tests.scale.test_trunk_integrity.test_h4_the_serialization_detector_is_not_vacuous"
+      ],
+      "coverage": [],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "A mutation control for a detector whose empty answer would otherwise look like success.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.5,
+        "rare_source_overlap": 0.3,
+        "idf_weighted_source_overlap": 0.488
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "an instrument that measured nothing would report a beautiful fraction, so it is bound to something known-slow first",
+      "relevant": [
+        "tests.scale.test_impact_selection.test_h3_the_reindex_timer_actually_measures_reverse_dep_files"
+      ],
+      "coverage": [],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "Binding an instrument before trusting any number produced with it.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.636,
+        "rare_source_overlap": 0.273,
+        "idf_weighted_source_overlap": 0.642
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "the crossover expressed as a selectivity threshold rather than a repository size",
+      "relevant": [
+        "tests.scale.test_impact_selection.test_h3_impact_selection_pays_for_itself"
+      ],
+      "coverage": [],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "A measured break-even, and the reframing of what it is a function of.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.571,
+        "rare_source_overlap": 0.429,
+        "idf_weighted_source_overlap": 0.588
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "the finding, asserted so it cannot rot, that at whole-module scope a downstream caller elsewhere is dispatched in the very same wave",
+      "relevant": [
+        "tests.scale.test_contracts_and_crash.test_h5_a_cross_file_dependent_is_NOT_ordered_after_the_contract_change"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "A known limitation pinned as an assertion so silently 'fixing' it is visible.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.615,
+        "rare_source_overlap": 0.154,
+        "idf_weighted_source_overlap": 0.574
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "killing a real worker while it deliberately hangs inside its mutation, at full scale, with the changes genuinely uncommitted on the filesystem",
+      "relevant": [
+        "tests.scale.test_contracts_and_crash.test_h6a_agent_sigkilled_mid_edit"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_only",
+      "note": "Entirely setup-phrased: the hang, the uncatchable signal, and the dirty checkout are what make this case what it is.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.462,
+        "rare_source_overlap": 0.154,
+        "idf_weighted_source_overlap": 0.415
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "how does the sweep decide a directory is genuinely abandoned, and where is that judgement pinned down",
+      "relevant": [
+        "swarmsync.worktree.git_ops.prune_orphan_worktrees",
+        "swarmsync.worktree.git_ops._claim_if_unowned",
+        "tests.test_git_ops.test_orphan_worktree_of_a_dead_process_is_reclaimed_under_a_different_name"
+      ],
+      "coverage": [
+        "cross_module",
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_and_impl",
+      "note": "Liveness is decided by an unheld kernel lock, which is exactly the sort of thing a reader will not believe from the code alone -- so the case belongs in the answer.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.375,
+        "rare_source_overlap": 0.25,
+        "idf_weighted_source_overlap": 0.315
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "how is a file's coordination key derived, and what shows a session running in a subdirectory produces the same one",
+      "relevant": [
+        "swarmsync.blackboard.parcel_id.make_id",
+        "tests.test_hook_adapter.test_parcel_id_is_git_root_relative_not_cwd_relative"
+      ],
+      "coverage": [
+        "cross_module"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_and_impl",
+      "note": "The construction rule and the case that proves two vantage points agree on it -- one without the other answers half the question.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.444,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.315
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "what stops the merge being checked by the wrong executable, and how do we know the override reaches the actual child command",
+      "relevant": [
+        "swarmsync.coordinator.gate.resolve_python",
+        "tests.test_integrator.test_the_gate_really_spawns_the_configured_interpreter"
+      ],
+      "coverage": [
+        "cross_module"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_and_impl",
+      "note": "A knob that resolves correctly but never reaches the subprocess is the failure here, so the accessor alone is not an answer.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.417,
+        "rare_source_overlap": 0.25,
+        "idf_weighted_source_overlap": 0.431
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "where does the history get trimmed, and what shows a live recovery marker is exempt however old it is",
+      "relevant": [
+        "swarmsync.blackboard.events.compact_events",
+        "tests.test_events.test_compact_events_never_deletes_open_integration_start"
+      ],
+      "coverage": [
+        "cross_module",
+        "error_path"
+      ],
+      "hard_negative": false,
+      "answer_kind": "test_and_impl",
+      "note": "The pruner and the one row it may never take. The exemption is a single clause, so the case is where it is actually legible.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.6,
+        "rare_source_overlap": 0.3,
+        "idf_weighted_source_overlap": 0.524
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "asking for the last zero or minus five entries has to be refused rather than silently coerced",
+      "relevant": [
+        "tests.test_events.test_tail_newest_rejects_nonpositive_n"
+      ],
+      "coverage": [
+        "error_path",
+        "hard_negative"
+      ],
+      "hard_negative": true,
+      "answer_kind": "test_only",
+      "note": "Every token points at the reader function; the answer is the one case that fixes what a nonsensical count does.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.0,
+        "rare_source_overlap": 0.0,
+        "idf_weighted_source_overlap": 0.0
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    },
+    {
+      "query": "a name that begins with two dashes must never be handed to the version control binary, because it would be read as a flag",
+      "relevant": [
+        "tests.test_git_ops.test_merge_branch_rejects_option_like_branch_before_running_git",
+        "tests.test_git_ops.test_normal_branch_names_still_work_after_hardening"
+      ],
+      "coverage": [
+        "error_path",
+        "hard_negative"
+      ],
+      "hard_negative": true,
+      "answer_kind": "test_only",
+      "note": "The sanitiser is the obvious keyword match and it does not say why disabling the shell was not enough. The pair is the guard and the regression control on ordinary names.",
+      "overlap": {
+        "name_overlap": 0.0,
+        "source_overlap": 0.5,
+        "rare_source_overlap": 0.25,
+        "idf_weighted_source_overlap": 0.445
+      },
+      "name_bearing": false,
+      "source": "hand",
+      "repo": "swarm-sync"
+    }
+  ]
+}

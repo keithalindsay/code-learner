@@ -21,6 +21,15 @@ to read 1.0, beside a positive pass rate that also has to read 1.0, because a ga
 refuses everything scores perfectly against attacks alone. Every control is verified by
 deleting the rule it targets from a copy of the package and confirming the attack then
 succeeds: a control that cannot see its own rule removed is decoration.
+
+`SourceView`, `Generator`, `LeakDetected` and `assert_view_is_source_only` are
+re-exported below but no longer defined here. They are the seam the shipped generator
+in `generate/` also has to satisfy, and while they lived in this package that package
+imported this one -- the direction `generate/llm.py` says in bold must stay empty, and
+the edge that closed a four-package cycle. They now live in the leaf
+`codelearner.sourceview`. Nothing about what this package measures changed; what
+changed is that the thing being measured no longer has to reach into the measurer to
+find out what shape it must be.
 """
 
 from .ablation import (

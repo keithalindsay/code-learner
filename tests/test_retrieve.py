@@ -8,7 +8,12 @@ import pytest
 from codelearner.ingest import index_repo
 from codelearner.ingest.indexer import is_test_path
 from codelearner.retrieve import expand, reciprocal_rank_fusion, search, search_lexical
-from codelearner.retrieve.fuse import DEFAULT_WEIGHTS, RRF_K
+from codelearner.retrieve.fuse import (
+    DEFAULT_WEIGHTS,
+    RESERVED_TEST_SLOTS,
+    RRF_K,
+    TEST_DEMOTION_FACTOR,
+)
 from codelearner.retrieve.lexical import Hit
 
 
@@ -131,6 +136,210 @@ def test_prefer_implementation_demotes_but_does_not_remove_tests():
     assert [h.qualname for h in plain] == ["a_test", "impl"]
     assert [h.qualname for h in demoted] == ["impl", "a_test"]
     assert len(demoted) == 2
+
+
+# --------------------------------------------------------------------------
+# the reserved test slot
+#
+# The demotion above is a multiplicative factor on an RRF score, so what it DOES
+# depends on how many modalities voted for the symbol rather than on the policy: a
+# test with two votes is reordered by it, a test with one vote is erased by it. These
+# tests pin the floor that makes the outcome a property of the ranking instead.
+# --------------------------------------------------------------------------
+
+def _one_vote_test_against(n_impls: int, n_tests: int = 1) -> dict[str, list[Hit]]:
+    """The situation that turns the demotion into a filter.
+
+    Tests ranked FIRST by lexical and absent from dense -- which is what happens
+    whenever tests are outside the embedding corpus, including every index built with
+    no embedder at all. Every implementation they compete with still has two votes, so
+    halving a test's single vote drops it below all of them.
+
+    The first test is always `the_test`, so a caller reserving one slot knows which
+    symbol the floor is supposed to save.
+    """
+    tests = [_hit(1, "the_test", is_test=True)] + [
+        _hit(1 + i, f"other_test{i}", is_test=True) for i in range(1, n_tests)
+    ]
+    return {
+        "lexical": tests + [_hit(10 + i, f"impl{i}") for i in range(n_impls)],
+        "dense": [_hit(10 + i, f"impl{i}") for i in range(n_impls)],
+    }
+
+
+def test_the_factor_alone_erases_a_test_that_lost_a_modality():
+    """The defect the reserve exists for, stated as a test rather than as a comment.
+
+    Measured consequence on the 123-query test-seeking gold: in the no-embedder
+    configuration -- which `search()` supports on purpose -- the factor takes swarm-sync
+    from nDCG@10 0.413 undemoted to 0.023, and hit@10 to 0.041. Not out of the top ten:
+    out of the top FORTY, so the cross-encoder is never shown one either.
+    """
+    lists = _one_vote_test_against(12)
+    erased = reciprocal_rank_fusion(
+        lists, k=10, prefer_implementation=True, reserved_test_slots=0
+    )
+    assert "the_test" not in [h.qualname for h in erased]
+
+
+def test_a_reserved_slot_keeps_a_demoted_test_reachable():
+    lists = _one_vote_test_against(12)
+    fused = reciprocal_rank_fusion(
+        lists, k=10, prefer_implementation=True, reserved_test_slots=1
+    )
+    names = [h.qualname for h in fused]
+    assert "the_test" in names
+    assert len(fused) == 10
+
+
+def test_reserved_tests_enter_at_the_bottom_not_the_top():
+    """Present, not dominant. The demotion still decides everything above them, so a
+    reserve costs the rank-1 answer nothing -- which is why it measured free."""
+    lists = _one_vote_test_against(12, n_tests=2)
+    fused = reciprocal_rank_fusion(
+        lists, k=10, prefer_implementation=True, reserved_test_slots=2
+    )
+    names = [h.qualname for h in fused]
+    assert names[:8] == [f"impl{i}" for i in range(8)]
+    assert [h.is_test for h in fused[-2:]] == [True, True]
+
+
+def test_the_reserve_promotes_the_best_available_test():
+    lists = {
+        "lexical": [
+            _hit(1, "best_test", is_test=True),
+            _hit(2, "worse_test", is_test=True),
+        ]
+        + [_hit(10 + i, f"impl{i}") for i in range(12)],
+        "dense": [_hit(10 + i, f"impl{i}") for i in range(12)],
+    }
+    fused = reciprocal_rank_fusion(
+        lists, k=10, prefer_implementation=True, reserved_test_slots=1
+    )
+    names = [h.qualname for h in fused]
+    assert "best_test" in names
+    assert "worse_test" not in names
+
+
+def test_the_reserve_is_a_floor_and_never_a_quota():
+    """A run where enough tests already survived the demotion is returned untouched.
+
+    This is the whole reason the reserve measured at +0.000 on the gold set: on the
+    shipping index the demotion is already only a nudge, so the floor almost never
+    binds and cannot displace an answer that was ranking on merit.
+    """
+    lists = {
+        "lexical": [_hit(1, "t1", is_test=True), _hit(2, "t2", is_test=True)],
+        "dense": [_hit(1, "t1", is_test=True), _hit(2, "t2", is_test=True)],
+    }
+    with_reserve = reciprocal_rank_fusion(
+        lists, k=10, prefer_implementation=True, reserved_test_slots=2
+    )
+    without = reciprocal_rank_fusion(
+        lists, k=10, prefer_implementation=True, reserved_test_slots=0
+    )
+    assert [h.qualname for h in with_reserve] == [h.qualname for h in without]
+
+
+def test_the_reserve_does_nothing_when_the_demotion_is_off():
+    """Nothing to undo. Reserving slots against a ranking that never penalised tests
+    would be injecting them, not restoring them."""
+    lists = _one_vote_test_against(12)
+    assert [
+        h.qualname
+        for h in reciprocal_rank_fusion(lists, k=10, reserved_test_slots=5)
+    ] == [h.qualname for h in reciprocal_rank_fusion(lists, k=10, reserved_test_slots=0)]
+
+
+def test_the_reserve_never_claims_more_than_half_the_results():
+    """`search(k=1)` asks for the single best answer; a floor that answered it with a
+    test would be a ceiling. Inactive at the k=10 and k=40 the value was measured at."""
+    lists = _one_vote_test_against(12, n_tests=3)
+    top1 = reciprocal_rank_fusion(
+        lists, k=1, prefer_implementation=True, reserved_test_slots=2
+    )
+    assert [h.is_test for h in top1] == [False]
+    top2 = reciprocal_rank_fusion(
+        lists, k=2, prefer_implementation=True, reserved_test_slots=2
+    )
+    assert sum(h.is_test for h in top2) == 1
+    top10 = reciprocal_rank_fusion(
+        lists, k=10, prefer_implementation=True, reserved_test_slots=2
+    )
+    assert sum(h.is_test for h in top10) == 2
+
+
+def test_the_reserve_cannot_promote_a_test_that_does_not_exist():
+    lists = {"lexical": [_hit(10 + i, f"impl{i}") for i in range(12)]}
+    fused = reciprocal_rank_fusion(
+        lists, k=10, prefer_implementation=True, reserved_test_slots=3
+    )
+    assert len(fused) == 10
+    assert not any(h.is_test for h in fused)
+
+
+def test_the_reserve_returns_k_results_without_duplicates():
+    lists = _one_vote_test_against(12)
+    for reserved in range(0, 6):
+        fused = reciprocal_rank_fusion(
+            lists, k=10, prefer_implementation=True, reserved_test_slots=reserved
+        )
+        ids = [h.symbol_id for h in fused]
+        assert len(ids) == 10
+        assert len(set(ids)) == 10
+
+
+def test_reserved_test_slots_default_is_the_measured_value():
+    """REGRESSION on two measured constants, like the graph weight below.
+
+    Both swept on 170 implementation queries AND 123 test-seeking queries (nDCG@10,
+    paired bootstrap, 2000 resamples, seed 20250801), per repo.
+
+    The reserve is 2 because that is the largest floor that is free on the
+    implementation gold: reserve-2-minus-reserve-0 is [+0.000,+0.000] on all three
+    repos, displacing a relevant symbol on 0 of the 106 queries whose top 10 it
+    changes, while test-seeking gains +0.019 [+0.002,+0.038] on swarm-sync. 3 costs
+    -0.005 [-0.011,-0.001]. Raising it should break a test, not quietly cost recall.
+
+    The factor is 0.5 because moving it is a TRADE, not an improvement, and nobody has
+    measured the query mix that would settle it: 0.6 gives back 0.034 implementation
+    nDCG on swarm-sync to buy 0.155 test-seeking nDCG. Changing it should force whoever
+    does so to look at both columns in `fuse.TEST_DEMOTION_FACTOR`.
+    """
+    assert RESERVED_TEST_SLOTS == 2
+    assert TEST_DEMOTION_FACTOR == 0.5
+
+
+def test_search_reserves_slots_without_an_embedder(tmp_path):
+    """End to end on the configuration where the factor is a filter TODAY.
+
+    No embedder means tests get one vote and implementations get one vote too -- but
+    the demotion halves only the test's, so with enough implementations around a test
+    cannot place. This is a supported configuration, not a hypothetical one.
+    """
+    root = _mkrepo(tmp_path / "repo", {
+        "impl.py": "".join(
+            f"def reclaim_lease_{i}():\n    '''reclaim an expired lease'''\n    return {i}\n\n"
+            for i in range(12)
+        ),
+        "tests/test_impl.py": (
+            "def test_reclaim_lease_expired():\n"
+            "    '''reclaim an expired lease'''\n"
+            "    return 1\n"
+        ),
+    })
+    conn, _ = index_repo(root, index_path=tmp_path / "i.db")
+    query = "reclaim an expired lease"
+    without = search(conn, query, k=6, embedder=None, reserved_test_slots=0)
+    with_floor = search(conn, query, k=6, embedder=None, reserved_test_slots=2)
+    assert not any(h.is_test for h in without.hits)
+    assert any(h.is_test for h in with_floor.hits)
+    assert len(with_floor.hits) == len(without.hits)
+    # The floor changes only the tail: everything the demotion ranked above the
+    # reserved slots is untouched.
+    assert [h.qualname for h in with_floor.hits[:4]] == [
+        h.qualname for h in without.hits[:4]
+    ]
 
 
 def test_graph_weight_default_is_the_measured_value():

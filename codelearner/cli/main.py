@@ -23,6 +23,7 @@ from ..index import DEFAULT_MODEL, Embedder
 from .commands import (
     CliError,
     EmbedderFactory,
+    cmd_gpu,
     cmd_index,
     cmd_learn,
     cmd_search,
@@ -179,6 +180,54 @@ def build_parser() -> argparse.ArgumentParser:
     p_learn.add_argument("--quiet", action="store_true", help="no per-symbol progress")
     p_learn.add_argument("--json", action="store_true", help="emit JSON instead of a table")
     p_learn.set_defaults(func=cmd_learn)
+
+    # No --repo and no --index-path, and that absence is the design. "What is holding
+    # my card" is asked from wherever the terminal happens to be, often before an
+    # index exists at all; requiring one would make the diagnostic unavailable in
+    # exactly the situation it diagnoses.
+    p_gpu = sub.add_parser(
+        "gpu",
+        help="what is holding VRAM, and (with --free) getting it back",
+        description=(
+            "Report what holds the GPU. With --free, ask ollama to unload every "
+            "resident model and then VERIFY it happened -- an unload request returns "
+            "success without freeing anything, so the check is the point. Exits 1 if "
+            "a release was attempted and the memory did not come back, and 3 if it "
+            "was declined because something is using the model -- so a script can "
+            "gate a measurement run on it, and can tell 'wait' from 'fetch a human'."
+        ),
+    )
+    p_gpu.add_argument(
+        "--free",
+        action="store_true",
+        help="ask ollama to unload its IDLE models, then poll until the VRAM is "
+        "actually back or --wait expires. Refuses if a model is serving requests; "
+        "never kills a process; prints what to run if the polite path fails",
+    )
+    p_gpu.add_argument(
+        "--force",
+        action="store_true",
+        help="with --free: unload even a model that is currently serving requests. "
+        "This will interrupt whoever is calling it -- only use it when that caller "
+        "is yours",
+    )
+    p_gpu.add_argument(
+        "--no-usage-check",
+        action="store_true",
+        help="skip the second /api/ps sample that tells an idle model from one being "
+        "called. Saves ~1.5s and gives up the only signal that makes freeing safe",
+    )
+    p_gpu.add_argument(
+        "--host", default="http://localhost:11434", help="ollama host (default: localhost)"
+    )
+    p_gpu.add_argument(
+        "--wait",
+        type=float,
+        default=30.0,
+        help="seconds to wait for the VRAM to come back, with --free (default: 30)",
+    )
+    p_gpu.add_argument("--json", action="store_true", help="emit JSON instead of a table")
+    p_gpu.set_defaults(func=cmd_gpu)
 
     return parser
 

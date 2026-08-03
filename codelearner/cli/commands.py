@@ -1,4 +1,4 @@
-"""The four commands: index, search, stats, learn.
+"""The five commands: index, search, stats, learn, gpu.
 
 Every failure here is somebody's Tuesday afternoon, so the rule this module follows
 is that a user must never see a traceback for a condition the tool could have
@@ -29,7 +29,7 @@ from dataclasses import fields as dataclass_fields
 from pathlib import Path
 from typing import Any
 
-from .. import db
+from .. import db, gpu
 from ..assertions import boundaries, store
 from ..index import Embedder, embed_chunks
 from ..ingest import index_repo, iter_python_files
@@ -882,6 +882,14 @@ def cmd_index(args: Any, factory: EmbedderFactory) -> int:
 
     embed_info: dict[str, Any] | None = None
     if args.embed:
+        # Warn BEFORE the model load, not after. The embedder's own CPU-fallback
+        # warning is correct and it is also too late: by the time it fires, a minute
+        # has gone into loading weights onto the wrong device, and it fires from
+        # inside a library into a log rather than at the person who just typed the
+        # command. This says the same thing while there is still a decision to make.
+        # It warns and never acts -- see `gpu.warn_if_contended` for why evicting
+        # someone else's model is not this command's call.
+        gpu.warn_if_contended()
         embedder = build_embedder(factory, args.model)
         try:
             estats = embed_chunks(conn, embedder)
@@ -1475,3 +1483,73 @@ def cmd_learn(args: Any, factory: EmbedderFactory) -> int:
     else:
         print(report.format_report())
     return 0
+
+
+# ---------------------------------------------------------------------------
+# gpu: who holds the card, and getting it back
+# ---------------------------------------------------------------------------
+
+# `--free` exit codes, and the reasoning is that two different readers are watching.
+#
+# A human wants the whole story printed. A script wants one number it can branch on,
+# and the only branch it can act on is "is the card clear or not". So the code follows
+# the OUTCOME and not the effort: ollama down and ollama holding nothing are both 0,
+# because in both cases the thing the caller wanted is true. Only an attempt that was
+# made and did not achieve it is 1 -- which is `main`'s existing meaning for 1, "a
+# condition the tool predicted and explained", and the condition here was predicted in
+# detail.
+#
+# Reporting 0 for "asked politely, nothing happened" is the exact bug `gpu.py` exists
+# to prevent, one layer up.
+#
+# "Resident but in use" gets a code of its OWN rather than sharing either, and that is
+# the third reading of the same question. It is not 0: the card is not clear, and a
+# measurement script that saw success here would start onto a full one. It is not 1
+# either, because 1 and this have opposite remedies -- 1 needs a human with sudo, this
+# resolves itself the moment the other job finishes, so a script can sensibly sleep and
+# retry on 3 while escalating on 1. Collapsing them would force every caller to either
+# wait on a condition that will never clear or escalate one that would have.
+#
+# 3 and not 2: `main` reserves 2 for argparse's "the command line was wrong", and a
+# busy GPU is the world being a certain way, not a typo.
+GPU_EXIT_OK = 0
+GPU_EXIT_NOT_FREED = 1
+GPU_EXIT_IN_USE = 3
+
+
+def cmd_gpu(args: Any, factory: EmbedderFactory) -> int:
+    """Show what holds VRAM; with `--free`, ask for it back and verify.
+
+    The only command in this tool that touches no index. That is deliberate -- the
+    question "why is my run about to be ten times slower" is asked from a directory
+    that may have no index in it, and making the answer depend on one would put it out
+    of reach exactly when it is needed.
+    """
+    del factory  # nothing here loads a model; loading one is what this is about
+
+    # The library defaults to NOT sampling usage, because `warn_if_contended` runs
+    # ahead of every `index --embed` and a second and a half there is a second and a
+    # half on a hot path. The command defaults the other way: a human is waiting, the
+    # cost is below noticing, and the answer decides whether the next thing they are
+    # told to do would destroy someone else's work. Opt-in for callers, opt-out here.
+    gap = None if args.no_usage_check else gpu.USAGE_SAMPLE_GAP_S
+
+    if not args.free:
+        state = gpu.read_state(host=args.host, usage_gap_s=gap)
+        if args.json:
+            print(json.dumps(state.as_json(), indent=2))
+            return GPU_EXIT_OK
+        print(gpu.format_state(state))
+        for line in gpu.next_step(state):
+            print()
+            print(line)
+        return GPU_EXIT_OK
+
+    report = gpu.release(host=args.host, wait_s=args.wait, force=args.force, usage_gap_s=gap)
+    if args.json:
+        print(json.dumps(report.as_json(), indent=2))
+    else:
+        print(gpu.format_release(report))
+    if report.declined:
+        return GPU_EXIT_IN_USE
+    return GPU_EXIT_OK if report.ok else GPU_EXIT_NOT_FREED

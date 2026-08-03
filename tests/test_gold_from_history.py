@@ -1091,3 +1091,30 @@ def test_format_report_prints_the_settings_its_numbers_depend_on(repo):
     assert f"{gh.NULL_DRAWS} cross-commit derangements" in text
     assert f"{gh.BOOTSTRAP_RESAMPLES} resamples" in text
     assert "clustered bootstrap over" in text
+
+
+def test_the_moved_names_are_still_reachable_from_their_old_home():
+    """`SourceView` and its gate left this module; every existing import still works.
+
+    They now live in the leaf `codelearner.sourceview`, because `generate/purpose.py`
+    needs the same seam and importing it from here made `generate` depend on `eval` --
+    the direction `generate/llm.py` states in bold must stay empty, and the edge that
+    closed the `eval -> server -> cli -> generate -> eval` cycle.
+
+    Identity, not just presence. A re-export that had drifted into a second definition
+    would satisfy `hasattr` and then fail the thing that actually matters: `except
+    LeakDetected` in one module must catch what the other raises, and an `isinstance`
+    check against a duplicate `SourceView` would quietly stop matching. This is the
+    compatibility promise made checkable rather than assumed.
+    """
+    from codelearner import eval as eval_pkg
+    from codelearner import sourceview
+
+    for name in ("SourceView", "Generator", "LeakDetected", "assert_view_is_source_only"):
+        canonical = getattr(sourceview, name)
+        assert getattr(gh, name) is canonical, f"{name} drifted from gold_from_history"
+
+    # `Generator` is deliberately not in this list: `eval/__init__` never re-exported
+    # it, and the move is not the moment to widen a package's public surface.
+    for name in ("SourceView", "LeakDetected", "assert_view_is_source_only"):
+        assert getattr(eval_pkg, name) is getattr(sourceview, name), name

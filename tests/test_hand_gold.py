@@ -19,10 +19,17 @@ Two tiers of check, deliberately:
   qualname is missing. Skipping on absence is the only honest option (we cannot
   validate against a database that is not there); passing on absence would defeat the
   point, so the skip reason names the index it wanted.
+* the KIND checks, which apply only to `hand_tests_*.json` -- the test-seeking gold,
+  where the correct answer IS a test symbol. Those files are the only place the
+  evaluation can see test-seeking retrieval at all, and a file that drifted into
+  naming implementations instead would keep passing every check above while quietly
+  ceasing to measure the thing it was written for. So `answer_kind` is asserted
+  against `files.is_test` rather than trusted, on the same skip-when-absent terms.
 """
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from pathlib import Path
 
@@ -54,6 +61,21 @@ REQUIRED_OVERLAP_KEYS = frozenset(
 )
 
 HAND_GOLD_FILES = sorted(GOLD_DIR.glob("hand_*.json"))
+
+#: The TEST-SEEKING subset: gold whose correct answer IS a test symbol. A strict subset
+#: of HAND_GOLD_FILES (the glob above matches them too), so they get every shape and
+#: resolution check in this module and then the extra ones below.
+#:
+#: They exist because the rest of the gold could not see a whole capability die. Across
+#: every other gold file in this repo, 0 of 978 relevant labels is a test symbol, so an
+#: experiment that dropped tests from the embedding corpus scored a clean, significant
+#: nDCG win while taking test-seeking retrieval from 100% to 0%. A metric that improves
+#: while a capability silently disappears is the failure this project exists to prevent.
+TEST_SEEKING_FILES = sorted(GOLD_DIR.glob("hand_tests_*.json"))
+
+#: What `answer_kind` may say. DERIVED from `files.is_test` over `relevant`, never
+#: asserted by hand -- see `test_answer_kind_agrees_with_the_index`.
+KNOWN_ANSWER_KINDS = frozenset({"test_only", "test_and_impl"})
 
 
 def _load(path: Path) -> dict:
@@ -193,3 +215,129 @@ def test_every_relevant_qualname_exists_in_the_index(path: Path):
         f"is an unreachable gold entry that scores a silent zero on every metric: "
         f"{missing}"
     )
+
+
+# ---------------------------------------------------------------------------
+# The test-seeking gold: extra checks the other hand files cannot make.
+#
+# These files are the ONLY place in the evaluation where the right answer is a test.
+# If they quietly drifted into naming implementations instead, they would keep passing
+# every check above -- schema, overlap, resolution -- and stop closing the hole they
+# were written for, which is the same shape of silent loss as an unresolvable qualname.
+# So the property is asserted, against the index rather than against a hand-typed flag.
+# ---------------------------------------------------------------------------
+
+
+def test_there_is_at_least_one_test_seeking_gold_file():
+    """Without this, deleting every `hand_tests_*.json` collects zero tests below.
+
+    Same reason as `test_there_is_at_least_one_hand_gold_file`: a vacuous parametrise is
+    a green run that checked nothing, and here it would also mean the measurement blind
+    spot these files close had silently reopened.
+    """
+    assert TEST_SEEKING_FILES, f"no hand_tests_*.json files under {GOLD_DIR}"
+
+
+def test_test_seeking_files_are_covered_by_the_shared_hand_checks():
+    """The `hand_tests_*` prefix must stay inside the `hand_*` glob.
+
+    Renaming these out of that glob would drop them from every schema, derived-flag and
+    resolution check above while leaving the file present and apparently maintained.
+    """
+    assert set(TEST_SEEKING_FILES) <= set(HAND_GOLD_FILES)
+
+
+@pytest.mark.parametrize("path", TEST_SEEKING_FILES, ids=lambda p: p.stem)
+def test_schema_answer_kind_present(path: Path):
+    """`answer_kind` is required here and meaningless elsewhere, so it is checked here."""
+    gold = _load(path)
+    for i, spec in enumerate(gold["queries"]):
+        where = f"{path.name}[{i}] {spec.get('query', '<no query>')!r}"
+        kind = spec.get("answer_kind")
+        assert kind in KNOWN_ANSWER_KINDS, f"{where}: answer_kind={kind!r} not in {sorted(KNOWN_ANSWER_KINDS)}"
+
+
+@pytest.mark.parametrize("path", TEST_SEEKING_FILES, ids=lambda p: p.stem)
+def test_the_query_text_never_says_the_word_test(path: Path):
+    """The one leak that cannot be reworded away query-by-query.
+
+    Every pytest function is named `test_*`, so the bare token "test" is in the name of
+    every symbol these files can possibly target. A query phrased as "the test for X"
+    therefore names its own answer no matter how the rest of it is worded -- it would be
+    scored as a clean row while being a pure lexical hit. `name_bearing` already catches
+    it via `name_overlap`, but only after the fact; this states the rule.
+    """
+    gold = _load(path)
+    for spec in gold["queries"]:
+        words = re.findall(r"[a-z]+", spec["query"].lower())
+        assert "test" not in words and "tests" not in words, (
+            f"{path.name}: {spec['query']!r} contains the word 'test', which is a name "
+            "token of EVERY possible target in this file"
+        )
+
+
+@pytest.mark.parametrize("path", TEST_SEEKING_FILES, ids=lambda p: p.stem)
+def test_answer_kind_agrees_with_the_index(path: Path):
+    """THE check these files exist for: the answers really are tests.
+
+    `files.is_test` is derived deterministically from path conventions at index time, so
+    it is a tier-0 fact and the right thing to assert against -- not a hand flag, which
+    could be edited to match a drifted label set.
+
+    Two claims, because they fail differently:
+
+    * every query names at least one test symbol. A test-seeking file whose answers had
+      all become implementations would score fine and measure nothing it was written for.
+    * `answer_kind` says which shape each query is. 'test_only' means the whole relevant
+      set is tests; 'test_and_impl' is the honest multi-relevant case -- someone asking
+      "how is this behaviour verified" wants the code AND the case that pins it -- and it
+      must genuinely span both, or it is a mislabelled pure-test row.
+
+    Skips when the index is absent, for the same reason as the resolution check above:
+    those databases live in the target repos, not in this one.
+    """
+    gold = _load(path)
+    index_path = Path(gold["index_path"])
+    if not index_path.exists():
+        pytest.skip(
+            f"{path.name}: index {index_path} is absent (it lives in the target "
+            "repo, not in this one) -- cannot classify qualnames against it"
+        )
+
+    conn = sqlite3.connect(f"file:{index_path}?mode=ro", uri=True)
+    try:
+        is_test = {
+            row[0]: bool(row[1])
+            for row in conn.execute(
+                "SELECT s.qualname, f.is_test FROM symbols s JOIN files f ON f.id = s.file_id"
+            )
+        }
+    finally:
+        conn.close()
+
+    assert any(is_test.values()), (
+        f"{path.name}: {index_path} has no test symbols at all, so this file could not "
+        "be satisfied by any label -- wrong index, or an index built with tests excluded"
+    )
+
+    for spec in gold["queries"]:
+        where = f"{path.name}: {spec['query']!r}"
+        # Unresolvable qualnames are the other test's job; skip them here so a missing
+        # symbol reports as one failure there rather than two unrelated ones.
+        known = [q for q in spec["relevant"] if q in is_test]
+        if len(known) != len(spec["relevant"]):
+            continue
+        tests = [q for q in known if is_test[q]]
+        impls = [q for q in known if not is_test[q]]
+
+        assert tests, (
+            f"{where}: no relevant qualname is a test symbol. This file is the only "
+            "place the evaluation can see test-seeking retrieval; a query whose answers "
+            f"are all implementations quietly stops closing that hole. Got: {known}"
+        )
+        expected = "test_only" if not impls else "test_and_impl"
+        assert spec["answer_kind"] == expected, (
+            f"{where}: answer_kind={spec['answer_kind']!r} but the index says "
+            f"{expected!r} ({len(tests)} test symbol(s), {len(impls)} implementation(s): "
+            f"{impls})"
+        )

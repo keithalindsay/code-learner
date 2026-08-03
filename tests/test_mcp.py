@@ -182,6 +182,14 @@ def test_all_five_tools_are_registered_with_descriptions_and_schemas(served):
         "k",
         "facts_only",
     }
+    # `facts_only` is on BOTH read tools, and on this one it is the copy that can
+    # change an answer -- `get_symbol` returns the only tier-2 content the server has.
+    # Pinned in the schema because an agent chooses a call from the schema, and a flag
+    # the schema does not mention is a flag no agent will ever pass.
+    assert set(by_name["get_symbol"].input_schema["properties"]) == {
+        "qualname",
+        "facts_only",
+    }
     # The span shape has to survive into the schema, or the agent has no way to know
     # a citation needs a hash and guesses the field names.
     span_schema = by_name["submit_assertion"].input_schema["properties"]["evidence_spans"]
@@ -612,6 +620,126 @@ def test_facts_only_excludes_tier_2(served, monkeypatch):
     facts = call(server, "search_code", query=QUERY, facts_only=True)
     assert [h["tier"] for h in facts["hits"]] == ["T0"]
     assert facts["count"] == 1
+
+
+def _submit(server, qualname, claim, **kw):
+    """Store one assertion about `qualname` through the shipped write surface."""
+    good_hash, line_start, line_end = _hash_of(server, qualname)
+    payload = call(
+        server,
+        "submit_assertion",
+        subject_qualname=qualname,
+        claim=claim,
+        evidence_spans=[
+            {
+                "path": qualname.split(".")[0] + ".py",
+                "line_start": line_start,
+                "line_end": line_end,
+                "content_hash": good_hash,
+            }
+        ],
+        **kw,
+    )
+    assert payload["ok"] is True, payload
+    return payload
+
+
+def test_facts_only_on_get_symbol_withholds_the_only_tier_2_the_server_returns(served):
+    """The flag on the surface where tier 2 actually appears.
+
+    `search_code`'s `facts_only` cannot drop anything: no modality retrieves at tier 2,
+    so the filter runs over a list that never contains one (the test above has to
+    inject a T2 hit at the retrieval seam to give it something to do). Stored
+    assertions are the only T2 content this server returns anywhere, and they come
+    back from `get_symbol` -- so this is the call where "parsed facts and resolved
+    names, nothing asserted" is either true or a slogan.
+
+    Delete the `facts_only` branch in `_get_symbol_body` and this fails: the assertion
+    comes straight back.
+    """
+    _, _, server = served
+    _submit(server, "core.frobnicate_widgets", "frobnicates every widget on the tray")
+
+    everything = call(server, "get_symbol", qualname="core.frobnicate_widgets")
+    assert [a["tier"] for a in everything["assertions"]] == ["T2"]
+    assert everything["facts_only"] is False
+    assert everything["assertions_withheld"] == 0
+
+    facts = call(server, "get_symbol", qualname="core.frobnicate_widgets", facts_only=True)
+    assert facts["assertions"] == []
+    assert facts["facts_only"] is True
+    assert facts["assertions_withheld"] == 1
+
+
+def test_facts_only_on_get_symbol_says_that_something_was_withheld(served):
+    """A suppressed claim must not be an invisible one.
+
+    An empty `assertions` list has two very different meanings -- "nothing has been
+    asserted about this symbol" and "you asked not to see what has" -- and a caller
+    that cannot tell them apart will read the first when the second is true. That is
+    the same failure mode as a cached freshness verdict: a confident answer standing
+    in for one nobody looked at.
+    """
+    _, _, server = served
+    _submit(server, "core.frobnicate_widgets", "frobnicates every widget on the tray")
+
+    facts = call(server, "get_symbol", qualname="core.frobnicate_widgets", facts_only=True)
+    assert any("facts_only" in note and "withheld" in note for note in facts["notes"]), (
+        facts["notes"]
+    )
+
+    # A symbol with nothing asserted about it does NOT get the note, so its presence
+    # carries information rather than being boilerplate on every facts-only call.
+    quiet = call(server, "get_symbol", qualname="core._plumbing", facts_only=True)
+    assert quiet["assertions"] == []
+    assert quiet["assertions_withheld"] == 0
+    assert not any("withheld" in note for note in quiet["notes"])
+
+
+def test_facts_only_on_get_symbol_changes_nothing_but_the_assertions(served):
+    """The flag is about tier 2 and only tier 2.
+
+    Everything else `get_symbol` returns is T0 (the symbol, unresolved call sites) or
+    T1 (resolved callers and callees), and a flag that quietly dropped a resolved edge
+    as well would be a second, undocumented filter riding on the first.
+    """
+    _, _, server = served
+    _submit(server, "core.frobnicate_widgets", "frobnicates every widget on the tray")
+
+    everything = call(server, "get_symbol", qualname="core.frobnicate_widgets")
+    facts = call(server, "get_symbol", qualname="core.frobnicate_widgets", facts_only=True)
+
+    for key in ("symbol", "callers", "callees", "unresolved_calls", "duplicate_qualnames"):
+        assert facts[key] == everything[key], key
+
+
+def test_facts_only_still_expires_a_claim_it_is_not_going_to_show_you(served):
+    """Withheld is not unchecked.
+
+    The claims are fetched and re-verified before being dropped, so a facts-only
+    caller gets the same account of the index's state as anyone else -- and an
+    assertion whose evidence has moved is expired on the way past rather than left
+    active for the next caller who does want to read it. Suppressing output must not
+    also suppress the verification, or `facts_only=True` becomes a way to keep a stale
+    claim alive.
+    """
+    repo, index_path, server = served
+    _submit(server, "core.frobnicate_widgets", "frobnicates every widget on the tray")
+
+    (repo / "core.py").write_text(CORE.replace("every widget on the tray", "nothing at all"))
+    facts = call(server, "get_symbol", qualname="core.frobnicate_widgets", facts_only=True)
+    assert facts["assertions"] == []
+    # Nothing was withheld -- it was expired, which is a different fact and the one
+    # that matters. The count separates the two.
+    assert facts["assertions_withheld"] == 0
+
+    conn = db.connect(index_path)
+    try:
+        assert [a.claim for a in store.assertions_with_status(conn, store.STATUS_STALE)] == [
+            "frobnicates every widget on the tray"
+        ]
+    finally:
+        conn.close()
 
 
 def test_search_says_why_dense_is_missing_instead_of_silently_dropping_it(served):

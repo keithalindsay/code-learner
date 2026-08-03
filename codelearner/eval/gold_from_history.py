@@ -173,6 +173,22 @@ from ..ingest.indexer import is_test_path, iter_python_files
 from ..ingest.python_extract import extract_file
 from ..ingest.types import KIND_CLASS, KIND_FUNCTION, KIND_METHOD, Symbol
 
+# `SourceView`, its gate, and the generator signature were written here, because here
+# is where they are used to score a held-out corpus. They now live in the leaf module
+# `codelearner.sourceview` and are re-exported unchanged, so every existing
+# `from ..eval.gold_from_history import SourceView` keeps working.
+#
+# They moved because `generate/purpose.py` needs the same names, and importing them
+# from `eval` made `generate` depend on `eval` -- the one direction `generate/llm.py`
+# says in bold must stay empty, and the edge that closed the
+# `eval -> server -> cli -> generate -> eval` cycle. See `codelearner/sourceview.py`.
+from ..sourceview import (
+    Generator,
+    LeakDetected,
+    SourceView,
+    assert_view_is_source_only,
+)
+
 # Symbol kinds a purpose label is meaningful for. Modules are excluded: a module's
 # introducing commit is by definition the commit that created the file, so every
 # module label is the file-add message and carries no per-symbol information.
@@ -273,65 +289,6 @@ _STOPWORDS = frozenset(
     now new also both each every not
     """.split()
 )
-
-
-class LeakDetected(Exception):
-    """The generator's input contained text from the held-out label.
-
-    Raised rather than logged. A leak does not degrade the measurement, it voids it,
-    and a voided measurement that still prints a number is worse than a crash.
-    """
-
-
-@dataclass(frozen=True)
-class SourceView:
-    """Everything a purpose generator is allowed to see: source, and nothing else.
-
-    Frozen, and built only by `source_view()`, which reads the working tree. There is
-    deliberately no `commit`, no `message`, and no `provenance` field -- the boundary
-    is the absence of a place to put them, not a rule about not looking.
-    """
-
-    qualname: str
-    kind: str
-    path: str
-    line_start: int
-    line_end: int
-    signature: str | None
-    docstring: str | None
-    source: str
-
-    def without_docstring(self) -> SourceView:
-        """The same view with the docstring removed from every field it appears in.
-
-        The harder condition, and the more honest one for a generator that claims to
-        *infer* purpose rather than relay it. On swarm-sync ALL 42 usable-labelled
-        symbols have a docstring, so without this condition every reported number
-        would be measuring how well the author documented their own code.
-        """
-        doc = (self.docstring or "").strip()
-        source = self.source
-        if doc:
-            # Strip the docstring literal, not just the text, so the triple quotes do
-            # not leave the body syntactically odd for a generator that parses it.
-            source = re.sub(
-                r'("""|\'\'\')' + re.escape(doc) + r'\1',
-                '""""""',
-                source,
-                count=1,
-            )
-            if doc in source:
-                source = source.replace(doc, "", 1)
-        return SourceView(
-            qualname=self.qualname,
-            kind=self.kind,
-            path=self.path,
-            line_start=self.line_start,
-            line_end=self.line_end,
-            signature=self.signature,
-            docstring=None,
-            source=source,
-        )
 
 
 @dataclass(frozen=True)
@@ -938,38 +895,6 @@ def assert_no_leak(view: object, secrets: Sequence[str]) -> None:
         )
 
 
-def assert_view_is_source_only(repo: Path, view: SourceView) -> None:
-    """Raise `LeakDetected` unless every byte of `view` came out of the working tree.
-
-    The primary gate, and the reason it is structural rather than a text search:
-    commit prose that a text search would flag can legitimately be in the source (an
-    author quoting their own commit message in a docstring), while a harness bug that
-    put a commit message into the view produces text that is *not in the file* --
-    which is exactly what this checks and what no substring search can distinguish.
-
-    Concretely: `view.source` must be the file's bytes at the symbol's span, and the
-    docstring and signature must occur inside those bytes. There is no field on
-    `SourceView` for anything else, so a view that passes this has no room left to
-    carry a label.
-    """
-    file_path = Path(repo) / view.path
-    try:
-        raw = file_path.read_text(encoding="utf-8", errors="replace")
-    except OSError as exc:
-        raise LeakDetected(f"{view.qualname}: view cannot be checked -- {exc}") from exc
-    if view.source not in raw:
-        raise LeakDetected(
-            f"{view.qualname}: view.source is not a substring of {view.path} "
-            "-- something other than the working tree wrote it"
-        )
-    for field_name in ("docstring", "signature"):
-        value = getattr(view, field_name)
-        if value and " ".join(value.split()) not in " ".join(raw.split()):
-            raise LeakDetected(
-                f"{view.qualname}: view.{field_name} is not present in {view.path}"
-            )
-
-
 def audit_leak_boundary(
     repo: Path, labels: Sequence[MinedLabel]
 ) -> tuple[int, list[str]]:
@@ -1022,9 +947,10 @@ def suspect_tokens(inferred: str, label: str, view: SourceView) -> list[str]:
 
 # --------------------------------------------------------------------------------
 # Generators -- source-only, by construction
+#
+# `Generator = Callable[[SourceView], str]` now lives in `codelearner.sourceview`
+# alongside the view it consumes, and is imported at the top of this module.
 # --------------------------------------------------------------------------------
-
-Generator = Callable[[SourceView], str]
 
 
 def _split_identifier(name: str) -> list[str]:

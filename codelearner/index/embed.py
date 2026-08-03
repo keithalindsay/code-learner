@@ -26,6 +26,15 @@ than left for someone to discover from a retrieval miss.
 
 Measured on swarm-sync: median chunk 770 characters, p95 2,988, max 24,472. Seven of
 1,087 chunks (0.6%) exceed the cap. Small enough to accept, large enough to state.
+
+**`strict_device` is opt-in and stays that way.** The CPU fallback below is correct
+and its reasoning is unchanged: a shared card is shared, and evicting whoever else is
+on it is not this tool's decision to make. But a *measurement* run has a different
+requirement from an indexing run -- an eval that silently becomes ten times slower
+mid-flight, and may then be interrupted, is a corrupted measurement reported under the
+name of a clean one. `strict_device=True` says "CPU is not an acceptable outcome for
+this run" and turns the warning into a `gpu.CpuFallbackRefused`. Nothing changes for
+any caller that does not ask for it.
 """
 from __future__ import annotations
 
@@ -37,6 +46,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from .. import db
+from ..gpu import CpuFallbackRefused, refusal_message
 
 logger = logging.getLogger(__name__)
 
@@ -120,13 +130,23 @@ class Embedder(Protocol):
 
 
 class SentenceTransformerEmbedder:
-    """`Embedder` backed by sentence-transformers, GPU when one is available."""
+    """`Embedder` backed by sentence-transformers, GPU when one is available.
+
+    `strict_device=True` means exactly one thing: this run must not end up on CPU.
+    That covers every route to CPU and not only the interesting one -- a CUDA OOM
+    falling back, but also no torch installed, no CUDA visible, and an explicit
+    `device="cpu"`. All four produce the same corrupted measurement, and a strictness
+    that only caught the OOM would be a strictness that let the commonest case
+    through: an eval launched on a machine where `torch.cuda.is_available()` is False
+    never OOMs at all. It just quietly takes all night.
+    """
 
     def __init__(
         self,
         model_name: str = DEFAULT_MODEL,
         device: str | None = None,
         max_seq_tokens: int = MAX_SEQ_TOKENS,
+        strict_device: bool = False,
     ) -> None:
         from sentence_transformers import SentenceTransformer
 
@@ -139,6 +159,18 @@ class SentenceTransformerEmbedder:
             except ImportError:
                 device = "cpu"
 
+        if strict_device and device == "cpu":
+            # Refused before the model is built, not after: loading a 1.2GB model onto
+            # CPU and then complaining costs a minute to say something knowable now.
+            raise CpuFallbackRefused(
+                refusal_message(
+                    what=f"embedding with {model_name}",
+                    cause="CPU was requested"
+                    if explicit_device
+                    else "no CUDA device is available to torch",
+                )
+            )
+
         try:
             self._model = SentenceTransformer(model_name, device=device)
         except Exception as exc:  # noqa: BLE001 - re-raised unless it is an OOM
@@ -148,7 +180,22 @@ class SentenceTransformerEmbedder:
             # Falling back to CPU is slower but correct; failing outright is
             # neither. Observed in practice: `ollama ps` showing qwen3:14b resident
             # made model load fail with 129MB free.
-            if explicit_device or device != "cuda" or not _is_oom(exc):
+            if device != "cuda" or not _is_oom(exc):
+                raise
+            if strict_device:
+                # Raised as `CpuFallbackRefused` rather than re-raised as the OOM even
+                # though an explicit `device="cuda"` would also have re-raised: a
+                # caller running a strict measurement wants ONE exception type to
+                # catch across the embedder and the reranker, and the OOM is preserved
+                # as `__cause__` for anyone who needs the original.
+                detail = str(exc).split("\n")[0][:160]
+                raise CpuFallbackRefused(
+                    refusal_message(
+                        what=f"embedding with {model_name}",
+                        cause=f"CUDA is out of memory: {detail}",
+                    )
+                ) from exc
+            if explicit_device:
                 raise
             logger.warning(
                 "could not load %s on CUDA (%s); falling back to CPU. Embedding "

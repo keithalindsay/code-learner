@@ -9,11 +9,16 @@ citation -- comes back as a structured object with a `code`, a `message`, and
 whatever the agent needs to fix it. `CliError` does the same job for the human CLI;
 this is the machine-facing half of the same policy.
 
-**Reuse the CLI's derivations rather than re-deriving them.** Tier labels, the
-`facts_only` filter, and the per-hit JSON shape all come from `cli.render`; the
+**One derivation, shared, rather than one per surface.** Tier labels, the
+`facts_only` filter and the per-hit JSON shape come from `codelearner.tier`; the
 assertion gate is `assertions.store.write_assertion` called, not reimplemented. Two
 surfaces that answer "is this a fact or a guess" from two code paths will drift, and
 the drift shows up as a caller who asked for facts and got a resolver's guess.
+
+That module used to be `cli.render`, which made this server import upward into the
+part a person types in order to answer a machine. Sharing the derivation was the
+right instinct; putting it in one of the two surfaces was not, and the tier model --
+the project's central claim -- now sits in a leaf that both import as peers.
 """
 from __future__ import annotations
 
@@ -35,12 +40,16 @@ from ..cli.commands import (
     _scalar,
     resolve_index_path,
 )
-from ..cli.render import facts_only as facts_only_filter
-from ..cli.render import hit_json
 from ..index import Embedder
 from ..ingest.types import content_hash
 from ..onboard import build_reading_path
 from ..retrieve import search, stored_embed_model
+
+# From the leaf `codelearner.tier`, not from `..cli.render`. The tier model is the
+# rule both surfaces answer to; it is not the CLI's, and an MCP tool should not have
+# to import the thing a person types in order to say what tier a result rests on.
+from ..tier import facts_only as facts_only_filter
+from ..tier import hit_json
 
 SERVER_NAME = "codelearner"
 
@@ -949,7 +958,7 @@ ORDER BY s.qualname, e.line
 
 
 def _get_symbol_body(
-    conn: sqlite3.Connection, source: IndexSource, qualname: str
+    conn: sqlite3.Connection, source: IndexSource, qualname: str, facts_only: bool
 ) -> dict[str, Any]:
     rows = conn.execute(
         "SELECT s.id, s.kind, s.name, s.qualname, s.line_start, s.line_end, "
@@ -969,6 +978,28 @@ def _get_symbol_body(
     row = rows[0]
     symbol_id = int(row["id"])
     assertions, notes = _servable_for(conn, source, qualname)
+    # The one place in this server where `facts_only` is not inert. Retrieval has no
+    # tier-2 modality, so the flag on `search_code` filters a list that never contains
+    # anything above T1; the assertions below are the only T2 content the server
+    # returns anywhere, so this is where the promise "parsed facts and resolved names,
+    # nothing asserted" either holds or does not.
+    #
+    # The claims are still fetched and still re-verified before being dropped. That
+    # costs a re-hash of the cited bytes for a caller who asked not to see them, and
+    # it is deliberate: `notes` reports evidence that has moved, and a caller running
+    # facts-only should not get a quieter answer about the state of the index than one
+    # who did not. Suppressed rather than never-looked-for.
+    withheld = 0
+    if facts_only:
+        withheld = len(assertions)
+        assertions = []
+        if withheld:
+            notes = [
+                *notes,
+                f"facts_only: {withheld} tier-2 assertion(s) about this symbol were "
+                "withheld. They exist and they verify; pass facts_only=false to read "
+                "them.",
+            ]
     unresolved = conn.execute(
         "SELECT kind, dst_name, line FROM edges "
         "WHERE src_symbol_id = ? AND dst_symbol_id IS NULL ORDER BY line",
@@ -977,6 +1008,11 @@ def _get_symbol_body(
     return {
         "ok": True,
         "notes": notes,
+        # Echoed, like `search_code` does, so a caller reading a stored response can
+        # tell an empty `assertions` list that means "none exist" from one that means
+        # "you asked not to see them". `assertions_withheld` says which.
+        "facts_only": facts_only,
+        "assertions_withheld": withheld,
         "symbol": {
             "tier": "T0",
             "symbol_id": symbol_id,
@@ -1302,14 +1338,15 @@ def build_server(
         a hit arriving under a modality this server does not recognise is treated as
         an inference and dropped.
 
-        It is NOT a way to keep stored inferences out of your context. The tier-2
-        claims this index holds hang off symbols, and get_symbol returns them with no
-        equivalent switch.
+        It is NOT what keeps stored inferences out of your context, because none
+        arrive here. The tier-2 claims this index holds hang off symbols, so the flag
+        that does that work is get_symbol's `facts_only`, which is the same promise on
+        the surface where tier 2 actually appears.
         """
         return _guard(source, _search_body, query=query, k=k, facts_only=facts_only)
 
     @server.tool()
-    def get_symbol(qualname: str) -> dict[str, Any]:
+    def get_symbol(qualname: str, facts_only: bool = False) -> dict[str, Any]:
         """One symbol, its resolved callers and callees, and any servable assertions.
 
         `qualname` is the dotted path from the module root, e.g.
@@ -1318,13 +1355,19 @@ def build_server(
         each with the confidence its resolver assigned. Unbound call sites are
         returned separately as tier 0.
 
-        `assertions` is the only tier-2 content this server ever returns, and it comes
-        back unfiltered: there is no facts_only here, because a stored claim about
-        this symbol is part of what you asked for. Each is re-verified against the
-        file on disk before it is returned, so one whose evidence has moved is expired
-        rather than served.
+        `assertions` is the only tier-2 content this server ever returns. Each is
+        re-verified against the file on disk before it is returned, so one whose
+        evidence has moved is expired rather than served.
+
+        `facts_only` withholds them -- and this is the surface where that flag changes
+        an answer, unlike search_code's, where no modality retrieves at tier 2. Use it
+        when you want only what was parsed out of the source and what a resolver bound,
+        with nothing another agent asserted. The count of withheld claims comes back as
+        `assertions_withheld` and is repeated in `notes`, so a suppressed claim is
+        never an invisible one: you are told that something exists and that you chose
+        not to read it.
         """
-        return _guard(source, _get_symbol_body, qualname=qualname)
+        return _guard(source, _get_symbol_body, qualname=qualname, facts_only=facts_only)
 
     @server.tool()
     def reading_path(topic: str = "", limit: int = 12) -> dict[str, Any]:

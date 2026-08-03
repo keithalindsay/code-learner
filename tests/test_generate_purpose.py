@@ -29,11 +29,14 @@ hand-built, which keeps every test in this file about the adapter.
 """
 from __future__ import annotations
 
+import ast
 import re
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 
+import codelearner
 from codelearner.eval.gold_from_history import (
     DEFAULT_CONDITIONS,
     LeakDetected,
@@ -681,3 +684,216 @@ def test_build_prompt_differs_between_conditions_only_by_the_docstring_block(rep
     assert DOC_ONLY in sighted_user and DOC_ONLY not in blind_user
     # Nothing announces that a docstring was removed.
     assert "removed" not in blind_user.lower()
+
+
+# --------------------------------------------------------------------------------
+# The import direction, enforced rather than asserted
+#
+# `llm.py:JUDGE_FAMILY` states in bold that `generate` must not import `eval` -- the
+# package that writes claims must not be able to reach into the package that grades
+# them -- and duplicates a constant to avoid opening that edge. The rule was still
+# broken: `purpose.py` imported four names from `eval.gold_from_history`, eagerly and
+# at module level, and that import closed a real four-package cycle,
+# `eval -> server -> cli -> generate -> eval`.
+#
+# A rule enforced only by a comment is a rule that has already been broken once, so
+# the two tests below read the source rather than the runtime. They walk the AST, so
+# they see an import that never executes as readily as one that does -- which matters
+# because three of the four edges in that cycle are function-local and therefore
+# invisible to anything that only inspects `sys.modules`.
+# --------------------------------------------------------------------------------
+
+_PACKAGE_ROOT = Path(codelearner.__file__).resolve().parent
+_REPO_ROOT = _PACKAGE_ROOT.parent
+
+
+def _module_name(path: Path) -> str:
+    rel = path.resolve().relative_to(_REPO_ROOT).with_suffix("")
+    parts = list(rel.parts)
+    if parts[-1] == "__init__":
+        parts = parts[:-1]
+    return ".".join(parts)
+
+
+def _resolve_from(module: str, is_package: bool, node: ast.ImportFrom) -> list[str]:
+    """The absolute module name(s) an `ImportFrom` names, relative levels resolved."""
+    if node.level == 0:
+        return [node.module] if node.module and node.module.startswith("codelearner") else []
+    base = module.split(".") if is_package else module.split(".")[:-1]
+    up = node.level - 1
+    if up:
+        base = base[: len(base) - up] if up <= len(base) else []
+    prefix = ".".join(base)
+    if node.module:
+        return [f"{prefix}.{node.module}" if prefix else node.module]
+    # `from . import x` -- each name may itself be a submodule.
+    return [f"{prefix}.{alias.name}" if prefix else alias.name for alias in node.names]
+
+
+def _source_files() -> list[Path]:
+    return sorted(
+        p for p in _PACKAGE_ROOT.rglob("*.py") if "__pycache__" not in p.parts
+    )
+
+
+def _import_graph(module_level_only: bool) -> dict[str, set[str]]:
+    """Every `codelearner` -> `codelearner` import edge, read out of the source.
+
+    `module_level_only=False` includes function-local imports. It has to, because the
+    cycle this file exists to prevent ran through three of them, and a graph built
+    from top-level statements alone reports a DAG while the cycle is right there.
+    """
+    known = {_module_name(p) for p in _source_files()}
+    graph: dict[str, set[str]] = {name: set() for name in known}
+    for path in _source_files():
+        module = _module_name(path)
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        if module_level_only:
+            nodes: list[ast.AST] = []
+            stack = list(tree.body)
+            while stack:
+                node = stack.pop()
+                if isinstance(node, (ast.Import, ast.ImportFrom)):
+                    nodes.append(node)
+                elif isinstance(node, (ast.If, ast.Try)):
+                    # Still module level: it runs on import.
+                    stack.extend(node.body)
+                    stack.extend(getattr(node, "orelse", []))
+                    stack.extend(getattr(node, "finalbody", []))
+                    for handler in getattr(node, "handlers", []):
+                        stack.extend(handler.body)
+        else:
+            nodes = [
+                n for n in ast.walk(tree) if isinstance(n, (ast.Import, ast.ImportFrom))
+            ]
+        for node in nodes:
+            if isinstance(node, ast.Import):
+                targets = [
+                    a.name for a in node.names if a.name.startswith("codelearner")
+                ]
+            else:
+                targets = _resolve_from(module, path.name == "__init__.py", node)
+            for target in targets:
+                # `from ..retrieve import Hit` names a package, not `retrieve.Hit`.
+                if target not in known and target.rsplit(".", 1)[0] in known:
+                    target = target.rsplit(".", 1)[0]
+                if target in known and target != module:
+                    graph[module].add(target)
+    return graph
+
+
+def _packages(graph: dict[str, set[str]]) -> dict[str, set[str]]:
+    def package_of(module: str) -> str:
+        parts = module.split(".")
+        return ".".join(parts[:2]) if len(parts) > 1 else module
+
+    out: dict[str, set[str]] = {}
+    for source, targets in graph.items():
+        origin = package_of(source)
+        out.setdefault(origin, set())
+        for target in targets:
+            destination = package_of(target)
+            if destination != origin:
+                out[origin].add(destination)
+    return out
+
+
+def _cycles(graph: dict[str, set[str]]) -> list[list[str]]:
+    """Every cycle reachable by DFS, each as the list of nodes it runs through."""
+    found: list[list[str]] = []
+    colour: dict[str, int] = {}
+    stack: list[str] = []
+
+    def visit(node: str) -> None:
+        colour[node] = 1
+        stack.append(node)
+        for nxt in sorted(graph.get(node, ())):
+            if nxt not in graph:
+                continue
+            if colour.get(nxt, 0) == 0:
+                visit(nxt)
+            elif colour[nxt] == 1:
+                found.append(stack[stack.index(nxt) :] + [nxt])
+        stack.pop()
+        colour[node] = 2
+
+    for node in sorted(graph):
+        if colour.get(node, 0) == 0:
+            visit(node)
+    return found
+
+
+def test_generate_imports_nothing_from_eval():
+    """The rule `llm.py` states in bold, checked against the source that must obey it.
+
+    Every import in every module of `codelearner.generate` is resolved to an absolute
+    module name and tested against `codelearner.eval`. Function-local imports count:
+    an edge that only opens when a function runs is still an edge, and hiding one
+    inside a function is the most likely way this rule gets broken next.
+
+    The names `purpose.py` needs -- `SourceView`, `Generator`, `LeakDetected`,
+    `assert_view_is_source_only` -- live in the leaf `codelearner.sourceview`, which
+    imports nothing from `codelearner` at all.
+    """
+    graph = _import_graph(module_level_only=False)
+    offenders = {
+        module: sorted(t for t in targets if t.startswith("codelearner.eval"))
+        for module, targets in graph.items()
+        if module.startswith("codelearner.generate")
+        and any(t.startswith("codelearner.eval") for t in targets)
+    }
+    assert offenders == {}, (
+        "generate must not import eval -- the generator cannot be allowed to reach "
+        f"into the judge's package: {offenders}"
+    )
+
+
+def test_sourceview_is_a_leaf():
+    """The extracted module imports nothing from `codelearner`, so it cannot cycle.
+
+    This is what makes it safe for `eval`, `generate` and anything else to depend on
+    it. Stated as a test because "leaf" is a property of the file, not an intention:
+    one convenience import would end it, and nothing else here would notice.
+    """
+    graph = _import_graph(module_level_only=False)
+    assert graph["codelearner.sourceview"] == set()
+
+
+# `ingest -> chunk -> ingest`: `chunk/chunker.py` imports `ingest.types` at module
+# level, and `ingest/indexer.py` imports `chunk.build_chunks` inside a function. It
+# predates this test, it is owned elsewhere, and grandfathering it explicitly is the
+# point -- an allowlist of one named pair fails the day a second cycle appears, which
+# a blanket xfail would not.
+KNOWN_PACKAGE_CYCLES = {frozenset({"codelearner.ingest", "codelearner.chunk"})}
+
+
+def test_the_package_import_graph_is_a_dag():
+    """No cycles between packages, counting function-local imports.
+
+    The cycle that motivated this was `eval -> server -> cli -> generate -> eval`, and
+    three of its four edges are function-local -- so a check that reads only top-level
+    statements reports a clean DAG while the cycle is fully present. This one reads
+    every import in the file.
+
+    A cycle here is not a crash; Python resolves these fine, and that is exactly why
+    they accumulate. What it costs is the ability to state what depends on what, and
+    in this project one of those statements -- "the generator and the judge are
+    independent" -- is a load-bearing claim about the measurements.
+    """
+    cycles = _cycles(_packages(_import_graph(module_level_only=False)))
+    unexpected = [
+        cycle for cycle in cycles if frozenset(cycle) not in KNOWN_PACKAGE_CYCLES
+    ]
+    assert unexpected == [], "\n".join(" -> ".join(c) for c in unexpected)
+
+
+def test_the_module_import_graph_is_a_dag():
+    """No cycles between individual modules either, at module level.
+
+    Stricter than the package check in one direction and weaker in another, so both
+    are kept: a module-level cycle is the kind that raises `ImportError` at startup
+    rather than merely muddying the architecture, and it deserves its own name in the
+    output when it appears.
+    """
+    cycles = _cycles(_import_graph(module_level_only=True))
+    assert cycles == [], "\n".join(" -> ".join(c) for c in cycles)

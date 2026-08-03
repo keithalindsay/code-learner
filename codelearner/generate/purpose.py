@@ -99,7 +99,12 @@ import re
 from pathlib import Path
 from typing import Protocol
 
-from ..eval.gold_from_history import (
+# From the leaf `codelearner.sourceview`, NOT from `eval`. `generate` importing `eval`
+# is the direction `llm.py:JUDGE_FAMILY` says in bold must stay empty -- the package
+# that writes claims must not be able to reach into the package that grades them --
+# and it also closed the `eval -> server -> cli -> generate -> eval` cycle. Both are
+# now enforced by `tests/test_generate_purpose.py::TestImportDirection`.
+from ..sourceview import (
     Generator,
     LeakDetected,
     SourceView,

@@ -26,13 +26,26 @@ Four pieces, in dependency order:
   nonsense.
 - `purpose` adapts a model to the `SourceView -> str` seam that `eval.gold_from_history`
   already scores, so a real generator can be measured against gold labels mined from
-  commit prose without the scoring code learning that models exist.
+  commit prose without the scoring code learning that models exist. The seam itself --
+  `SourceView`, `Generator`, `LeakDetected`, `assert_view_is_source_only` -- lives in
+  the leaf `codelearner.sourceview`, imported by both packages and owned by neither.
+  It used to live in `eval`, which meant this package imported that one; see below.
 
 **What this package does not do is decide whether its output is any good.** It writes
 claims and counts what happened to them; `eval/` scores them, from a different family of
 model, against evidence and against history. Keeping the two apart is what makes the
 numbers worth reading -- a generator that scored itself would be reporting its own
 opinion of its own work, and a high number would mean nothing at all.
+
+**Nothing in this package may import `eval`.** `llm.py:JUDGE_FAMILY` says so in bold
+and duplicates a constant rather than open the edge, and it was true of every module
+here except `purpose.py`, which imported four names from `eval.gold_from_history` --
+eagerly, at module level -- and in doing so closed a four-package cycle,
+`eval -> server -> cli -> generate -> eval`. Those names moved to
+`codelearner.sourceview`. The rule is now checked by
+`tests/test_generate_purpose.py::test_generate_imports_nothing_from_eval`, which walks
+the AST of every file here, because a rule that lives only in a docstring is a rule
+that has already been broken once.
 """
 
 from .llm import (

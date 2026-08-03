@@ -17,11 +17,13 @@ import sqlite3
 import subprocess
 import sys
 import tomllib
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 import pytest
 
-from codelearner import db
+from codelearner import db, gpu
 from codelearner.assertions import store
 from codelearner.cli import build_parser, main
 from codelearner.cli.commands import INDEX_RELPATH, resolve_index_path
@@ -29,6 +31,26 @@ from codelearner.cli.render import facts_only, tier_of
 from codelearner.retrieve import Hit
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.fixture(autouse=True)
+def _no_network(monkeypatch):
+    """No command driven from this file may reach a daemon. Enforced, not assumed.
+
+    Added when `index --embed` grew a pre-flight VRAM check that reads ollama's
+    `/api/ps`: without this, every `--embed` test in the file would behave one way on
+    the workstation with ollama running and another way everywhere else, which is
+    exactly the machine-dependence `tests/test_faithfulness.py` and
+    `tests/test_generate_llm.py` already refuse. Same fixture, same reason.
+
+    Subprocess-based tests further down are unaffected -- they run in a child
+    interpreter, where this patch does not reach.
+    """
+
+    def _refuse(*args, **kwargs):
+        raise urllib.error.URLError("tests must not reach a daemon")
+
+    monkeypatch.setattr(urllib.request, "urlopen", _refuse)
 
 
 class FakeEmbedder:
@@ -1329,3 +1351,261 @@ def test_a_second_run_skips_what_the_first_admitted(tmp_path, capsys, monkeypatc
     assert first["admitted"] > 0
     assert second["skipped_existing"] == first["admitted"]
     assert second["drafts_requested"] == 0
+
+
+# ---------------------------------------------------------------------------
+# gpu
+# ---------------------------------------------------------------------------
+#
+# The exit code is the contract here. `codelearner gpu --free` is meant to be the
+# line a measurement script puts in front of a long run, and a script can only gate
+# on a number -- so the tests that matter most are the ones asserting 1 comes back
+# when the memory did not.
+
+
+def _fake_release(monkeypatch, report):
+    monkeypatch.setattr(gpu, "release", lambda **kwargs: report)
+    return report
+
+
+def _state(models=(), reachable=True, sampled=True):
+    return gpu.GpuState(
+        ollama_reachable=reachable, models=models, host="http://fake", usage_sampled=sampled
+    )
+
+
+def _held(usage=gpu.USAGE_IDLE, sampled=True):
+    return _state(
+        models=(gpu.LoadedModel("qwen3:14b", 9_756_000_000, usage=usage),), sampled=sampled
+    )
+
+
+def test_gpu_needs_no_index_and_no_repo(tmp_path, capsys, monkeypatch):
+    """The one command in the tool that works from anywhere.
+
+    "Why is my run about to be ten times slower" is asked from whatever directory the
+    terminal is in, often before an index exists at all. Requiring one would put the
+    diagnostic out of reach exactly where it is needed, so this runs from an empty
+    directory and must still answer."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(gpu, "read_state", lambda **kwargs: _held())
+
+    assert main(["gpu"], embedder_factory=fake_factory) == 0
+    out = capsys.readouterr().out
+    assert "qwen3:14b" in out
+    assert "codelearner gpu --free" in out
+
+
+def test_gpu_reports_without_freeing_anything(capsys, monkeypatch):
+    """Reporting is read-only. A command that unloaded models as a side effect of
+    being asked what was loaded would be the eviction `index/embed.py` refuses,
+    performed without being asked for."""
+    called = []
+    monkeypatch.setattr(gpu, "read_state", lambda **kwargs: _held())
+    monkeypatch.setattr(gpu, "release", lambda **kwargs: called.append(1))
+
+    assert main(["gpu"], embedder_factory=fake_factory) == 0
+    assert called == []
+
+
+def test_gpu_free_exits_zero_when_the_memory_came_back(capsys, monkeypatch):
+    _fake_release(
+        monkeypatch,
+        gpu.ReleaseReport(outcome=gpu.OUTCOME_FREED, before=_held(), after=_state()),
+    )
+    assert main(["gpu", "--free"], embedder_factory=fake_factory) == 0
+    assert "FREED" in capsys.readouterr().out
+
+
+def test_gpu_free_exits_NON_ZERO_when_it_could_not_free(capsys, monkeypatch):
+    """The whole reason this command exists.
+
+    Ollama answers the unload request with `done_reason="unload"` and keeps the
+    memory. A `--free` that exited 0 here would let a measurement script proceed onto
+    a card that is still full, which is the run-that-quietly-became-a-different-run
+    this project is built to prevent -- one level up from where `gpu.py` prevents it.
+    """
+    _fake_release(
+        monkeypatch,
+        gpu.ReleaseReport(
+            outcome=gpu.OUTCOME_NOT_FREED,
+            before=_held(),
+            after=_held(),
+            asked=("qwen3:14b",),
+            responses=(("qwen3:14b", "unload"),),
+            reason=gpu.REASON_STILL_LISTED,
+            waited_s=30.0,
+        ),
+    )
+    assert main(["gpu", "--free"], embedder_factory=fake_factory) == 1
+    out = capsys.readouterr().out
+    # Both halves of the truth, not one: what was asked, and what is actually true.
+    assert "done_reason=unload" in out
+    assert "NOT FREED" in out
+    assert "sudo systemctl restart ollama" in out
+
+
+def test_gpu_free_exits_zero_when_there_was_nothing_to_free(capsys, monkeypatch):
+    """Nothing loaded is not a failure to unload. A script gating on this is asking
+    "is the card clear of ollama", and the answer is yes -- exiting 1 would send it
+    off to fix something that is not broken."""
+    for outcome in (gpu.OUTCOME_NOTHING_LOADED, gpu.OUTCOME_NO_OLLAMA):
+        _fake_release(
+            monkeypatch,
+            gpu.ReleaseReport(outcome=outcome, before=_state(reachable=False), after=_state()),
+        )
+        assert main(["gpu", "--free"], embedder_factory=fake_factory) == 0
+        capsys.readouterr()
+
+
+def test_gpu_json_is_parseable_and_carries_the_verdict(capsys, monkeypatch):
+    _fake_release(
+        monkeypatch,
+        gpu.ReleaseReport(
+            outcome=gpu.OUTCOME_NOT_FREED,
+            before=_held(),
+            after=_held(),
+            reason=gpu.REASON_STILL_LISTED,
+        ),
+    )
+    assert main(["gpu", "--free", "--json"], embedder_factory=fake_factory) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["outcome"] == "not-freed"
+    assert payload["advice"]
+
+
+def test_gpu_state_json_names_what_it_could_not_see(capsys, monkeypatch):
+    """`--json` from a machine with no ollama and no driver must still be valid JSON
+    that says so, rather than zeroes a reader would take for measurements."""
+    monkeypatch.setattr(
+        gpu,
+        "read_state",
+        lambda **kwargs: gpu.GpuState(
+            ollama_reachable=False,
+            ollama_detail="could not reach ollama at http://fake (refused)",
+            devices_detail="nvidia-smi could not be run; VRAM totals unknown",
+        ),
+    )
+    assert main(["gpu", "--json"], embedder_factory=fake_factory) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ollama_reachable"] is False
+    assert payload["free_bytes"] is None
+    assert payload["devices"] == []
+
+
+def test_index_embed_warns_before_the_model_load_and_still_indexes(tmp_path, capsys, monkeypatch):
+    """The pre-flight check warns and does not act.
+
+    It must not become a gate: a contended card is a reason to tell the user
+    something, not a reason to refuse to index. And the warning has to arrive BEFORE
+    the embedder is built, because after it the minute of loading has already been
+    spent on the wrong device."""
+    order = []
+    monkeypatch.setattr(gpu, "warn_if_contended", lambda **kwargs: order.append("warned"))
+    repo = _mkrepo(tmp_path / "repo")
+
+    def _factory(name):
+        order.append("embedder")
+        return FakeEmbedder(name)
+
+    assert main(["index", str(repo), "--embed", "--model", "fake/v1"], embedder_factory=_factory) == 0
+    assert order == ["warned", "embedder"]
+    assert "embedded" in capsys.readouterr().out
+
+
+def test_index_embed_survives_a_preflight_check_that_cannot_run(tmp_path, capsys):
+    """With `urlopen` refused by this file's fixture, the check reaches nothing. An
+    indexing run must not care -- a diagnostic that can fail the thing it diagnoses is
+    worse than no diagnostic."""
+    repo = _mkrepo(tmp_path / "repo")
+    assert main(
+        ["index", str(repo), "--embed", "--model", "fake/v1"], embedder_factory=fake_factory
+    ) == 0
+    assert "embedded" in capsys.readouterr().out
+
+
+def test_gpu_does_not_offer_to_free_a_model_that_is_in_use(capsys, monkeypatch):
+    """The bug the coordinator found by using it.
+
+    A resident model whose `expires_at` is advancing is being CALLED, and the first
+    version printed "Free it with `codelearner gpu --free`" at it regardless. Advice
+    that is confidently wrong is worse than none, because it gets followed -- and
+    following this one unloads a model mid-request."""
+    monkeypatch.setattr(gpu, "read_state", lambda **kwargs: _held(usage=gpu.USAGE_IN_USE))
+    assert main(["gpu"], embedder_factory=fake_factory) == 0
+    out = capsys.readouterr().out
+    assert "IN USE" in out
+    assert "Free it with" not in out
+    assert "not a lock" in out  # the sample is stated as a sample
+
+
+def test_gpu_offers_to_free_an_idle_model(capsys, monkeypatch):
+    monkeypatch.setattr(gpu, "read_state", lambda **kwargs: _held(usage=gpu.USAGE_IDLE))
+    assert main(["gpu"], embedder_factory=fake_factory) == 0
+    assert "Free it with `codelearner gpu --free`." in capsys.readouterr().out
+
+
+def test_gpu_samples_usage_by_default_and_no_usage_check_opts_out(capsys, monkeypatch):
+    """Opt-IN for library callers, opt-OUT here. A human waiting at a prompt does not
+    notice a second and a half, and the answer decides whether the next thing they are
+    told to do destroys someone else's work."""
+    seen = []
+    monkeypatch.setattr(
+        gpu, "read_state", lambda **kwargs: (seen.append(kwargs.get("usage_gap_s")), _held())[1]
+    )
+    assert main(["gpu"], embedder_factory=fake_factory) == 0
+    assert main(["gpu", "--no-usage-check"], embedder_factory=fake_factory) == 0
+    assert seen == [gpu.USAGE_SAMPLE_GAP_S, None]
+    capsys.readouterr()
+
+
+def test_gpu_free_exits_3_when_it_declined_because_the_model_is_in_use(capsys, monkeypatch):
+    """A code of its own, and both boundaries are the point.
+
+    Not 0: the card is not clear, and a measurement script reading success here starts
+    onto a full one. Not 1: 1 needs a human with sudo, this clears itself when the
+    other job finishes -- so a script can sleep and retry on 3 while escalating on 1.
+    """
+    _fake_release(
+        monkeypatch,
+        gpu.ReleaseReport(
+            outcome=gpu.OUTCOME_IN_USE,
+            before=_held(usage=gpu.USAGE_IN_USE),
+            after=_held(usage=gpu.USAGE_IN_USE),
+            reason="qwen3:14b is serving requests right now",
+        ),
+    )
+    assert main(["gpu", "--free"], embedder_factory=fake_factory) == 3
+    out = capsys.readouterr().out
+    assert "DECLINED. Nothing was asked to unload." in out
+    assert "--force" in out
+
+
+def test_gpu_free_passes_force_through(capsys, monkeypatch):
+    """`--force` is the only way to unload a model somebody is calling, and it has to
+    be typed."""
+    seen = {}
+    monkeypatch.setattr(
+        gpu,
+        "release",
+        lambda **kwargs: (
+            seen.update(kwargs),
+            gpu.ReleaseReport(outcome=gpu.OUTCOME_FREED, before=_held(), after=_state()),
+        )[1],
+    )
+    assert main(["gpu", "--free"], embedder_factory=fake_factory) == 0
+    assert seen["force"] is False
+    assert main(["gpu", "--free", "--force"], embedder_factory=fake_factory) == 0
+    assert seen["force"] is True
+    capsys.readouterr()
+
+
+def test_gpu_json_carries_the_usage_verdict_for_a_script(capsys, monkeypatch):
+    """A script gating on this needs the verdict as data, not as a sentence to grep."""
+    monkeypatch.setattr(gpu, "read_state", lambda **kwargs: _held(usage=gpu.USAGE_IN_USE))
+    assert main(["gpu", "--json"], embedder_factory=fake_factory) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["safe_to_free"] is False
+    assert payload["usage_sampled"] is True
+    assert payload["models"][0]["usage"] == "in-use"

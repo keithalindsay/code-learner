@@ -70,6 +70,19 @@ model cannot be had -- no torch, no weights, no VRAM, no network -- and `search(
 treats `None` as "skip the stage". An index that cannot rerank still retrieves. This
 mirrors how `index/embed.py` treats a CUDA OOM on model load: degrade to something
 slower or weaker, never raise at the user.
+
+**Except when a caller says it must not be.** `strict_device=True` is the opt-in for a
+measurement run, and it refuses BOTH silent substitutions this file otherwise makes:
+the device (cuda -> cpu) and the model (`zerank` -> `bge`). The second is not scope
+creep, it is the same rule as the first and this module's own docstring already states
+it -- "a measurement attributed to the wrong model is worse than no measurement", and
+every number quoted above was measured with zerank and none with bge. Under strict, a
+`gpu.CpuFallbackRefused` comes back instead of a quietly weaker reranker.
+
+The limit of that is worth naming rather than discovering: strict is about SUBSTITUTION,
+not about presence. A `load_reranker(strict_device=True)` that cannot reach the weights
+at all still returns `None`, because "no reranker" is a visible condition the caller
+chose to allow when it accepted an optional stage.
 """
 from __future__ import annotations
 
@@ -79,6 +92,7 @@ from collections.abc import Sequence
 from dataclasses import replace
 from typing import Protocol
 
+from ..gpu import CpuFallbackRefused, refusal_message
 from .lexical import Hit
 
 logger = logging.getLogger(__name__)
@@ -178,10 +192,21 @@ class CrossEncoderReranker:
         device: str | None = None,
         max_candidates: int = MAX_CANDIDATES,
         warmup: bool = True,
+        strict_device: bool = False,
     ) -> None:
         explicit_device = device is not None
         if device is None:
             device = _default_device()
+
+        if strict_device and device == "cpu":
+            raise CpuFallbackRefused(
+                refusal_message(
+                    what=f"reranking with {model_name}",
+                    cause="CPU was requested"
+                    if explicit_device
+                    else "no CUDA device is available to torch",
+                )
+            )
 
         try:
             self._model = self._build(model_name, device, warmup)
@@ -191,7 +216,17 @@ class CrossEncoderReranker:
             # it. A reranker on CPU is slow; a traceback is useless. Observed exactly
             # as embed.py predicted: `ollama` resident with 9.1GB left 78MB free and
             # the 3.2GB weight allocation failed.
-            if explicit_device or device != "cuda" or not _is_oom(exc):
+            if device != "cuda" or not _is_oom(exc):
+                raise
+            if strict_device:
+                detail = str(exc).split("\n")[0][:160]
+                raise CpuFallbackRefused(
+                    refusal_message(
+                        what=f"reranking with {model_name}",
+                        cause=f"CUDA is out of memory: {detail}",
+                    )
+                ) from exc
+            if explicit_device:
                 raise
             logger.warning(
                 "could not load reranker %s on CUDA (%s); falling back to CPU. "
@@ -294,6 +329,7 @@ def load_reranker(
     model_name: str | None = None,
     conn: sqlite3.Connection | None = None,
     device: str | None = None,
+    strict_device: bool = False,
 ) -> Reranker | None:
     """Build a reranker, or return `None` if none can be had.
 
@@ -308,11 +344,29 @@ def load_reranker(
     `embed_chunks`, which DOES raise when sqlite-vec is missing. The difference is
     that dense retrieval without vectors produces nothing, while retrieval without a
     reranker produces the previous release's results.
+
+    `strict_device=True` narrows that asymmetry rather than removing it. The fallback
+    MODEL is dropped from the candidate list -- a run that asked for the reranker it
+    measured with does not want a different one substituted for it -- and a
+    `CpuFallbackRefused` propagates instead of being swallowed. Any other failure
+    still returns `None`; see the module docstring for why that line is where it is.
     """
-    candidates = [model_name] if model_name else [DEFAULT_MODEL, FALLBACK_MODEL]
+    if model_name:
+        candidates = [model_name]
+    elif strict_device:
+        candidates = [DEFAULT_MODEL]
+    else:
+        candidates = [DEFAULT_MODEL, FALLBACK_MODEL]
     for name in candidates:
         try:
-            return CrossEncoderReranker(name, conn=conn, device=device)
+            return CrossEncoderReranker(
+                name, conn=conn, device=device, strict_device=strict_device
+            )
+        except CpuFallbackRefused:
+            # The one failure a strict caller asked to hear about. Logging it and
+            # returning `None` would be the silent quality loss `strict_device` exists
+            # to make impossible.
+            raise
         except Exception as exc:  # noqa: BLE001 - every failure here is survivable
             logger.warning(
                 "could not load reranker %s (%s: %s); %s",

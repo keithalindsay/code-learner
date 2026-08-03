@@ -15,9 +15,13 @@ so the next attempt is a correction rather than another guess.
 
 Everything else here is a thin projection of code that already exists and is already
 tested: `retrieve.search`, `onboard.build_reading_path`, `assertions.store`, and the
-CLI's own tier derivation in `cli.render`. Deliberately thin. Two surfaces over one
+tier derivation in `codelearner.tier`. Deliberately thin. Two surfaces over one
 index that each derive "which tier is this hit" separately will disagree eventually,
 and nothing will say which one is lying.
+
+That derivation used to be `cli.render`'s, which meant this package reached upward
+into the one a person types in order to answer a machine. Sharing it was right;
+letting one of the two surfaces own it was not.
 """
 
 from .app import SERVER_NAME, ToolError, build_server

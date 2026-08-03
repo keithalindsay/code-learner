@@ -23,7 +23,7 @@ from dataclasses import dataclass
 
 from ..index.embed import Embedder
 from .dense import search_dense
-from .fuse import reciprocal_rank_fusion
+from .fuse import RESERVED_TEST_SLOTS, reciprocal_rank_fusion
 from .graph import expand
 from .lexical import Hit, search_lexical
 from .rerank import Reranker
@@ -52,6 +52,7 @@ def search(
     use_graph: bool = True,
     reranker: Reranker | None = None,
     prefer_implementation: bool = True,
+    reserved_test_slots: int = RESERVED_TEST_SLOTS,
 ) -> SearchResult:
     """Run the hybrid pipeline and return the top `k` symbols.
 
@@ -65,10 +66,28 @@ def search(
     truncating to `k` first would let RRF discard the recall graph expansion bought
     before the cross-encoder ever saw it. See `rerank.py` for the measured effect.
 
-    `prefer_implementation` defaults ON: measured on the swarm-sync gold set it is
-    the largest single quality lever (recall@10 0.635 -> 0.781). Turn it off for
-    questions genuinely about test code. See `fuse.reciprocal_rank_fusion` for the
-    caveat about what that measurement does and does not establish.
+    `prefer_implementation` defaults ON: measured on 170 hand gold queries across three
+    repos it is the largest single quality lever (nDCG@10 +0.181 on swarm-sync). Turn
+    it off for questions genuinely about test code. See `fuse.reciprocal_rank_fusion`
+    for the caveat about what that measurement does and does not establish.
+
+    `reserved_test_slots` is what keeps that demotion from becoming a filter when tests
+    lose a modality's vote -- which is not hypothetical, it is what this function does
+    RIGHT HERE whenever `embedder is None`. See `fuse.RESERVED_TEST_SLOTS`.
+
+    The reserve is applied at whatever depth fusion runs, which means it does two
+    different jobs on the two paths, both of them the right one. With no reranker it
+    guarantees the answer is in the results. With a reranker it guarantees the
+    cross-encoder is SHOWN a test -- and that guarantee is the load-bearing one, because
+    without it a demoted test is absent from all `k * CANDIDATE_MULTIPLIER` candidates
+    (measured: zero tests in the top 40 on 100% of queries once the dense vote is gone),
+    and a stage that reads the query cannot rerank what it was never given.
+
+    What is NOT measured is the reranked end-to-end number -- whether the cross-encoder
+    then promotes a reserved test or buries it. The GPU was contended and the run fell
+    back to unreranked order often enough to make the result meaningless, so it was
+    thrown away rather than reported. The reserve is justified on the fusion numbers
+    alone; how much the reranker adds to or subtracts from that is still open.
     """
     depth = k * CANDIDATE_MULTIPLIER
     per_modality: dict[str, list[Hit]] = {}
@@ -88,6 +107,7 @@ def search(
         per_modality,
         k=depth if reranker is not None else k,
         prefer_implementation=prefer_implementation,
+        reserved_test_slots=reserved_test_slots,
     )
 
     if reranker is not None and fused:
