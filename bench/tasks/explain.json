@@ -1,0 +1,465 @@
+[
+ {
+  "id": "ff-exp-01",
+  "repo": "facefusion",
+  "kind": "explain",
+  "difficulty": "hard",
+  "question": "In facefusion, `resolve_execution_providers` in the background-remover processor overrides the user's configured execution providers and returns CPU under two conditions. One of those conditions applies only on Windows and only for one particular kind of model. What is that condition defending against, and what would a user see if it were removed?",
+  "anchor": {
+   "qualnames": [
+    "facefusion.processors.modules.background_remover.core.resolve_execution_providers"
+   ],
+   "paths": [
+    "facefusion/processors/modules/background_remover/core.py"
+   ]
+  },
+  "ground_truth": {
+   "committer_prose": "prevent directml using incompatible corridor_key model",
+   "rubric": [
+    "Identifies the Windows-only clause as the DirectML execution provider being excluded, not CoreML/macOS.",
+    "States that the exclusion is scoped to one model type -- the corridor_key model -- and not to the background remover as a whole.",
+    "Gives the reason as an incompatibility between that model and DirectML, i.e. DirectML cannot run this model correctly, so the code forces CPU instead of letting it fail or produce wrong output."
+   ]
+  },
+  "provenance": {
+   "commit": "57fcb86b8205f5c601baa8479f74ec7c5363c440",
+   "subject": "3.6.0 (#1062)"
+  },
+  "flags": {
+   "reason_terms": [
+    "directml",
+    "incompatible",
+    "corridor_key"
+   ],
+   "retrievable": false,
+   "inferable_points": [
+    1,
+    2
+   ],
+   "historical_points": [
+    3
+   ]
+  }
+ },
+ {
+  "id": "ff-exp-02",
+  "repo": "facefusion",
+  "kind": "explain",
+  "difficulty": "hard",
+  "question": "facefusion's age-modifier processor re-points its already-created inference session at a different execution provider from inside its per-frame forward pass, on one platform only. Why is that done there rather than when the session is built, and what problem is it working around?",
+  "anchor": {
+   "qualnames": [
+    "facefusion.processors.modules.age_modifier.core.forward"
+   ],
+   "paths": [
+    "facefusion/processors/modules/age_modifier/core.py"
+   ]
+  },
+  "ground_truth": {
+   "committer_prose": "Prevent age modifier from using CoreML",
+   "rubric": [
+    "Identifies the platform as macOS and the provider being escaped as CoreML, with the session switched to CPU.",
+    "States the intent as stopping this specific processor from running under CoreML -- a per-processor exclusion, not a global one, since other processors keep CoreML.",
+    "Recognises that the override is a workaround for CoreML not handling this model, rather than a performance choice."
+   ]
+  },
+  "provenance": {
+   "commit": "13761af0446a8b13a057604676767810d96e31a6",
+   "subject": "3.0.0 (#748)"
+  },
+  "flags": {
+   "reason_terms": [
+    "age modifier",
+    "coreml",
+    "prevent"
+   ],
+   "retrievable": false,
+   "inferable_points": [
+    1
+   ],
+   "historical_points": [
+    2,
+    3
+   ]
+  }
+ },
+ {
+  "id": "ff-exp-03",
+  "repo": "facefusion",
+  "kind": "explain",
+  "difficulty": "hard",
+  "question": "facefusion's list of selectable video encoders contains both `libx264` and `libx264rgb`, and `set_video_quality` treats the two identically. If they take the same quality settings, what does the second one exist for? Name the concrete defect a user hits with the first that the second avoids.",
+  "anchor": {
+   "qualnames": [
+    "facefusion.ffmpeg_builder.set_video_quality",
+    "facefusion.ffmpeg_builder.set_video_preset"
+   ],
+   "paths": [
+    "facefusion/ffmpeg_builder.py"
+   ]
+  },
+  "ground_truth": {
+   "committer_prose": "Avoid RGB to YUV colorshift using libx264rgb",
+   "rubric": [
+    "Says the difference is the encoder's colour space: `libx264rgb` encodes RGB directly while `libx264` converts to YUV.",
+    "Names the defect as a colour shift / colour change introduced by that RGB-to-YUV conversion.",
+    "Frames it as preserving colour fidelity for a lossless or colour-critical output path rather than as a speed or size difference."
+   ]
+  },
+  "provenance": {
+   "commit": "da0da3a4b475e28589e7010804796bd2d6dbce09",
+   "subject": "Next (#945)"
+  },
+  "flags": {
+   "reason_terms": [
+    "colorshift",
+    "libx264rgb"
+   ],
+   "retrievable": false,
+   "inferable_points": [
+    1
+   ],
+   "historical_points": [
+    2,
+    3
+   ]
+  }
+ },
+ {
+  "id": "ff-exp-04",
+  "repo": "facefusion",
+  "kind": "explain",
+  "difficulty": "medium",
+  "question": "`get_static_download_size` in facefusion reads a curl process's output with `reversed(process.stdout.readlines())` and then scans for a header. Why does it read the whole stream and walk it backwards, instead of reading line by line until it finds the header? Give the reason the change was made.",
+  "anchor": {
+   "qualnames": [
+    "facefusion.download.get_static_download_size"
+   ],
+   "paths": [
+    "facefusion/download.py"
+   ]
+  },
+  "ground_truth": {
+   "committer_prose": "Use readlines() over readline() to avoid while",
+   "rubric": [
+    "States that the previous form read one line at a time inside a loop, and the change replaced that loop.",
+    "Gives the motivation as removing the `while` loop / unbounded read -- a loop that has to decide when to stop and can hang or spin on a stream that never ends.",
+    "Notes that reversing matters because the header of interest is at the END of the accumulated output (the last response's headers), so a forward scan would find a stale or redirected value."
+   ]
+  },
+  "provenance": {
+   "commit": "7a09479fb54c3caeb3b8c3a58aee94224bdaf5b6",
+   "subject": "3.1.0 (#839)"
+  },
+  "flags": {
+   "reason_terms": [
+    "avoid",
+    "readline()"
+   ],
+   "retrievable": false,
+   "inferable_points": [
+    1,
+    3
+   ],
+   "historical_points": [
+    2
+   ]
+  }
+ },
+ {
+  "id": "ff-exp-05",
+  "repo": "facefusion",
+  "kind": "explain",
+  "difficulty": "medium",
+  "question": "`fix_video_encoder` in facefusion silently replaces the user's chosen video encoder for certain container formats. For the `webm` container it overrides whatever the user picked, unconditionally. Why is that one unconditional while the others are conditional?",
+  "anchor": {
+   "qualnames": [
+    "facefusion.ffmpeg.fix_video_encoder"
+   ],
+   "paths": [
+    "facefusion/ffmpeg.py"
+   ]
+  },
+  "ground_truth": {
+   "committer_prose": "Simple fix to enforce vp9 for webm",
+   "rubric": [
+    "States that webm is forced to `libvpx-vp9` regardless of the user's selection.",
+    "Gives the reason as a container/codec constraint: webm only admits the VP-family codec, so any other encoder produces an unplayable or unwritable file -- unlike the other branches, which are repairs of specific bad combinations.",
+    "Recognises that this is enforcement of a format rule rather than a preference, which is why there is no condition on the incoming encoder."
+   ]
+  },
+  "provenance": {
+   "commit": "7a09479fb54c3caeb3b8c3a58aee94224bdaf5b6",
+   "subject": "3.1.0 (#839)"
+  },
+  "flags": {
+   "reason_terms": [
+    "enforce",
+    "container",
+    "webm"
+   ],
+   "retrievable": false,
+   "inferable_points": [
+    1
+   ],
+   "historical_points": [
+    2,
+    3
+   ]
+  }
+ },
+ {
+  "id": "ff-exp-06",
+  "repo": "facefusion",
+  "kind": "explain",
+  "difficulty": "hard",
+  "question": "facefusion has both `thread_semaphore` and `conditional_thread_semaphore`. The conditional one returns a real semaphore for three specific execution providers and a no-op context for everything else. What do those three providers have in common that makes serialisation necessary, and what is the cost of always returning the real semaphore instead?",
+  "anchor": {
+   "qualnames": [
+    "facefusion.thread_helper.conditional_thread_semaphore",
+    "facefusion.thread_helper.thread_semaphore"
+   ],
+   "paths": [
+    "facefusion/thread_helper.py"
+   ]
+  },
+  "ground_truth": {
+   "committer_prose": "Lower thread and queue count to avoid false usage",
+   "rubric": [
+    "Identifies the three as DirectML (Windows), MIGraphX and ROCm (Linux) -- i.e. the non-CUDA GPU backends.",
+    "States that those backends are not safe under concurrent inference from multiple threads, so the semaphore serialises calls into them to avoid corruption, crashes or memory blow-up.",
+    "States the cost of making it unconditional: it would serialise inference on backends that are thread-safe (CUDA, CPU, CoreML), throwing away the parallelism the thread count exists to provide."
+   ]
+  },
+  "provenance": {
+   "commit": "13761af0446a8b13a057604676767810d96e31a6",
+   "subject": "3.0.0 (#748)"
+  },
+  "flags": {
+   "reason_terms": [
+    "thread",
+    "queue",
+    "false usage"
+   ],
+   "retrievable": false,
+   "inferable_points": [
+    1,
+    3
+   ],
+   "historical_points": [
+    2
+   ]
+  }
+ },
+ {
+  "id": "ff-exp-07",
+  "repo": "facefusion",
+  "kind": "explain",
+  "difficulty": "medium",
+  "question": "facefusion's download layer has `ping_static_url` alongside `conditional_download`, and both are memoised. What failure mode does pinging the remote first exist to stop, and why does the download path need it rather than just letting the transfer fail?",
+  "anchor": {
+   "qualnames": [
+    "facefusion.download.ping_static_url",
+    "facefusion.download.conditional_download"
+   ],
+   "paths": [
+    "facefusion/download.py"
+   ]
+  },
+  "ground_truth": {
+   "committer_prose": "Prevent download loop when remote is unreachable",
+   "rubric": [
+    "Names the failure mode as a loop -- the download path retrying or spinning indefinitely rather than failing once.",
+    "Connects it to the remote being unreachable/down, as distinct from the file being absent or corrupt.",
+    "Explains that the size-driven progress loop cannot terminate on its own when the remote never answers, so reachability has to be settled before entering it."
+   ]
+  },
+  "provenance": {
+   "commit": "6e67d7bff694d544c046915e91e0b8e2c2ec10ba",
+   "subject": "2.4.1 (#442)"
+  },
+  "flags": {
+   "reason_terms": [
+    "download loop",
+    "unreachable"
+   ],
+   "retrievable": false,
+   "inferable_points": [
+    3
+   ],
+   "historical_points": [
+    1,
+    2
+   ]
+  }
+ },
+ {
+  "id": "ff-exp-08",
+  "repo": "facefusion",
+  "kind": "explain",
+  "difficulty": "hard",
+  "question": "`read_static_image` in facefusion is memoised, and several processor modules call `read_static_image.cache_clear()` at particular points in their lifecycle rather than letting the cache live for the whole run. What goes wrong if those `cache_clear()` calls are removed?",
+  "anchor": {
+   "qualnames": [
+    "facefusion.vision.read_static_image"
+   ],
+   "paths": [
+    "facefusion/vision.py"
+   ]
+  },
+  "ground_truth": {
+   "committer_prose": "Reduce caching to avoid RAM explosion",
+   "rubric": [
+    "States the failure as unbounded memory growth -- decoded frames accumulating in the cache across a run.",
+    "Connects it to the size of the cached objects: whole decoded images/frames, not small values, so a bounded entry count is still a large amount of RAM.",
+    "Identifies the clearing points as the boundaries where the cached images can no longer be needed (end of a processor's run / source change), which is what makes clearing safe rather than merely cheaper."
+   ]
+  },
+  "provenance": {
+   "commit": "8bf91705770c51ddab10a56991977445e08ea927",
+   "subject": "3.5.0 (#977)"
+  },
+  "flags": {
+   "reason_terms": [
+    "caching",
+    "ram explosion"
+   ],
+   "retrievable": false,
+   "inferable_points": [
+    1,
+    3
+   ],
+   "historical_points": [
+    2
+   ]
+  }
+ },
+ {
+  "id": "ff-exp-09",
+  "repo": "facefusion",
+  "kind": "explain",
+  "difficulty": "hard",
+  "question": "facefusion's exit helper offers three ways out: `fatal_exit` calls `os._exit`, `hard_exit` calls `sys.exit`, and `graceful_exit` ignores SIGINT before doing anything else. Why does `graceful_exit` install `SIG_IGN` as its first action, and why is `hard_exit` deliberately the plain one with no signal handling of its own?",
+  "anchor": {
+   "qualnames": [
+    "facefusion.exit_helper.graceful_exit",
+    "facefusion.exit_helper.hard_exit",
+    "facefusion.exit_helper.fatal_exit"
+   ],
+   "paths": [
+    "facefusion/exit_helper.py"
+   ]
+  },
+  "ground_truth": {
+   "committer_prose": "Remove signal on hard_exit() to prevent exceptions",
+   "rubric": [
+    "States that `graceful_exit` ignores SIGINT so that a SECOND interrupt during the shutdown wait cannot interrupt the cleanup -- it polls `is_processing` and clears the temp directory, and both must complete.",
+    "States that signal handling was REMOVED from `hard_exit`, and that its presence there caused exceptions.",
+    "Explains why: `hard_exit` raises SystemExit via `sys.exit`, so touching signal state there fires during unwind or from a non-main thread, where `signal.signal` is an error -- whereas `fatal_exit`'s `os._exit` skips unwinding entirely."
+   ]
+  },
+  "provenance": {
+   "commit": "7a09479fb54c3caeb3b8c3a58aee94224bdaf5b6",
+   "subject": "3.1.0 (#839)"
+  },
+  "flags": {
+   "reason_terms": [
+    "signal",
+    "hard_exit",
+    "prevent exceptions"
+   ],
+   "retrievable": false,
+   "inferable_points": [
+    1
+   ],
+   "historical_points": [
+    2,
+    3
+   ]
+  }
+ },
+ {
+  "id": "ff-exp-10",
+  "repo": "facefusion",
+  "kind": "explain",
+  "difficulty": "medium",
+  "question": "facefusion's frame-colorizer processor takes a thread semaphore around its inference call while some other processors do not. What was observed that made this processor need one?",
+  "anchor": {
+   "qualnames": [
+    "facefusion.thread_helper.thread_semaphore"
+   ],
+   "paths": [
+    "facefusion/thread_helper.py"
+   ]
+  },
+  "ground_truth": {
+   "committer_prose": "Use semaphore to prevent frame colorizer memory issues",
+   "rubric": [
+    "Names the observed symptom as a MEMORY problem, not a correctness or crash problem.",
+    "Attributes it to concurrent inference calls from multiple worker threads into the colorizer's session at once.",
+    "Explains the fix as serialising those calls so only one inference is in flight, capping peak allocation, rather than reducing the model or batch size."
+   ]
+  },
+  "provenance": {
+   "commit": "4ccf4c24c7404247b904b7aedb0f5f47487ac600",
+   "subject": "Next (#477)"
+  },
+  "flags": {
+   "reason_terms": [
+    "semaphore",
+    "frame colorizer",
+    "memory issues"
+   ],
+   "retrievable": false,
+   "inferable_points": [
+    3
+   ],
+   "historical_points": [
+    1,
+    2
+   ]
+  }
+ },
+ {
+  "id": "kb-exp-01",
+  "repo": "kalshi-bot",
+  "kind": "explain",
+  "difficulty": "hard",
+  "question": "`PaperTrader.check_settlements` treats a market as done when its status is any of three values. One of those three was added after the fact, and ten open positions sat unsettled for days before it was. Which value was missing, and why did its absence produce silently stuck positions rather than an error?",
+  "anchor": {
+   "qualnames": [
+    "src.paper_trading.paper_trader.PaperTrader.check_settlements"
+   ],
+   "paths": [
+    "src/paper_trading/paper_trader.py"
+   ]
+  },
+  "ground_truth": {
+   "committer_prose": "Root cause: check_settlements() only checked status 'settled'|'closed' but Kalshi returns 'finalized'.",
+   "rubric": [
+    "Identifies the accepted-status set as the load-bearing thing, and 'finalized' as the value that was missing.",
+    "States that Kalshi's API actually reports the terminal state as 'finalized', so the two statuses the code did accept never appeared for those markets.",
+    "Explains the silence: a status that does not match simply falls through the loop, so the position stays open and is retried forever -- there is no else branch and nothing to raise, which is why it looked like markets that had not settled yet."
+   ]
+  },
+  "provenance": {
+   "commit": "35dc37d591b582337cce164a2ffc88722592adeb",
+   "subject": "fix: repair trading pipeline -- unbreak main.py imports, add paper trading dashboard, settle stuck positions"
+  },
+  "flags": {
+   "reason_terms": [
+    "only checked status",
+    "finalized"
+   ],
+   "retrievable": false,
+   "inferable_points": [
+    3
+   ],
+   "historical_points": [
+    1,
+    2
+   ],
+   "note": "The three accepted values are visible in the source; which one was added late, and what it cost, is not."
+  }
+ }
+]

@@ -1,0 +1,130 @@
+{
+  "run_id": "ss-pheromone-decay__code-learner__r1__87b77e7f",
+  "task_id": "ss-pheromone-decay",
+  "arm": "code-learner",
+  "repo": "/home/keith/projects/swarm-sync",
+  "model": "sonnet",
+  "rep": 1,
+  "arm_position": 0,
+  "started_at": 1785800831.2409468,
+  "prompt": "In this repository, what is the purpose of the pheromone table and how does a pheromone stop being relevant over time? Name the functions involved and cite file:line. Answer in under 200 words.",
+  "ground_truth": "PLACEHOLDER - variance probe only, not a judged task",
+  "ok": true,
+  "error": null,
+  "answer": "The `pheromone` table (`swarmsync/blackboard/models.py:173-182`, schema at `swarmsync/blackboard/db.py:74`) records a decaying activity signal \u2014 `(parcel_id, agent_id, kind) \u2192 strength` \u2014 so agents can sense which parcels other agents are actively touching, per DESIGN.md \u00a74.1's \"decaying pheromone trails.\"\n\nRelevance decays via exponential decay, not deletion:\n\n- **`drop_pheromone`** (`swarmsync/blackboard/events.py:273-308`) upserts a signal on the `(parcel_id, agent_id, kind)` primary key when an agent acts on a parcel.\n- **`decay_pheromone`** (`swarmsync/blackboard/events.py:311-354`) periodically applies `strength *= 0.5 ** (elapsed / half_life)`, floored at 0, in a single atomic `UPDATE` (chosen to avoid a read-modify-write race with concurrent drops \u2014 see the C15 comment at line 324).\n- **`reaper.decay_once`** (`swarmsync/coordinator/reaper.py:160-174`) is the thin wrapper that invokes `decay_pheromone` on a schedule inside **`reaper.run`** (`swarmsync/coordinator/reaper.py:177-278`).\n\nSo a pheromone never gets a hard expiry \u2014 it just halves in strength every `half_life` seconds until it asymptotically approaches 0, making stale activity naturally fade from relevance.",
+  "tools_offered": [
+    "Bash",
+    "CronCreate",
+    "CronDelete",
+    "CronList",
+    "DesignSync",
+    "EnterWorktree",
+    "ExitWorktree",
+    "ListMcpResourcesTool",
+    "LSP",
+    "Read",
+    "ReadMcpResourceDirTool",
+    "ReadMcpResourceTool",
+    "ReportFindings",
+    "ScheduleWakeup",
+    "SendMessage",
+    "Skill",
+    "TaskCreate",
+    "TaskGet",
+    "TaskList",
+    "TaskOutput",
+    "TaskStop",
+    "TaskUpdate",
+    "ToolSearch",
+    "Workflow",
+    "mcp__codelearner__get_symbol",
+    "mcp__codelearner__index_stats",
+    "mcp__codelearner__reading_path",
+    "mcp__codelearner__search_code",
+    "mcp__codelearner__submit_assertion"
+  ],
+  "mcp_servers": [
+    {
+      "name": "codelearner",
+      "status": "connected"
+    }
+  ],
+  "mcp_status": {
+    "codelearner": "connected"
+  },
+  "index_offered": true,
+  "index_first_class": true,
+  "tool_calls": [
+    {
+      "name": "ToolSearch",
+      "input": {
+        "query": "select:mcp__codelearner__search_code,mcp__codelearner__get_symbol",
+        "max_results": 5
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "grep -rn \"pheromone\" --include=*.py -il | head -30"
+      }
+    },
+    {
+      "name": "mcp__codelearner__search_code",
+      "input": {
+        "query": "pheromone decay expire relevance",
+        "k": 10
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "grep -n \"pheromone\" swarmsync/blackboard/models.py swarmsync/blackboard/db.py swarmsync/coordinator/reaper.py | head -60"
+      }
+    },
+    {
+      "name": "Read",
+      "input": {
+        "file_path": "/home/keith/projects/swarm-sync/swarmsync/blackboard/models.py",
+        "offset": 160,
+        "limit": 45
+      }
+    },
+    {
+      "name": "Read",
+      "input": {
+        "file_path": "/home/keith/projects/swarm-sync/swarmsync/blackboard/events.py",
+        "offset": 273,
+        "limit": 82
+      }
+    }
+  ],
+  "tool_call_counts": {
+    "ToolSearch": 1,
+    "Bash": 2,
+    "mcp__codelearner__search_code": 1,
+    "Read": 2
+  },
+  "n_tool_calls": 6,
+  "index_tool_calls": 1,
+  "toolsearch_calls": 1,
+  "index_tool_errors": 0,
+  "input_tokens": 8,
+  "output_tokens": 1571,
+  "cache_creation_input_tokens": 7241,
+  "cache_read_input_tokens": 137715,
+  "total_tokens": 146535,
+  "total_cost_usd": 0.1083495,
+  "wall_s": 30.371593951014802,
+  "duration_api_ms": 19318,
+  "num_turns": 7,
+  "session_id": "cae17fd7-c23a-46ba-b88a-80889d27a873",
+  "stop_reason": "end_turn",
+  "transcript_path": "bench/results/fastcheck/ss-pheromone-decay__code-learner__r1__87b77e7f.stream.jsonl",
+  "exit_code": 0,
+  "extra_config": {
+    "mcp_config": "/home/keith/projects/code-learner/bench/mcp/code-learner-fast.json",
+    "defer_parity": false,
+    "nudge_discovery": false,
+    "fast_handshake": true
+  }
+}

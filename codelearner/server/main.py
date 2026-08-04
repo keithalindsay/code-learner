@@ -14,7 +14,6 @@ import argparse
 import sys
 from pathlib import Path
 
-from ..cli.commands import resolve_index_path
 from .app import build_server
 
 EXIT_OK = 0
@@ -54,6 +53,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Imported here rather than at module scope so that `import codelearner.server`
+    # does not drag the whole `codelearner.cli` package -- see the import note in
+    # `app.py`. It buys the SERVER nothing today, because `main()` needs the path
+    # helper before it can build anything and so pays for `cli/` either way; the
+    # measured 25 ms only comes back if `resolve_index_path` and `INDEX_RELPATH` move
+    # out of `cli/` into a leaf, which is a change in a file this server does not own.
+    from ..cli.commands import resolve_index_path
+
     args = build_parser().parse_args(sys.argv[1:] if argv is None else argv)
     index_path = resolve_index_path(args.repo.expanduser().resolve(), args.index_path)
     server = build_server(index_path)

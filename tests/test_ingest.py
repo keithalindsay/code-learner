@@ -447,6 +447,49 @@ def test_unique_basename_still_binds_a_bare_name(tmp_path):
     assert row["resolver"] == R_UNIQUE
 
 
+def test_unique_basename_never_binds_a_bare_name_to_a_method(tmp_path):
+    """REGRESSION. `range(...)` must NOT bind to the only symbol in the repo that
+    happens to be a method named `range`. A bare name cannot reach a method -- that
+    needs a receiver, and the statically knowable ones (`self`/`cls`) are handled by
+    an earlier strategy. Measured on kalshi-bot, 366 `range(...)` calls bound to
+    `KalshiCandle.range` at confidence 0.75 purely because Python's builtin is not
+    in the symbol table; on swarm-sync 15 `json()` calls bound to a nested test
+    helper's method. All 381 were wrong.
+
+    Deleting the `kind_of[sid] != "method"` guard in resolve._resolve_one makes this
+    fail."""
+    repo = _mkrepo(tmp_path / "r", {
+        "candles.py": "class Candle:\n    def range(self):\n        return 1\n",
+        "loop.py": "def go(n):\n    return [i for i in range(n)]\n",
+    })
+    conn, _ = index_repo(repo, index_path=tmp_path / "i.db")
+    row = conn.execute(
+        "SELECT dst_symbol_id, tier, resolver FROM edges WHERE dst_name = 'range'"
+    ).fetchone()
+    assert row is not None, "the call site itself must still be recorded"
+    assert row["dst_symbol_id"] is None, "must abstain, not guess"
+    assert row["tier"] == TIER_FACT
+    assert row["resolver"] is None
+
+
+def test_unique_basename_still_binds_a_method_called_inside_its_own_class(tmp_path):
+    """The complement: a bare name IS a method reference inside the class body,
+    where the method is in scope during execution. Restricting the strategy must not
+    cost that binding."""
+    repo = _mkrepo(tmp_path / "r", {
+        "c.py": "class C:\n    def only_meth():\n        return 1\n\n    x = only_meth()\n",
+        "d.py": "def unrelated():\n    return 2\n",
+    })
+    conn, _ = index_repo(repo, index_path=tmp_path / "i.db")
+    row = conn.execute(
+        "SELECT e.resolver, s.qualname FROM edges e "
+        "JOIN symbols s ON s.id = e.dst_symbol_id WHERE e.dst_name = 'only_meth'"
+    ).fetchone()
+    assert row is not None, "a bare call inside the class body must still bind"
+    assert row["qualname"] == "c.C.only_meth"
+    assert row["resolver"] == R_UNIQUE
+
+
 def test_index_skips_agent_worktree_copies(tmp_path):
     """REGRESSION. `.claude/worktrees/` holds near-complete copies of the repo.
     Indexing them duplicated every symbol and produced cross-copy edges -- a call
@@ -595,3 +638,30 @@ def test_resolve_is_idempotent(tmp_path):
     stats = resolve_all(conn)
     second = conn.execute("SELECT count(*) c FROM edges WHERE dst_symbol_id IS NOT NULL").fetchone()["c"]
     assert first == second == stats.resolved
+
+
+def test_a_from_import_does_not_emit_a_phantom_edge_naming_its_own_module(tmp_path):
+    """REGRESSION. `child_by_field_name` returns a fresh wrapper on every call, so the
+    identity test that was meant to drop the module node from its own import statement
+    never matched. `from swarmsync import leases` emitted the real edge AND a phantom
+    one named `swarmsync.swarmsync`.
+
+    It mattered because those phantoms land in the resolution denominator whenever the
+    basename matches a real module, so the rate was scored against references that do
+    not appear anywhere in the source. Measured at 211, 942 and 754 phantom in-repo
+    references on the three benchmark repos -- worth 3.5, 2.3 and 7.7 points of
+    apparent coverage that was never real either way."""
+    root = tmp_path / "repo"
+    (root / "pkg").mkdir(parents=True)
+    (root / "pkg" / "__init__.py").write_text("")
+    (root / "pkg" / "leases.py").write_text("def acquire():\n    return True\n")
+    (root / "use.py").write_text("from pkg import leases\nfrom pkg.leases import acquire\n")
+
+    conn, _ = index_repo(root, index_path=tmp_path / "index.db")
+    names = [r["dst_name"] for r in conn.execute("SELECT dst_name FROM edges")]
+
+    assert not any(n.split(".")[-1] == n.split(".")[0] and "." in n for n in names), (
+        f"a module was named as its own import target: {names}"
+    )
+    assert "pkg.pkg" not in names
+    assert "pkg.leases.pkg" not in names

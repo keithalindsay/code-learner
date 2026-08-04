@@ -1,0 +1,102 @@
+{
+  "run_id": "ss-lease-acquire__codegraph__r2__2f67cc8f",
+  "task_id": "ss-lease-acquire",
+  "arm": "codegraph",
+  "repo": "/home/keith/projects/swarm-sync",
+  "model": "sonnet",
+  "rep": 2,
+  "arm_position": 1,
+  "started_at": 1785799995.885514,
+  "prompt": "In this repository, explain how a lease is acquired: which function performs the compare-and-swap, what happens when the parcel is already leased by another agent, and how the TTL is set. Cite the file:line for each claim. Answer in under 200 words.",
+  "ground_truth": "PLACEHOLDER - variance probe only, not a judged task",
+  "ok": true,
+  "error": null,
+  "answer": "Lease acquisition happens in `acquire()` at `swarmsync/blackboard/leases.py:187-430`.\n\n**Compare-and-swap:** After a self-refresh check, the actual grant is a single atomic SQL statement \u2014 an `INSERT ... SELECT ... WHERE NOT EXISTS (...)` (`swarmsync/blackboard/leases.py:332-356`). The `NOT EXISTS` subquery is the CAS condition: it checks no other active, unexpired conflicting lease exists on the parcel. `RETURNING id` (not `cur.lastrowid`) reads the new row's id off this statement's own result set, avoiding a same-connection race noted in the comment at leases.py:296-308.\n\n**Conflict (already leased):** The conflict predicate is `l.status='active' AND l.ttl_expires_at > NOW AND (either mode is write/exclusive) AND NOT same agent+mode` (leases.py:339-346). If the INSERT's WHERE clause is false, no row returns; the function emits `lease_denied` and looks up the best-explaining holder (write/exclusive first, then soonest-to-expire) to return in `LeaseResult.holder`/`holder_ttl_expires_at` (leases.py:390-429).\n\n**TTL:** Caller passes `ttl` (default `DEFAULT_TTL_SECONDS = 30.0`, leases.py:85/192); expiry is stamped as `{_NOW_SQL} + :ttl` using SQLite's own clock, not Python's, to avoid minting an already-expired lease under lock contention (leases.py:321, comment at 310-321). Hook callers get their TTL from `_hook_lease_ttl()` (`swarmsync/hooks/adapter.py:180-222`), sourced from `SWARMSYNC_LEASE_TTL` via `config.lease_ttl()`.",
+  "tools_offered": [
+    "Bash",
+    "CronCreate",
+    "CronDelete",
+    "CronList",
+    "DesignSync",
+    "EnterWorktree",
+    "ExitWorktree",
+    "LSP",
+    "Read",
+    "ReportFindings",
+    "ScheduleWakeup",
+    "SendMessage",
+    "Skill",
+    "TaskCreate",
+    "TaskGet",
+    "TaskList",
+    "TaskOutput",
+    "TaskStop",
+    "TaskUpdate",
+    "ToolSearch",
+    "Workflow",
+    "mcp__codegraph__codegraph_explore"
+  ],
+  "mcp_servers": [
+    {
+      "name": "codegraph",
+      "status": "connected"
+    }
+  ],
+  "mcp_status": {
+    "codegraph": "connected"
+  },
+  "index_offered": true,
+  "index_first_class": true,
+  "tool_calls": [
+    {
+      "name": "ToolSearch",
+      "input": {
+        "query": "select:mcp__codegraph__codegraph_explore",
+        "max_results": 1
+      }
+    },
+    {
+      "name": "mcp__codegraph__codegraph_explore",
+      "input": {
+        "query": "lease acquire compare-and-swap TTL parcel already leased"
+      }
+    },
+    {
+      "name": "mcp__codegraph__codegraph_explore",
+      "input": {
+        "query": "server leases acquire_lease grant lease sqlite UPDATE WHERE expires_at"
+      }
+    },
+    {
+      "name": "mcp__codegraph__codegraph_explore",
+      "input": {
+        "query": "swarmsync/blackboard/leases.py acquire function INSERT INTO leases conflict check"
+      }
+    }
+  ],
+  "tool_call_counts": {
+    "ToolSearch": 1,
+    "mcp__codegraph__codegraph_explore": 3
+  },
+  "n_tool_calls": 4,
+  "index_tool_calls": 3,
+  "toolsearch_calls": 1,
+  "index_tool_errors": 0,
+  "input_tokens": 10,
+  "output_tokens": 1447,
+  "cache_creation_input_tokens": 19657,
+  "cache_read_input_tokens": 185432,
+  "total_tokens": 206546,
+  "total_cost_usd": 0.1953066,
+  "wall_s": 23.08259199501481,
+  "duration_api_ms": 21947,
+  "num_turns": 5,
+  "session_id": "81d8f339-cfac-4a19-bbe3-eaa909aa7369",
+  "stop_reason": "end_turn",
+  "transcript_path": "bench/results/pilot/ss-lease-acquire__codegraph__r2__2f67cc8f.stream.jsonl",
+  "exit_code": 0,
+  "extra_config": {
+    "mcp_config": "/home/keith/projects/code-learner/bench/mcp/codegraph.json",
+    "defer_parity": false
+  }
+}

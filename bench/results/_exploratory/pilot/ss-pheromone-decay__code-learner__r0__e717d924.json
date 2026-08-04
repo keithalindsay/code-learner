@@ -1,0 +1,136 @@
+{
+  "run_id": "ss-pheromone-decay__code-learner__r0__e717d924",
+  "task_id": "ss-pheromone-decay",
+  "arm": "code-learner",
+  "repo": "/home/keith/projects/swarm-sync",
+  "model": "sonnet",
+  "rep": 0,
+  "arm_position": 2,
+  "started_at": 1785799755.2854674,
+  "prompt": "In this repository, what is the purpose of the pheromone table and how does a pheromone stop being relevant over time? Name the functions involved and cite file:line. Answer in under 200 words.",
+  "ground_truth": "PLACEHOLDER - variance probe only, not a judged task",
+  "ok": true,
+  "error": null,
+  "answer": "I have what I need to answer.\n\nThe **`pheromone`** table (`swarmsync/blackboard/schema.sql:68-73`) implements the \"decaying pheromone trails\" from `docs/DESIGN.md:45-48`: a live signal of *who's working where* (`kind`: planned/touched/done) so agents see recent activity without diffing raw state.\n\n- **Writes**: `drop_pheromone` (`swarmsync/blackboard/events.py:273`) upserts a row keyed on `(parcel_id, agent_id, kind)`, e.g. on `POST /intent` (`swarmsync/server/app.py:618`).\n- **Decay**: `decay_pheromone` (`swarmsync/blackboard/events.py:311`) runs `strength *= 0.5 ** (elapsed / half_life)` in a single SQL `UPDATE`, floored at 0.0. It's driven by the reaper's background loop via `decay_once` (`swarmsync/coordinator/reaper.py:40`), called every `interval` seconds inside `reaper.run` (`swarmsync/coordinator/reaper.py:48`).\n\nSo relevance fades continuously and multiplicatively as `strength` approaches (but never hits) 0 \u2014 there's no hard expiry/deletion of a decayed row by this path; a pheromone becomes irrelevant by its `strength` shrinking toward zero, not by being pruned. (Rows are only *removed* elsewhere, e.g. `classifier/store.py:206` deletes them when their parent parcel is deleted.)",
+  "tools_offered": [
+    "Bash",
+    "CronCreate",
+    "CronDelete",
+    "CronList",
+    "DesignSync",
+    "EnterWorktree",
+    "ExitWorktree",
+    "LSP",
+    "Read",
+    "ReportFindings",
+    "ScheduleWakeup",
+    "SendMessage",
+    "Skill",
+    "TaskCreate",
+    "TaskGet",
+    "TaskList",
+    "TaskOutput",
+    "TaskStop",
+    "TaskUpdate",
+    "ToolSearch",
+    "Workflow"
+  ],
+  "mcp_servers": [
+    {
+      "name": "codelearner",
+      "status": "pending"
+    }
+  ],
+  "mcp_status": {
+    "codelearner": "pending"
+  },
+  "index_offered": true,
+  "index_first_class": false,
+  "tool_calls": [
+    {
+      "name": "Bash",
+      "input": {
+        "command": "grep -rn \"pheromone\" --include=*.py --include=*.sql --include=*.go --include=*.rs --include=*.ts -il . 2>/dev/null | head -30"
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "grep -n \"pheromone\" -A5 -B2 swarmsync/blackboard/schema.sql | head -60"
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "grep -n \"pheromone\" -A5 -B2 swarmsync/blackboard/schema.sql | sed -n '1,120p'\necho \"---db.py---\"\ngrep -n \"pheromone\\|decay\" swarmsync/blackboard/db.py"
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "grep -n \"decay_pheromone\\|pheromone\" swarmsync/blackboard/db.py swarmsync/blackboard/models.py swarmsync/blackboard/events.py swarmsync/coordinator/reaper.py swarmsync/classifier/store.py swarmsync/agent/runner.py swarmsync/server/app.py swarmsync/server/events.py 2>/dev/null"
+      }
+    },
+    {
+      "name": "Read",
+      "input": {
+        "file_path": "/home/keith/projects/swarm-sync/swarmsync/blackboard/events.py",
+        "offset": 270,
+        "limit": 100
+      }
+    },
+    {
+      "name": "Read",
+      "input": {
+        "file_path": "/home/keith/projects/swarm-sync/swarmsync/coordinator/reaper.py",
+        "offset": 1,
+        "limit": 50
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "grep -n \"pheromone\" swarmsync/DESIGN.md 2>/dev/null | head -20\nfind . -iname \"DESIGN.md\" 2>/dev/null"
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "grep -n \"pheromone\" docs/DESIGN.md | head -30"
+      }
+    },
+    {
+      "name": "Read",
+      "input": {
+        "file_path": "/home/keith/projects/swarm-sync/docs/DESIGN.md",
+        "offset": 40,
+        "limit": 15
+      }
+    }
+  ],
+  "tool_call_counts": {
+    "Bash": 6,
+    "Read": 3
+  },
+  "n_tool_calls": 9,
+  "index_tool_calls": 0,
+  "toolsearch_calls": 0,
+  "index_tool_errors": 0,
+  "input_tokens": 20,
+  "output_tokens": 2347,
+  "cache_creation_input_tokens": 18475,
+  "cache_read_input_tokens": 358279,
+  "total_tokens": 379121,
+  "total_cost_usd": 0.2535987,
+  "wall_s": 34.51331652002409,
+  "duration_api_ms": 33356,
+  "num_turns": 10,
+  "session_id": "1323a7c6-074b-4829-b8f9-d134e5347fd5",
+  "stop_reason": "end_turn",
+  "transcript_path": "bench/results/pilot/ss-pheromone-decay__code-learner__r0__e717d924.stream.jsonl",
+  "exit_code": 0,
+  "extra_config": {
+    "mcp_config": "/home/keith/projects/code-learner/bench/mcp/code-learner.json",
+    "defer_parity": false
+  }
+}

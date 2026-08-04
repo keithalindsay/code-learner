@@ -26,23 +26,13 @@ import math
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from mcp.server.mcpserver import MCPServer
 from pydantic import BaseModel, Field
 
 from .. import db
 from ..assertions import store
-from ..cli.commands import (
-    REBUILD_ADVICE,
-    _classify_unresolved,
-    _embedding_info,
-    _scalar,
-    resolve_index_path,
-)
-from ..index import Embedder
-from ..ingest.types import content_hash
-from ..onboard import build_reading_path
 from ..retrieve import search, stored_embed_model
 
 # From the leaf `codelearner.tier`, not from `..cli.render`. The tier model is the
@@ -50,6 +40,28 @@ from ..retrieve import search, stored_embed_model
 # to import the thing a person types in order to say what tier a result rests on.
 from ..tier import facts_only as facts_only_filter
 from ..tier import hit_json
+
+# Deferred to first use, for the same reason `_default_embedder` defers the model
+# loader: an MCP client launches this server as a subprocess and decides whether its
+# tools are offered at all from how fast the handshake comes back, so every import on
+# the path between `exec` and the `initialize` reply is charged against the tools ever
+# being called. `..cli.commands`, `..onboard`, `..ingest.types` and `..index` are each
+# reached only from inside a tool body or an error path, so none of them belongs in
+# the startup cost.
+#
+# Measured, because the sizes are not what they look like (min of 40 cold starts,
+# this machine): `import mcp` is 562 ms of a 625 ms start -- 90% of it, and not
+# reducible from this repository. Everything `codelearner` itself adds is 44 ms, of
+# which 25 ms is `..cli.commands`, and that one is still paid at startup on the real
+# entry point because `main()` needs `resolve_index_path` before it can build
+# anything. Deferring it here buys the SERVER about 3 ms today. It is done anyway
+# because it is where the cost belongs, and because the 25 ms is recoverable the day
+# `resolve_index_path` and `INDEX_RELPATH` move out of `cli/` into a leaf: after that
+# the only thing between `exec` and `initialize` is the SDK.
+if TYPE_CHECKING:
+    from mcp.server.context import CallNext, ServerRequestContext
+
+    from ..index import Embedder
 
 SERVER_NAME = "codelearner"
 
@@ -538,6 +550,8 @@ def _guard(source: IndexSource, fn: Any, /, **kwargs: Any) -> dict[str, Any]:
     except ToolError as exc:
         return exc.payload()
     except (db.SchemaVersionError, db.RepoRootMismatchError) as exc:
+        from ..cli.commands import REBUILD_ADVICE
+
         return ToolError(
             "schema_mismatch",
             f"{exc} {REBUILD_ADVICE}",
@@ -791,6 +805,8 @@ def _verify_span(
     if raw.content_hash is not None:
         cited = raw.content_hash
     elif raw.text is not None:
+        from ..ingest.types import content_hash
+
         cited = content_hash(raw.text.encode())
     else:
         raise ToolError(
@@ -1047,6 +1063,8 @@ def _get_symbol_body(
 def _reading_path_body(
     conn: sqlite3.Connection, source: IndexSource, topic: str, limit: int
 ) -> dict[str, Any]:
+    from ..onboard import build_reading_path
+
     limit = max(1, min(int(limit), MAX_STOPS))
     embedder: Embedder | None = None
     notes: list[str] = []
@@ -1240,6 +1258,8 @@ def _submit_body(
 
 
 def _stats_body(conn: sqlite3.Connection, source: IndexSource) -> dict[str, Any]:
+    from ..cli.commands import _classify_unresolved, _embedding_info, _scalar
+
     counts = {
         "files": _scalar(conn, "SELECT count(*) FROM files"),
         "symbols": _scalar(conn, "SELECT count(*) FROM symbols"),
@@ -1299,6 +1319,64 @@ def _stats_body(conn: sqlite3.Connection, source: IndexSource) -> dict[str, Any]
 
 
 # ---------------------------------------------------------------------------
+# capability advertisement
+# ---------------------------------------------------------------------------
+
+def _advertise_only_what_is_served(server: MCPServer) -> Any:
+    """Middleware that strikes `prompts` and `resources` off `initialize` when empty.
+
+    The reference `mcp` SDK derives `ServerCapabilities` from which request handlers
+    are registered (`server.lowlevel.Server.get_capabilities`), and `MCPServer` always
+    registers `prompts/list` and `resources/list` -- so every server built on it tells
+    every client it has prompts and resources whether or not one was ever added. This
+    server has neither: five tools, no prompt, no resource, no resource template.
+
+    That is a false statement about the server, and it costs. A client reads the
+    capability block and asks one list request per capability declared: measured
+    against Claude Code's opening sequence, an unmodified build was asked for
+    `tools/list`, `prompts/list` AND `resources/list`, and answered the last two with
+    empty arrays -- two round trips spent establishing something the handshake had
+    already been in a position to say.
+
+    Two things this is NOT, both worth stating because the measurement said so. It is
+    not the reason this server's tools arrive late: the two extra round trips are
+    ~0.5 ms each against a ~625 ms start, so the latency lives entirely in the SDK
+    import (see the import note at the top of this module). And it is not a claim that
+    prompts/resources are unsupported in principle -- the handlers stay registered, so
+    a client that asks anyway still gets a well-formed empty list rather than
+    METHOD_NOT_FOUND. What changes is only what we assert about ourselves.
+
+    Derived per handshake rather than hardcoded, so this cannot become the second
+    false statement: `server.resource()` or `server.prompt()` used anywhere puts the
+    capability straight back. `Server.middleware` is the SDK's supported seam for
+    exactly this ("append an `async (ctx, call_next)` callable to observe, refuse, or
+    rewrite messages"); `initialize` is not otherwise overridable, and `MCPServer`
+    exposes no way to pass custom `InitializationOptions` through `run()`.
+
+    Fails open in the two places the SDK could change under it -- a non-dict result,
+    or no `capabilities` member -- because a handshake that still says too much is a
+    working server, and one that raises here is not. `tests/test_mcp.py` drives a real
+    subprocess handshake, so a silent no-op is red rather than invisible.
+    """
+
+    async def middleware(ctx: ServerRequestContext[Any, Any], call_next: CallNext) -> Any:
+        result = await call_next(ctx)
+        if ctx.method != "initialize" or not isinstance(result, dict):
+            return result
+        capabilities = result.get("capabilities")
+        if not isinstance(capabilities, dict):
+            return result
+        declared = dict(capabilities)
+        if not await server.list_prompts():
+            declared.pop("prompts", None)
+        if not (await server.list_resources() or await server.list_resource_templates()):
+            declared.pop("resources", None)
+        return {**result, "capabilities": declared}
+
+    return middleware
+
+
+# ---------------------------------------------------------------------------
 # registration
 # ---------------------------------------------------------------------------
 
@@ -1323,12 +1401,33 @@ def build_server(
 
     @server.tool()
     def search_code(query: str, k: int = 10, facts_only: bool = False) -> dict[str, Any]:
-        """Hybrid retrieval over the index: lexical + dense + graph expansion, fused.
+        """Find the symbols in this repository that bear on a question.
 
-        Returns tier-labelled hits. Each carries qualname, path with a line range, the
-        modalities that found it, `via` -- the account of which symbol's call edge
-        reached it, non-empty only when graph expansion produced the hit -- and the
-        `content_hash` you need to cite it in submit_assertion.
+        Hybrid retrieval over a pre-built index: lexical (FTS5) + dense (embeddings,
+        when the index holds them) + call-graph expansion, fused into one ranked list.
+        One call covers the whole repository.
+
+        Returns LOCATIONS, not source. Each hit carries qualname, path, a line range,
+        the tier its evidence rests on, the modalities that found it, `via` -- the
+        symbol whose resolved call edge reached it, non-empty only when graph
+        expansion produced the hit -- and the `content_hash` submit_assertion needs
+        before it will accept a citation of it.
+
+        Two things it does that reading and grepping files does not. The dense
+        modality matches on meaning, so a query phrased as the question you actually
+        have finds code you do not know the name of; `notes` says so when the index
+        was built without embeddings and that modality is absent. And graph expansion
+        returns symbols carrying none of your query terms that sit one RESOLVED call
+        edge from something that does -- `via` names the edge -- which no text search
+        reaches at any level of cleverness.
+
+        Where it does not help. It hands back no code: to read a body you open the
+        file at the path and lines returned, and get_symbol is the cheaper stop first
+        if you want the signature, docstring and call edges without one. For an exact
+        string, a regex, or anything outside the parsed languages, searching the
+        working tree directly is both better and current -- this answers from the
+        index as it was last built, so a file edited since then is described as it
+        was, and index_stats says what the index covers. `k` is clamped to 100.
 
         `facts_only` drops anything above tier 1, and today it drops nothing: no
         modality in this server retrieves at tier 2, so every hit is already a parsed
@@ -1347,13 +1446,34 @@ def build_server(
 
     @server.tool()
     def get_symbol(qualname: str, facts_only: bool = False) -> dict[str, Any]:
-        """One symbol, its resolved callers and callees, and any servable assertions.
+        """Everything the index knows about one symbol, including who calls it.
+
+        Returns its kind, path, line range, signature, docstring and content_hash;
+        its callers and callees; the call sites in it that no resolver could bind;
+        and any tier-2 assertion stored about it.
 
         `qualname` is the dotted path from the module root, e.g.
         'codelearner.db.init_db'; a name this index does not hold is refused with
-        'no_such_symbol'. Callers and callees are tier 1 -- resolved name bindings,
-        each with the confidence its resolver assigned. Unbound call sites are
-        returned separately as tier 0.
+        'no_such_symbol' -- use search_code to find the exact one.
+
+        What this gives you that reading the file does not is `callers`. They are
+        RESOLVED edges: call sites a resolver bound to this symbol, each carrying the
+        confidence it assigned. That is not the same list as every place the name
+        appears, which is what searching for a common method name returns and why
+        that answer is usually unusable. Assembling it by hand is a repo-wide search
+        plus a disambiguation pass per hit; here it is one call. Callees are the same
+        edges in the other direction, and call sites nothing could bind come back
+        separately as `unresolved_calls` at tier 0 -- mostly stdlib and third-party
+        calls, listed so that a symbol which only calls `json.dumps` does not look
+        inert.
+
+        Where it does not help. No implementation body comes back -- signature and
+        docstring only -- so when the body is the question, open the file at the path
+        and lines returned. A qualname is not unique in the schema either: if two
+        symbols share one, callers and callees describe the first, and
+        `duplicate_qualnames` says how many were passed over. And a resolver's
+        binding can be wrong, which is exactly what the tier-1 label and the
+        confidence on each edge are there to tell you.
 
         `assertions` is the only tier-2 content this server ever returns. Each is
         re-verified against the file on disk before it is returned, so one whose
@@ -1371,12 +1491,26 @@ def build_server(
 
     @server.tool()
     def reading_path(topic: str = "", limit: int = 12) -> dict[str, Any]:
-        """An ordered tour of the codebase: what to read, in what order, and why.
+        """Where to start reading an unfamiliar codebase, in dependency order.
 
-        With a topic, the tour is seeded from retrieval and answers "read these N
+        With a `topic`, the tour is seeded from retrieval and answers "read these N
         things to understand auth". Without one, it is seeded from call-graph
         centrality and answers "read these N things to understand this repo". Stops
-        are ordered by dependency depth, so a stop's callees come before it.
+        are ordered by dependency depth, so a stop's callees come before it, and each
+        carries its location, signature, docstring summary, why it was chosen, how
+        many callers it has in the repo, and any cycle it belongs to.
+
+        This answers a question the other tools cannot be asked. Both search_code and
+        a file search need you to already know what to look for; this one takes the
+        call graph as the map and orders symbols by how much else depends on them, so
+        it is the tool for "I have never seen this repository" and for "which of
+        these forty files is load-bearing".
+
+        Where it does not help. It is an ordering over symbols, not their contents --
+        the reading is still yours, from the paths and line ranges it hands you. When
+        you already know which symbol you care about, get_symbol is the shorter path,
+        and when you have a specific question, search_code is. `limit` is clamped
+        to 100.
         """
         return _guard(source, _reading_path_body, topic=topic, limit=limit)
 
@@ -1393,6 +1527,12 @@ def build_server(
 
         This is the inversion: the index does no inference of its own, you do, and
         this gate decides whether it may be stored. Every rule is arithmetic.
+
+        What an accepted claim becomes: a tier-2 answer that get_symbol returns to
+        whoever asks about that symbol next, re-hashed against the file first, so a
+        claim whose evidence has since moved expires instead of being repeated. That
+        is the reason to spend the call -- a conclusion you reached by reading is
+        otherwise yours alone and gone at the end of this session.
 
         An assertion with zero evidence spans is refused ('evidence_required'), and so
         is one with no claim text ('empty_claim') -- correct citations under a blank
@@ -1432,15 +1572,47 @@ def build_server(
 
     @server.tool()
     def index_stats() -> dict[str, Any]:
-        """What is in this index, by tier.
+        """What this index covers, and what is in it by tier.
 
-        Counts of files, symbols, edges and chunks; edges split by tier (T0 call sites
-        as written, T1 bound to a symbol); assertions split by status, including the
-        rejected ones; name resolution rates; and whether the index holds vectors.
+        The repo root it is bound to; counts of files, symbols, edges and chunks;
+        symbol counts by kind; edges split by tier (T0 call sites as written, T1
+        bound to a symbol); assertions split by status, including the rejected ones;
+        name resolution rates; and whether the index holds vectors.
+
+        Worth one call before leaning on the other four, because nothing they return
+        says which codebase they are describing or how much of it they saw.
+        `repo_root` says whether this index is about the code you are looking at at
+        all. `counts.files` against what you can see on disk says whether it covers
+        the repository or a fraction of it -- a fraction is the state in which
+        search_code returns thin results that look like absence of evidence.
+        `embeddings.present` says whether search_code has a dense modality or is
+        running on lexical and graph alone. And a low `resolution.rate_of_internal`
+        is advance warning that get_symbol's callers will be sparse, since only bound
+        edges appear there.
         """
         return _guard(source, _stats_body)
 
+    # Appended after the tools are registered, so the first handshake sees the real
+    # answer to "does this server hold any prompt or resource" rather than the answer
+    # at construction time.
+    server.middleware.append(_advertise_only_what_is_served(server))
     return server
+
+
+def __getattr__(name: str) -> Any:
+    """`resolve_index_path`, kept as a name here without its import cost.
+
+    It has always been re-exported from this module and is in `__all__`, so removing
+    it would break an importer for no gain; but it lives in `..cli.commands`, and
+    reaching it drags the whole `codelearner.cli` package -- 25 ms of argparse
+    construction -- into a server that only ever needed a path join. PEP 562 keeps the
+    name and moves the cost to whoever actually asks for it.
+    """
+    if name == "resolve_index_path":
+        from ..cli.commands import resolve_index_path
+
+        return resolve_index_path
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 __all__ = [
@@ -1456,5 +1628,8 @@ __all__ = [
     "IndexSource",
     "ToolError",
     "build_server",
-    "resolve_index_path",
+    # Served by this module's `__getattr__`, which ruff's static pass cannot see.
+    # Listed here because it is the public surface; imported there because reaching it
+    # costs the whole `codelearner.cli` package.
+    "resolve_index_path",  # noqa: F822
 ]

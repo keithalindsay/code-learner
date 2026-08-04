@@ -1,0 +1,96 @@
+{
+  "run_id": "ss-lease-acquire__codegraph__r0__74edcfef",
+  "task_id": "ss-lease-acquire",
+  "arm": "codegraph",
+  "repo": "/home/keith/projects/swarm-sync",
+  "model": "sonnet",
+  "rep": 0,
+  "arm_position": 0,
+  "started_at": 1785799648.4669983,
+  "prompt": "In this repository, explain how a lease is acquired: which function performs the compare-and-swap, what happens when the parcel is already leased by another agent, and how the TTL is set. Cite the file:line for each claim. Answer in under 200 words.",
+  "ground_truth": "PLACEHOLDER - variance probe only, not a judged task",
+  "ok": true,
+  "error": null,
+  "answer": "Lease acquisition (`swarmsync/blackboard/leases.py:187` `acquire()`):\n\n**CAS acquire** happens at the `INSERT ... SELECT ... WHERE NOT EXISTS (...)` statement, `swarmsync/blackboard/leases.py:332-356`. It first tries a same-agent/same-mode refresh UPDATE (`leases.py:237-254`) for idempotency; only if that misses does it fall to the real CAS INSERT, whose `WHERE NOT EXISTS` subquery (`leases.py:339-346`) atomically checks for another active, unexpired, conflicting lease (write/exclusive vs. anything, or anything vs. write/exclusive) before granting.\n\n**Already leased by another agent**: the `NOT EXISTS` predicate fails, `cur.fetchone()` returns `None` (`leases.py:357-359`), a `lease_denied` event is emitted (`leases.py:369-374`), and a holder-lookup query (`leases.py:390-404`) picks the best-explaining conflicting lease \u2014 preferring a write/exclusive holder, tie-broken by soonest-to-expire \u2014 to populate `LeaseResult(granted=False, reason=..., holder=..., holder_ttl_expires_at=...)` (`leases.py:425-430`).\n\n**TTL**: caller-supplied `ttl` param (default `DEFAULT_TTL_SECONDS`) is used directly in `{_NOW_SQL} + :ttl` for `ttl_expires_at`, using SQLite's own clock, not Python's (`leases.py:337`, `leases.py:341`, comment at `leases.py:310-323` explains why). On the hook path, the TTL value itself comes from `_hook_lease_ttl()` (`swarmsync/hooks/adapter.py:180-222`), which validates `SWARMSYNC_LEASE_TTL` and falls back to `DEFAULT_HOOK_LEASE_TTL_SECONDS = 300.0` (`adapter.py:167`) if unset/invalid/out-of-bounds.",
+  "tools_offered": [
+    "Bash",
+    "CronCreate",
+    "CronDelete",
+    "CronList",
+    "DesignSync",
+    "EnterWorktree",
+    "ExitWorktree",
+    "LSP",
+    "Read",
+    "ReportFindings",
+    "ScheduleWakeup",
+    "SendMessage",
+    "Skill",
+    "TaskCreate",
+    "TaskGet",
+    "TaskList",
+    "TaskOutput",
+    "TaskStop",
+    "TaskUpdate",
+    "ToolSearch",
+    "Workflow",
+    "mcp__codegraph__codegraph_explore"
+  ],
+  "mcp_servers": [
+    {
+      "name": "codegraph",
+      "status": "connected"
+    }
+  ],
+  "mcp_status": {
+    "codegraph": "connected"
+  },
+  "index_offered": true,
+  "index_first_class": true,
+  "tool_calls": [
+    {
+      "name": "ToolSearch",
+      "input": {
+        "query": "select:mcp__codegraph__codegraph_explore",
+        "max_results": 1
+      }
+    },
+    {
+      "name": "mcp__codegraph__codegraph_explore",
+      "input": {
+        "query": "lease acquisition compare-and-swap TTL acquire_lease"
+      }
+    },
+    {
+      "name": "mcp__codegraph__codegraph_explore",
+      "input": {
+        "query": "acquire CAS INSERT NOT EXISTS conflicting lease denied swarmsync/blackboard/leases.py"
+      }
+    }
+  ],
+  "tool_call_counts": {
+    "ToolSearch": 1,
+    "mcp__codegraph__codegraph_explore": 2
+  },
+  "n_tool_calls": 3,
+  "index_tool_calls": 2,
+  "toolsearch_calls": 1,
+  "index_tool_errors": 0,
+  "input_tokens": 8,
+  "output_tokens": 1059,
+  "cache_creation_input_tokens": 25576,
+  "cache_read_input_tokens": 132501,
+  "total_tokens": 159144,
+  "total_cost_usd": 0.2091153,
+  "wall_s": 23.967648360005114,
+  "duration_api_ms": 22797,
+  "num_turns": 4,
+  "session_id": "e2b87ffb-4399-48f2-8e5a-869125779e4a",
+  "stop_reason": "end_turn",
+  "transcript_path": "bench/results/pilot/ss-lease-acquire__codegraph__r0__74edcfef.stream.jsonl",
+  "exit_code": 0,
+  "extra_config": {
+    "mcp_config": "/home/keith/projects/code-learner/bench/mcp/codegraph.json",
+    "defer_parity": false
+  }
+}

@@ -1,0 +1,136 @@
+{
+  "run_id": "ff-exp-01__codegraph__r0__8bd04870",
+  "task_id": "ff-exp-01",
+  "arm": "codegraph",
+  "repo": "/home/keith/projects/facefusion",
+  "model": "sonnet",
+  "rep": 0,
+  "arm_position": 0,
+  "started_at": 1785801356.1333768,
+  "prompt": "In facefusion, `resolve_execution_providers` in the background-remover processor overrides the user's configured execution providers and returns CPU under two conditions. One of those conditions applies only on Windows and only for one particular kind of model. What is that condition defending against, and what would a user see if it were removed?",
+  "ground_truth": {
+    "committer_prose": "prevent directml using incompatible corridor_key model",
+    "rubric": [
+      "Identifies the Windows-only clause as the DirectML execution provider being excluded, not CoreML/macOS.",
+      "States that the exclusion is scoped to one model type -- the corridor_key model -- and not to the background remover as a whole.",
+      "Gives the reason as an incompatibility between that model and DirectML, i.e. DirectML cannot run this model correctly, so the code forces CPU instead of letting it fail or produce wrong output."
+    ]
+  },
+  "ok": true,
+  "error": null,
+  "answer": "Found it. Now I have enough to answer confidently.\n\n## The condition\n\n```python\nif is_macos() and has_execution_provider('coreml') or is_windows() and has_execution_provider('directml') and model_type == 'corridor_key':\n    return [ 'cpu' ]\n```\n\n(`and` binds tighter than `or`, so this is really two independent guards ORed together.) The Windows-specific one is:\n\n```python\nis_windows() and has_execution_provider('directml') and model_type == 'corridor_key'\n```\n\n## What it's defending against\n\n`corridor_key` is the model type behind the `corridor_key_1024`/`corridor_key_2048` background-removal models (`facefusion/processors/modules/background_remover/core.py:117-170`). The commit that introduced this guard (`57fcb86`, squash-merged as \"3.6.0 (#1062)\") includes the line **\"prevent directml using incompatible corridor_key model\"** \u2014 i.e. this ONNX model uses ops/graph patterns that DirectML's execution provider can't run correctly on Windows GPUs. So the check forces those two specific models onto CPU whenever DirectML is the active provider on Windows, regardless of what the user actually configured.\n\n## What a user would see if it were removed\n\nIf this guard were removed, a Windows user who selected `directml` as their execution provider and picked `corridor_key_1024`/`corridor_key_2048` as the background-remover model would hit the incompatibility directly at inference time \u2014 most likely an ONNX Runtime exception from the DirectML EP (an unsupported-operator error, a shape/graph compile failure, or a crash), or in a softer failure mode, silently wrong/garbage output (e.g., corrupted mask/frame) instead of a clean background removal. Right now they don't see that at all \u2014 the code quietly falls back to CPU for that one model, so it just runs slower rather than failing.",
+  "tools_offered": [
+    "Bash",
+    "CronCreate",
+    "CronDelete",
+    "CronList",
+    "DesignSync",
+    "EnterWorktree",
+    "ExitWorktree",
+    "LSP",
+    "Read",
+    "ReportFindings",
+    "ScheduleWakeup",
+    "SendMessage",
+    "Skill",
+    "TaskCreate",
+    "TaskGet",
+    "TaskList",
+    "TaskOutput",
+    "TaskStop",
+    "TaskUpdate",
+    "ToolSearch",
+    "Workflow",
+    "mcp__codegraph__codegraph_explore"
+  ],
+  "mcp_servers": [
+    {
+      "name": "codegraph",
+      "status": "connected"
+    }
+  ],
+  "mcp_status": {
+    "codegraph": "connected"
+  },
+  "index_offered": true,
+  "index_first_class": true,
+  "tool_calls": [
+    {
+      "name": "Bash",
+      "input": {
+        "command": "grep -rn \"resolve_execution_providers\" /home/keith/projects/facefusion/facefusion/processors/modules/background_remover.py 2>/dev/null || find /home/keith/projects/facefusion -iname \"*background_remover*\""
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "find /home/keith/projects/facefusion/facefusion/processors/modules/background_remover -type f | xargs grep -ln \"resolve_execution_providers\""
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "grep -n \"resolve_execution_providers\" -A 25 /home/keith/projects/facefusion/facefusion/processors/modules/background_remover/core.py | head -60"
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "grep -rn \"corridor_key\" /home/keith/projects/facefusion/facefusion/processors/modules/background_remover/ 2>/dev/null"
+      }
+    },
+    {
+      "name": "Read",
+      "input": {
+        "file_path": "/home/keith/projects/facefusion/facefusion/processors/modules/background_remover/core.py",
+        "offset": 560,
+        "limit": 50
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "git log --all --oneline -- facefusion/processors/modules/background_remover/core.py | head -20\ngit log -p --all -S\"corridor_key\" -- facefusion/processors/modules/background_remover/core.py | grep -n \"directml\\|corridor_key\\|commit \" | head -60"
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "git log --all --grep=\"corridor_key\" --format=\"%H %s\" | head -20\necho \"---\"\ngit show 57fcb86 --stat | head -5\necho \"---\"\ngit log --all -p -S\"prevent directml using incompatible corridor_key model\" | grep -B5 -A20 \"prevent directml using incompatible corridor_key model\" | head -60"
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "git show 57fcb86 -s --format=\"%B\" | grep -n -B3 -A3 \"directml\\|corridor_key\""
+      }
+    }
+  ],
+  "tool_call_counts": {
+    "Bash": 7,
+    "Read": 1
+  },
+  "n_tool_calls": 8,
+  "index_tool_calls": 0,
+  "toolsearch_calls": 0,
+  "index_tool_errors": 0,
+  "input_tokens": 18,
+  "output_tokens": 2319,
+  "cache_creation_input_tokens": 16165,
+  "cache_read_input_tokens": 309010,
+  "total_tokens": 327512,
+  "total_cost_usd": 0.224532,
+  "wall_s": 31.532955325965304,
+  "duration_api_ms": 30228,
+  "num_turns": 9,
+  "session_id": "17b2a494-2ce8-4935-be9f-45709f248c66",
+  "stop_reason": "end_turn",
+  "transcript_path": "bench/results/_exploratory/smoke/ff-exp-01__codegraph__r0__8bd04870.stream.jsonl",
+  "exit_code": 0,
+  "extra_config": {
+    "mcp_config": "/home/keith/projects/code-learner/bench/mcp/codegraph.json",
+    "defer_parity": false,
+    "nudge_discovery": false,
+    "fast_handshake": true
+  }
+}

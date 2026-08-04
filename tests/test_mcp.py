@@ -18,7 +18,9 @@ import json
 import os
 import sqlite3
 import subprocess
+import sys
 import threading
+import time
 import tomllib
 from pathlib import Path
 from typing import Any
@@ -194,6 +196,240 @@ def test_all_five_tools_are_registered_with_descriptions_and_schemas(served):
     # a citation needs a hash and guesses the field names.
     span_schema = by_name["submit_assertion"].input_schema["properties"]["evidence_spans"]
     assert span_schema["type"] == "array"
+
+
+# The descriptions are the product surface an agent actually reads, so they are held
+# to the same rule as the rest of this file: say what is true, and say what is not.
+# The three tests below pin the two halves of that rule which are easiest to lose
+# under pressure to be chosen more often.
+
+def test_search_code_still_says_that_facts_only_filters_nothing_today(served):
+    """The most tempting sentence to delete while making a description more
+    persuasive, and the one that must survive. `facts_only` is wired at the seam a
+    tier-2 retrieval modality would arrive through and there is no such modality yet,
+    so passing it changes no result -- an agent that reads a description implying
+    otherwise will pass it believing it has excluded inferences it never received.
+
+    A description is allowed to argue for its tool. It is not allowed to be quiet
+    about a flag that does nothing."""
+    _, _, server = served
+    description = {t.name: t.description for t in asyncio.run(server.list_tools())}
+    search = description["search_code"]
+    assert "drops nothing" in search
+    # And the pointer to where the flag is not inert, so the caller who actually
+    # wanted tier 2 withheld is sent to the surface that does it.
+    assert "get_symbol" in search
+    assert "withholds them" in description["get_symbol"]
+
+
+@pytest.mark.parametrize("name", ["search_code", "get_symbol", "reading_path"])
+def test_a_tool_that_says_when_to_prefer_it_also_says_when_not_to(served, name):
+    """Every one of the three retrieval tools now argues for itself -- names the thing
+    it does that reading and grepping files does not. That claim is only usable if the
+    boundary comes with it, and the boundary is the part a description written to win
+    a comparison would drop first: naming when your tool is the wrong call costs you
+    calls.
+
+    It is also the more useful half. An agent that knows `search_code` returns
+    locations and not source, that the index can be behind the working tree, and that
+    an exact-string search is better served by the working tree, routes correctly.
+    One that has only been told the tool is good does not."""
+    _, _, server = served
+    description = {t.name: t.description for t in asyncio.run(server.list_tools())}
+    assert "does not" in description[name]
+
+
+@pytest.mark.parametrize("name", sorted(TOOL_NAMES))
+def test_no_description_demands_priority_instead_of_describing_itself(served, name):
+    """The line this project draws, made mechanical.
+
+    A competing server's description opens "PRIMARY TOOL -- call FIRST" and spends
+    4,597 characters instructing the model not to read files. It works, and it is not
+    a description: nothing in it is a checkable statement about what that tool
+    returns, so the identical text would sit equally well on a tool that did nothing.
+    Ours may say what it returns, what it costs, and the conditions under which it
+    beats opening a file -- all of which are wrong if the tool changes, which is what
+    makes them descriptions. It may not issue instructions about which tool the agent
+    should reach for first, because that claim is not about this tool at all and no
+    change to this server could ever falsify it.
+
+    Held as a test rather than a convention because the pressure to cross it arrives
+    later, from a benchmark result, and by then whoever crosses it will have a reason
+    that sounds good."""
+    _, _, server = served
+    description = {t.name: t.description for t in asyncio.run(server.list_tools())}
+    lowered = description[name].lower()
+    for demand in (
+        "primary tool",
+        "call first",
+        "call this first",
+        "use this first",
+        "before any other",
+        "instead of reading",
+        "do not read",
+        "always use",
+        "always call",
+        "you must use",
+        "you must call",
+    ):
+        assert demand not in lowered, f"{name} demands priority rather than earning it: {demand!r}"
+
+
+# ---------------------------------------------------------------------------
+# the handshake -- what the server says it is
+# ---------------------------------------------------------------------------
+
+def _stdio_handshake(cwd: Path, timeout: float = 120.0) -> dict[str, Any]:
+    """Open a real session against a real subprocess and return its replies.
+
+    Over the wire, and as a subprocess, because that is the only place the thing
+    under test exists: the capability block is produced by the SDK's own runner from
+    handlers this package does not own, and every in-process shortcut around it would
+    be testing the assertion instead of the server.
+
+    Sequenced, not pipelined, and stdin stays open until both replies are in. Sending
+    all three messages at once and closing stdin is what a `communicate()` call wants
+    and it loses the `tools/list`: EOF on stdin ends the session, and it reached the
+    server while the request was still queued behind the inline `initialize`. That
+    failed roughly one run in three -- which is worse than failing always, so it is
+    written down here.
+
+    Reading happens on a daemon thread against a deadline, so a server that never
+    answers fails this test in `timeout` seconds rather than parking the suite on a
+    pipe read.
+    """
+    proc = subprocess.Popen(  # noqa: S603 - argv is this interpreter and this package
+        [sys.executable, "-m", "codelearner.server", str(cwd)],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, bufsize=1, cwd=str(cwd),
+    )
+    replies: dict[str, Any] = {}
+    errors: list[str] = []
+    arrived = threading.Event()
+
+    def read_stdout() -> None:
+        for line in proc.stdout:  # type: ignore[union-attr]
+            line = line.strip()
+            if not line.startswith("{"):
+                continue
+            msg = json.loads(line)
+            if msg.get("id") in (1, 2):
+                replies[str(msg["id"])] = msg
+                arrived.set()
+
+    def read_stderr() -> None:
+        errors.extend(proc.stderr)  # type: ignore[arg-type]
+
+    for target in (read_stdout, read_stderr):
+        threading.Thread(target=target, daemon=True).start()
+
+    def send(message: dict[str, Any]) -> None:
+        proc.stdin.write(json.dumps(message) + "\n")  # type: ignore[union-attr]
+        proc.stdin.flush()  # type: ignore[union-attr]
+
+    def wait_for(key: str, what: str) -> None:
+        deadline = time.monotonic() + timeout
+        while key not in replies and time.monotonic() < deadline:
+            arrived.wait(timeout=1.0)
+            arrived.clear()
+        assert key in replies, f"no {what} within {timeout}s. stderr:\n{''.join(errors)}"
+
+    try:
+        send({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+              "params": {"protocolVersion": "2024-11-05", "capabilities": {},
+                         "clientInfo": {"name": "codelearner-tests", "version": "0"}}})
+        wait_for("1", "initialize reply")
+        send({"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}})
+        send({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
+        wait_for("2", "tools/list reply")
+    finally:
+        proc.kill()
+        proc.wait(timeout=timeout)
+    return replies
+
+
+def test_the_handshake_declares_tools_and_not_the_prompts_and_resources_we_lack(tmp_path):
+    """This server has five tools, no prompt and no resource -- and said otherwise.
+
+    `MCPServer` registers `prompts/list` and `resources/list` unconditionally, and the
+    SDK derives `ServerCapabilities` from which handlers exist, so every server built
+    on it advertises prompts and resources whether or not one was ever added. A client
+    reads that block and asks one list request per capability declared: measured
+    against Claude Code's opening sequence, an unmodified build was asked for
+    `tools/list`, `prompts/list` AND `resources/list` and answered the last two with
+    empty arrays.
+
+    The cost is small -- ~0.5 ms a round trip -- and the reason to fix it is not the
+    cost. It is that the handshake is the one place this server describes itself, and
+    two of the three things it said there were untrue.
+
+    Runs against no index at all, deliberately: the handshake must be honest before
+    anything has been built, which is the state a client meets this server in on the
+    morning somebody installs it."""
+    replies = _stdio_handshake(tmp_path)
+    capabilities = replies["1"]["result"]["capabilities"]
+    assert "tools" in capabilities
+    assert "prompts" not in capabilities, capabilities
+    assert "resources" not in capabilities, capabilities
+    # The rewrite must not have cost anything else in the block a client reads.
+    assert replies["1"]["result"]["serverInfo"]["name"] == server_app.SERVER_NAME
+    assert replies["1"]["result"]["instructions"] == server_app.INSTRUCTIONS
+    # And the tools still arrive, which is the only reason any of this matters.
+    assert {t["name"] for t in replies["2"]["result"]["tools"]} == TOOL_NAMES
+
+
+def test_a_prompt_or_a_resource_puts_its_capability_straight_back(tmp_path):
+    """Derived per handshake, not hardcoded to "we have none".
+
+    A capability block asserted as a constant is correct exactly until somebody calls
+    `server.resource(...)`, at which point it becomes the same lie in the other
+    direction -- a real resource that no client will ever ask for, and nothing to
+    notice it. This drives the middleware directly with a stub handshake result so the
+    derivation is exercised without a subprocess per case."""
+    server = build_server(tmp_path / "index.db")
+    middleware = server_app._advertise_only_what_is_served(server)
+
+    class _Init:
+        method = "initialize"
+
+    async def _call_next(_ctx):
+        return {"capabilities": {"prompts": {"listChanged": False},
+                                 "resources": {"listChanged": False},
+                                 "tools": {"listChanged": False}}}
+
+    empty = asyncio.run(middleware(_Init(), _call_next))
+    assert set(empty["capabilities"]) == {"tools"}
+
+    @server.resource("data://note")
+    def note() -> str:
+        return "something a client could read"
+
+    @server.prompt()
+    def explain() -> str:
+        return "something a client could run"
+
+    stocked = asyncio.run(middleware(_Init(), _call_next))
+    assert set(stocked["capabilities"]) == {"prompts", "resources", "tools"}
+
+
+def test_only_the_initialize_reply_is_rewritten(tmp_path):
+    """The middleware sits in front of EVERY inbound message, so a rule written for
+    one method has to be a rule about that method. An earlier shape of this keyed off
+    the presence of a `capabilities` member rather than off `ctx.method`, which is a
+    key a tool result is free to have."""
+    server = build_server(tmp_path / "index.db")
+    middleware = server_app._advertise_only_what_is_served(server)
+
+    class _Other:
+        method = "tools/call"
+
+    async def _call_next(_ctx):
+        return {"capabilities": {"prompts": {}, "resources": {}}}
+
+    assert set(asyncio.run(middleware(_Other(), _call_next))["capabilities"]) == {
+        "prompts",
+        "resources",
+    }
 
 
 def test_console_entry_point_is_registered():

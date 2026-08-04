@@ -1,0 +1,217 @@
+{
+  "run_id": "ff-exp-01__code-learner__r0__cb0da1f9",
+  "task_id": "ff-exp-01",
+  "arm": "code-learner",
+  "repo": "/home/keith/projects/facefusion",
+  "model": "sonnet",
+  "rep": 0,
+  "arm_position": 1,
+  "started_at": 1785801387.6675088,
+  "prompt": "In facefusion, `resolve_execution_providers` in the background-remover processor overrides the user's configured execution providers and returns CPU under two conditions. One of those conditions applies only on Windows and only for one particular kind of model. What is that condition defending against, and what would a user see if it were removed?",
+  "ground_truth": {
+    "committer_prose": "prevent directml using incompatible corridor_key model",
+    "rubric": [
+      "Identifies the Windows-only clause as the DirectML execution provider being excluded, not CoreML/macOS.",
+      "States that the exclusion is scoped to one model type -- the corridor_key model -- and not to the background remover as a whole.",
+      "Gives the reason as an incompatibility between that model and DirectML, i.e. DirectML cannot run this model correctly, so the code forces CPU instead of letting it fail or produce wrong output."
+    ]
+  },
+  "ok": true,
+  "error": null,
+  "answer": "Looking at `resolve_execution_providers` (`facefusion/processors/modules/background_remover/core.py:483`):\n\n```python\nif is_macos() and has_execution_provider('coreml') or is_windows() and has_execution_provider('directml') and model_type == 'corridor_key':\n    return [ 'cpu' ]\n```\n\nDue to operator precedence this is `(macOS + coreml)` **or** `(Windows + directml + model_type == 'corridor_key')`. The second clause only fires for the `corridor_key_1024` / `corridor_key_2048` models.\n\nI inspected the actual ONNX graphs to figure out why `corridor_key` specifically is singled out (there's no comment in the code):\n\n- `corridor_key_*.onnx` is a heavy ViT-style network: a 24-block transformer encoder (`Split`/`Softmax`/`MatMul` attention per block) plus a refiner that uses `InstanceNormalization` as a GroupNorm substitute, run at a full 1024\u00d71024 or 2048\u00d72048 resolution.\n- Other bg-remover models that *are* allowed on DirectML (e.g. `birefnet_general`, `rmbg_2.0`) also use transformer ops like `LayerNormalization`/`Softmax`/`Split`, but neither uses `InstanceNormalization`, `ReduceMax`, nor anywhere near 24 stacked global-attention blocks at this resolution \u2014 `corridor_key` is uniquely large/heavy among this processor's models.\n- Elsewhere in the codebase (`facefusion/thread_helper.py:22`) DirectML is already treated as unreliable enough that it's forced to run single-threaded (via a semaphore) rather than concurrently with other sessions \u2014 evidence the project is generally guarding against DirectML instability/crashes rather than just correctness quirks.\n\nSo the condition is almost certainly defending against a **DirectML driver crash/hang on Windows** when asked to execute this unusually large, deep transformer at high resolution \u2014 DirectML dispatches large workloads to the GPU driver, and Windows' GPU watchdog (TDR) or DirectML's own allocator can choke on a workload this big, especially at the 2048\u00d72048 variant.\n\nIf that guard were removed, a Windows user with DirectML selected as their execution provider who picked `corridor_key_1024`/`corridor_key_2048` would likely see one of:\n- The run crashing outright with an onnxruntime/DirectML error (e.g. device-removed/out-of-memory style exception), aborting the job, or\n- A full \"Display driver stopped responding and has recovered\" TDR event \u2014 a system-wide GPU driver reset, not just an app error \u2014 with that frame's output corrupted or blank when it resumes.\n\nSince there's no comment or issue reference in the code confirming this, I'm inferring the cause from the model's op graph and the project's existing DirectML workarounds rather than citing a stated reason \u2014 but it lines up cleanly with why only this one model gets forced to CPU on Windows/DirectML.",
+  "tools_offered": [
+    "Bash",
+    "CronCreate",
+    "CronDelete",
+    "CronList",
+    "DesignSync",
+    "EnterWorktree",
+    "ExitWorktree",
+    "ListMcpResourcesTool",
+    "LSP",
+    "Read",
+    "ReadMcpResourceDirTool",
+    "ReadMcpResourceTool",
+    "ReportFindings",
+    "ScheduleWakeup",
+    "SendMessage",
+    "Skill",
+    "TaskCreate",
+    "TaskGet",
+    "TaskList",
+    "TaskOutput",
+    "TaskStop",
+    "TaskUpdate",
+    "ToolSearch",
+    "Workflow",
+    "mcp__codelearner__get_symbol",
+    "mcp__codelearner__index_stats",
+    "mcp__codelearner__reading_path",
+    "mcp__codelearner__search_code",
+    "mcp__codelearner__submit_assertion"
+  ],
+  "mcp_servers": [
+    {
+      "name": "codelearner",
+      "status": "connected"
+    }
+  ],
+  "mcp_status": {
+    "codelearner": "connected"
+  },
+  "index_offered": true,
+  "index_first_class": true,
+  "tool_calls": [
+    {
+      "name": "Bash",
+      "input": {
+        "command": "grep -rn \"resolve_execution_providers\" /home/keith/projects/facefusion --include=*.py -l | grep -i background"
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "grep -n \"resolve_execution_providers\" -A 30 /home/keith/projects/facefusion/facefusion/processors/modules/background_remover/core.py | head -60"
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "grep -n \"corridor_key\\|'type'\" -r /home/keith/projects/facefusion/facefusion/processors/modules/background_remover/ | head -50"
+      }
+    },
+    {
+      "name": "Read",
+      "input": {
+        "file_path": "/home/keith/projects/facefusion/facefusion/processors/modules/background_remover/core.py",
+        "offset": 560,
+        "limit": 45
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "grep -rn \"directml\" /home/keith/projects/facefusion/facefusion/processors/modules/*/core.py"
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "git log --all -L 480,486:facefusion/processors/modules/background_remover/core.py 2>/dev/null | head -100"
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "git log --oneline -- facefusion/processors/modules/background_remover/core.py | head -20"
+      }
+    },
+    {
+      "name": "Read",
+      "input": {
+        "file_path": "/home/keith/projects/facefusion/facefusion/processors/modules/background_remover/core.py",
+        "offset": 117,
+        "limit": 55
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "grep -rn \"corridor_key\\|corridor key\\|Corridor\" /home/keith/projects/facefusion --include=*.md --include=*.py --include=*.txt -i | grep -v \"/core.py\""
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "find /home/keith/projects/facefusion -iname \"*corridor*\" 2>/dev/null; find / -iname \"corridor_key*.onnx\" 2>/dev/null | head"
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "python3 -c \"\nimport onnx\nm = onnx.load('.assets/models/corridor_key_1024.onnx')\nops = set()\nfor node in m.graph.node:\n    ops.add(node.op_type)\nprint(sorted(ops))\n\" 2>&1 | tail -30"
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "ls venv/bin 2>/dev/null | grep -i python; venv/bin/python -c \"import onnx\" 2>&1 | tail -5"
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "venv/bin/python -c \"\nimport onnx\nm = onnx.load('.assets/models/corridor_key_1024.onnx')\nops = set()\nfor node in m.graph.node:\n    ops.add(node.op_type)\nprint(sorted(ops))\nprint('outputs:', [o.name for o in m.graph.output])\nprint('inputs:', [i.name for i in m.graph.input])\n\" 2>&1 | tail -40"
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "find /home/keith/projects/facefusion -iname \"CHANGELOG*\" -o -iname \"HISTORY*\" | head; cat /home/keith/projects/facefusion/CHANGELOG.md 2>/dev/null | grep -i -B2 -A2 \"corridor\\|directml\" | head -60"
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "grep -rn \"directml\\|is_windows\" /home/keith/projects/facefusion/facefusion --include=*.py | grep -v processors/modules/background_remover"
+      }
+    },
+    {
+      "name": "Read",
+      "input": {
+        "file_path": "/home/keith/projects/facefusion/facefusion/thread_helper.py"
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "grep -n \"'size'\" /home/keith/projects/facefusion/facefusion/processors/modules/background_remover/core.py"
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "venv/bin/python -c \"\nimport onnx\nfor name in ['ben_2','birefnet_general','isnet_general','modnet','ormbg','rmbg_1.4','rmbg_2.0','silueta','u2net_cloth','u2net_general','u2net_human','u2netp']:\n    import glob\n    pass\n\"\nls .assets/models | grep -v corridor"
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "venv/bin/python -c \"\nimport onnx\nfor name in ['birefnet_general','isnet_general','rmbg_2.0']:\n    m = onnx.load(f'.assets/models/{name}.onnx')\n    ops = set(n.op_type for n in m.graph.node)\n    print(name, sorted(ops))\n    print('outputs', [o.name for o in m.graph.output])\n\""
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "venv/bin/python -c \"\nimport onnx\nm = onnx.load('.assets/models/corridor_key_1024.onnx')\nfrom collections import Counter\nc = Counter(n.op_type for n in m.graph.node)\nprint(c)\nfor n in m.graph.node:\n    if n.op_type in ('InstanceNormalization','ReduceMax','Split','Softmax'):\n        print(n.op_type, [a.name for a in n.attribute], n.input, n.output)\n\" | head -60"
+      }
+    }
+  ],
+  "tool_call_counts": {
+    "Bash": 17,
+    "Read": 3
+  },
+  "n_tool_calls": 20,
+  "index_tool_calls": 0,
+  "toolsearch_calls": 0,
+  "index_tool_errors": 0,
+  "input_tokens": 42,
+  "output_tokens": 8606,
+  "cache_creation_input_tokens": 30883,
+  "cache_read_input_tokens": 816485,
+  "total_tokens": 856016,
+  "total_cost_usd": 0.5594595,
+  "wall_s": 138.10363517299993,
+  "duration_api_ms": 111322,
+  "num_turns": 21,
+  "session_id": "a87c956c-db15-48cd-a8a5-4a0599edd028",
+  "stop_reason": "end_turn",
+  "transcript_path": "bench/results/_exploratory/smoke/ff-exp-01__code-learner__r0__cb0da1f9.stream.jsonl",
+  "exit_code": 0,
+  "extra_config": {
+    "mcp_config": "/home/keith/projects/code-learner/bench/mcp/code-learner-fast.json",
+    "defer_parity": false,
+    "nudge_discovery": false,
+    "fast_handshake": true
+  }
+}

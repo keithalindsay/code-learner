@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "codelearner": {
+      "type": "stdio",
+      "command": "/home/keith/projects/code-learner/.venv/bin/python",
+      "args": [
+        "/home/keith/projects/code-learner/bench/shim/fastmcp.py",
+        "--snapshot",
+        "/home/keith/projects/code-learner/bench/shim/snapshots/codelearner.json"
+      ]
+    }
+  }
+}

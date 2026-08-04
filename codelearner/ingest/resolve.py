@@ -249,10 +249,33 @@ def _resolve_one(dst_name: str, src_qual: str, idx: _Index) -> tuple[int, str] |
     # `foo` is meant -- uniqueness of the name is a fact about the repo, not about
     # the call. Abstaining leaves a tier-0 edge, which is true; guessing produced a
     # tier-1 edge that was false and outranked everything else in the call graph.
+    #
+    # Restricted to non-method targets for the same reason, measured separately. A
+    # BARE name cannot reach a method: calling one needs a receiver, and the two
+    # receivers that are statically knowable (`self`/`cls`) are already handled by
+    # strategy 2 above, which runs first. So a bare name whose only repo-wide match
+    # is a method is a name that came from somewhere else -- a builtin, an
+    # unindexed module-level binding, a star-import from outside the repo. Measured
+    # across three repos, every such binding was wrong: 366 `range(...)` calls in
+    # kalshi-bot bound to `KalshiCandle.range` because `range` is a unique basename
+    # there and Python's builtin is not in the symbol table, and 15 `json()` calls
+    # in swarm-sync bound to a nested test helper's method. Neither name is even
+    # callable at those sites.
+    #
+    # The one place a bare name legitimately names a method is a class BODY, where
+    # the method is in scope during execution (`x = helper()` beside `def helper`).
+    # That case is kept, keyed on the call site being lexically inside the target's
+    # own class -- it did not occur in any of the three measured repos, but it is
+    # real Python and the guard costs nothing to make exact rather than approximate.
     if not tail:
         candidates = idx.by_name.get(dst_name, [])
         if len(candidates) == 1:
-            return candidates[0], R_UNIQUE
+            sid = candidates[0]
+            if idx.kind_of[sid] != "method":
+                return sid, R_UNIQUE
+            owner = idx.qual_of[sid].rsplit(".", 1)[0]
+            if src_qual == owner or src_qual.startswith(f"{owner}."):
+                return sid, R_UNIQUE
 
     return None
 

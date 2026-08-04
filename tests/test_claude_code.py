@@ -517,23 +517,37 @@ def test_a_permission_denial_is_warned_about_rather_than_swallowed(monkeypatch, 
 def test_name_comes_from_model_usage_and_not_from_what_was_asked_for(monkeypatch):
     """`assertions.generator` is filled from this, and it is the only thing that lets a
     store holding claims from two generators tell them apart. Taking it from the `--model`
-    argument would be a provenance bug rather than an approximation: the harness is free
-    to answer with something else, and a row labelled with a REQUEST rather than with a
-    fact is worse than an unlabelled row, because it looks trustworthy.
+    argument would be a provenance bug rather than an approximation: a row labelled with a
+    REQUEST rather than with a fact is worse than an unlabelled row, because it looks
+    trustworthy.
 
-    Here the caller asks for `claude-sonnet-4-5` and the harness answers as
-    `claude-opus-5[1m]`. The claim must be filed under what answered."""
+    The caller asks for the alias `opus`; the recorded name is the id the harness reported,
+    decoration and all. That difference is not cosmetic -- MEASURED, `--model opus` reports
+    itself as `claude-opus-5` while the same account unpinned reports `claude-opus-5[1m]`,
+    so the request string and the recorded string genuinely are two different values."""
     fake = FakeCLI(_envelope('{"claim": "c", "cited_refs": [1]}'))
-    generator = _generator(fake, monkeypatch, model="claude-sonnet-4-5")
+    generator = _generator(fake, monkeypatch, model="opus")
 
     generator.draft(subject="leases.acquire", offered=_offers())
 
     assert generator.name == f"claude-code/{ANSWERED}"
-    assert "sonnet" not in generator.name
-    # And the request really was made, so the mismatch is the harness's and not a
-    # dropped argument.
+    assert generator.name != "claude-code/opus"
     argv = fake.calls[0]
-    assert argv[argv.index("--model") + 1] == "claude-sonnet-4-5"
+    assert argv[argv.index("--model") + 1] == "opus"
+
+
+def test_a_pinned_model_that_is_ignored_stops_before_a_single_claim_is_written(monkeypatch):
+    """The reason to pin at all. Asking for sonnet and being answered by opus is a
+    substitution, and pinning is what makes it detectable on call one instead of on
+    whichever later call happens to reveal it -- which is the difference between a run that
+    never starts and a store that is half mislabelled."""
+    fake = FakeCLI(_envelope('{"claim": "c", "cited_refs": [1]}'))
+    generator = _generator(fake, monkeypatch, model="claude-sonnet-4-5")
+
+    with pytest.raises(ModelSubstituted) as excinfo:
+        generator.draft(subject="leases.acquire", offered=_offers())
+    assert "claude-sonnet-4-5" in str(excinfo.value)
+    assert generator.answered_model is None
 
 
 def test_name_read_before_any_draft_resolves_itself_with_one_probe(monkeypatch):
@@ -541,16 +555,29 @@ def test_name_read_before_any_draft_resolves_itself_with_one_probe(monkeypatch):
     already claimed -- so it is read before any draft exists and before the honest answer
     is known. The alternatives are both worse than a probe: labelling the run with the
     requested model is the provenance bug above, and a placeholder would reach the
-    database. So the first read spends one minimal call, through the same argv builder, so
-    that it resolves the configuration that will actually be used."""
+    database.
+
+    The probe is deliberately TINY, which is the opposite of the obvious design. Probing
+    with the generator's real prompt was tried and is worse: harness side-work scales with
+    the request, so the big prompt comes back with a `claude-haiku-4-5` entry beside the
+    answering model -- exactly the ambiguity name resolution must not have -- while a
+    two-word probe comes back with one entry. It needs no big prompt to be sound: `_run`
+    has already refused any envelope with no textual `result`, so the session model ran, so
+    it has an entry, so a single-entry envelope NAMES it rather than guessing between
+    candidates."""
     fake = FakeCLI(_envelope("ok"))
     generator = _generator(fake, monkeypatch)
 
     assert generator.answered_model is None
     assert generator.name == f"claude-code/{ANSWERED}"
     assert len(fake.calls) == 1
+
+    argv = fake.calls[0]
+    system, _ = build_generation_prompt(subject="anything", offered=_offers())
+    assert argv[argv.index("--system-prompt") + 1] != system
+    assert len(argv[-1]) < 200
     # The probe is sandboxed exactly like a real call.
-    assert fake.calls[0][fake.calls[0].index("--tools") + 1] == ""
+    assert argv[argv.index("--tools") + 1] == ""
     # And it is cached: reading the name again costs nothing.
     assert generator.name == f"claude-code/{ANSWERED}"
     assert len(fake.calls) == 1
@@ -561,7 +588,10 @@ def test_a_mid_run_model_substitution_stops_the_run(monkeypatch):
     models' claims under one generator string -- the exact confusion that column exists to
     prevent, invisible downstream and unrepairable afterwards. `ModelSubstituted` subclasses
     `GeneratorUnavailable` precisely so `pipeline.learn` lets it out uncaught and stops,
-    instead of counting it per-symbol and carrying on."""
+    instead of counting it per-symbol and carrying on.
+
+    A substitution is the run's model being ABSENT from the response. Sonnet answering is
+    not what makes this one -- opus not answering is."""
     fake = FakeCLI(
         _envelope('{"claim": "c", "cited_refs": [1]}'),
         _envelope('{"claim": "d", "cited_refs": [2]}', models={"claude-sonnet-4-5": 40}),
@@ -576,6 +606,88 @@ def test_a_mid_run_model_substitution_stops_the_run(monkeypatch):
     assert issubclass(ModelSubstituted, GeneratorUnavailable)
     assert "claude-sonnet-4-5" in str(excinfo.value)
     assert ANSWERED in str(excinfo.value)
+
+
+def test_a_correct_abstention_beside_harness_overhead_is_not_a_substitution(monkeypatch):
+    """REGRESSION, from a 151-symbol run that aborted at 105 and left 46 symbols
+    unreachable. This is the exact envelope, token counts included:
+
+        result : '{"claim": "", "cited_refs": []}'
+        claude-haiku-4-5-20251001   output_tokens=17
+        claude-opus-5[1m]           output_tokens=18
+
+    The model abstained, correctly -- `llm.py` says in bold that "these spans establish
+    nothing" is a first-class answer, and `demo.run_demo._ServerThread.base_url` is exactly
+    the kind of symbol it is the right answer for. But a correct abstention is about
+    eighteen output tokens, one clear of the harness's incidental seventeen, so the old
+    max-output-tokens rule attributed the claim to haiku and raised `ModelSubstituted`.
+    Retrying could not help: the same symbol produced the same envelope every time.
+
+    The guard fired hardest exactly where the generator was behaving best. Attribution is
+    now membership -- an entry exists for a model whenever it ran, however little it wrote
+    -- so this is decided by identity and not by a margin that a single token can flip."""
+    abstention = _envelope(
+        '{"claim": "", "cited_refs": []}',
+        models={"claude-haiku-4-5-20251001": 17, ANSWERED: 18},
+    )
+    fake = FakeCLI(_envelope('{"claim": "c", "cited_refs": [1]}'), abstention)
+    generator = _generator(fake, monkeypatch)
+
+    assert generator.draft(subject="leases.acquire", offered=_offers()).claim == "c"
+
+    # The abstention is a refused draft, not a stopped run.
+    assert generator.draft(
+        subject="demo.run_demo._ServerThread.base_url", offered=_offers()
+    ) == Draft("", (), "purpose")
+    assert generator.name == f"claude-code/{ANSWERED}"
+
+    # And the margin genuinely does not matter any more: invert it, and nothing changes.
+    inverted = _envelope(
+        '{"claim": "", "cited_refs": []}',
+        models={"claude-haiku-4-5-20251001": 900, ANSWERED: 1},
+    )
+    second = _generator(FakeCLI(_envelope('{"claim": "c", "cited_refs": [1]}'), inverted), monkeypatch)
+    second.draft(subject="leases.acquire", offered=_offers())
+    assert second.draft(subject="x", offered=_offers()) == Draft("", (), "purpose")
+    assert second.answered_model == ANSWERED
+
+
+def test_the_decoration_on_a_model_id_does_not_split_the_generator_column(monkeypatch):
+    """`claude-opus-5[1m]` and `claude-opus-5` are the same weights with and without a
+    context-window entitlement, and the envelope's own `canonicalModel` says so. A run that
+    saw the suffix move would otherwise stop as a substitution, or worse, rename itself
+    halfway and orphan every row it had already written under the old string."""
+    fake = FakeCLI(
+        _envelope('{"claim": "c", "cited_refs": [1]}'),
+        _envelope('{"claim": "d", "cited_refs": [2]}', models={"claude-opus-5": 30}),
+    )
+    generator = _generator(fake, monkeypatch)
+
+    generator.draft(subject="leases.acquire", offered=_offers())
+    assert generator.draft(subject="leases.release", offered=_offers()).claim == "d"
+    # The ORIGINALLY recorded name is kept, so the column does not split mid-run.
+    assert generator.name == f"claude-code/{ANSWERED}"
+
+
+def test_a_new_companion_model_is_warned_about_once(monkeypatch, caplog):
+    """"The extra entries are overhead" is what makes the membership rule sound, and it is
+    an assumption. An assumption that is never checked is how the rule this replaced
+    survived long enough to break a run, so a model that has not been seen on this run
+    before gets one warning -- and only one, because a warning per symbol over 151 symbols
+    is a log nobody reads."""
+    fake = FakeCLI(
+        _envelope('{"claim": "c", "cited_refs": [1]}'),
+        _envelope('{"claim": "d", "cited_refs": [2]}', models={"claude-haiku-4-5": 9, ANSWERED: 30}),
+    )
+    generator = _generator(fake, monkeypatch)
+    generator.draft(subject="leases.acquire", offered=_offers())
+
+    with caplog.at_level(logging.WARNING, logger="codelearner.generate.claude_code"):
+        generator.draft(subject="leases.release", offered=_offers())
+        generator.draft(subject="leases.other", offered=_offers())
+
+    assert caplog.text.count("harness overhead") == 1
+    assert "claude-haiku-4-5" in caplog.text
 
 
 def test_an_envelope_with_no_model_usage_cannot_be_attributed_and_raises(monkeypatch):
@@ -595,22 +707,48 @@ def test_an_envelope_with_no_model_usage_cannot_be_attributed_and_raises(monkeyp
         generator.draft(subject="leases.acquire", offered=_offers())
 
 
-def test_the_answering_model_is_the_one_that_wrote_the_output(caplog):
-    """MEASURED: with tools enabled a `claude-haiku-4-5` entry appears beside the answering
-    model, having spent tokens on harness-internal work. Attributing the claim to whichever
-    key happened to be first would label it with a model that wrote fifteen tokens of
-    something else, so the entry with the most OUTPUT tokens wins -- the answer being the
-    thing that was written. It is a heuristic and it says so when it fires."""
-    envelope = _envelope("x", models={"claude-haiku-4-5-20251001": 15, ANSWERED: 1032})
-    with caplog.at_level(logging.WARNING, logger="codelearner.generate.claude_code"):
-        assert answering_model(envelope) == ANSWERED
-    assert "reports 2 models" in caplog.text
+def test_attribution_asks_whether_the_run_s_model_participated():
+    """The rule, in one test. `expected` is a membership question and nothing else: present
+    means it answered, however few tokens it wrote; absent is the only thing that is a
+    substitution. Token counts appear nowhere, which is why a one-token margin cannot flip
+    it."""
+    both = _envelope("x", models={"claude-haiku-4-5-20251001": 9999, ANSWERED: 1})
+    assert answering_model(both, expected=ANSWERED) == ANSWERED
 
-    # One entry is the normal case under `--tools ""` and runs no heuristic and no warning.
-    caplog.clear()
-    with caplog.at_level(logging.WARNING, logger="codelearner.generate.claude_code"):
-        assert answering_model(_envelope("x")) == ANSWERED
-    assert caplog.text == ""
+    with pytest.raises(ModelSubstituted):
+        answering_model(both, expected="claude-sonnet-4-5")
+
+    # `canonicalModel` carries the identity, so decoration is not a substitution.
+    assert answering_model(both, expected="claude-opus-5") == "claude-opus-5"
+
+
+def test_a_pinned_model_is_matched_by_identity_from_the_first_call():
+    """Pinning removes the attribution question outright: a request is matched against the
+    entries by identity, aliases included, so a harness fallback is caught before a single
+    claim is written rather than on whichever later call happens to reveal it."""
+    both = _envelope("x", models={"claude-haiku-4-5-20251001": 15, ANSWERED: 20})
+
+    assert answering_model(both, requested="opus") == ANSWERED
+    assert answering_model(both, requested="claude-opus-5") == ANSWERED
+    assert answering_model(both, requested="claude-opus-5[1m]") == ANSWERED
+    assert answering_model(both, requested="haiku") == "claude-haiku-4-5-20251001"
+
+    with pytest.raises(ModelSubstituted) as excinfo:
+        answering_model(both, requested="sonnet")
+    assert "sonnet" in str(excinfo.value)
+
+
+def test_an_unpinned_ambiguous_response_refuses_to_name_itself():
+    """The one place a choice is still required, and it is made by declining to make one.
+    Guessing here is what broke a run; an operator adding `model=` is a ten-second fix,
+    and a store attributed to the wrong model is not fixable at all. The single-entry case
+    -- what the probe returns, measured -- has nothing to choose and just answers."""
+    assert answering_model(_envelope("x")) == ANSWERED
+
+    with pytest.raises(GeneratorUnavailable) as excinfo:
+        answering_model(_envelope("x", models={"claude-haiku-4-5-20251001": 15, ANSWERED: 20}))
+    assert "pass `model=`" in str(excinfo.value)
+    assert not isinstance(excinfo.value, ModelSubstituted)
 
 
 def test_the_name_is_prefixed_with_the_runtime(monkeypatch):

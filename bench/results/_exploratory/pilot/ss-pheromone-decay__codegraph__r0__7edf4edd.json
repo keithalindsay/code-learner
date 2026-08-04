@@ -1,0 +1,90 @@
+{
+  "run_id": "ss-pheromone-decay__codegraph__r0__7edf4edd",
+  "task_id": "ss-pheromone-decay",
+  "arm": "codegraph",
+  "repo": "/home/keith/projects/swarm-sync",
+  "model": "sonnet",
+  "rep": 0,
+  "arm_position": 1,
+  "started_at": 1785799741.4504213,
+  "prompt": "In this repository, what is the purpose of the pheromone table and how does a pheromone stop being relevant over time? Name the functions involved and cite file:line. Answer in under 200 words.",
+  "ground_truth": "PLACEHOLDER - variance probe only, not a judged task",
+  "ok": true,
+  "error": null,
+  "answer": "The `pheromone` table holds decaying activity signals \u2014 one row per (parcel_id, agent_id, kind) triple, where kind is `planned`/`touched`/`done` (`swarmsync/blackboard/models.py:49,173-182`). It's how agents leave scent on code parcels they're working near, so other agents can sense recent activity without a lock.\n\n- `drop_pheromone` (`swarmsync/blackboard/events.py:273`) upserts strength/`updated_at` for a key on each new signal.\n- `decay_pheromone` (`swarmsync/blackboard/events.py:311`) is what makes a pheromone stop being relevant: it multiplicatively decays every row's strength toward 0 with `strength *= 0.5 ** (elapsed/half_life)`, floored at 0.0, done in one atomic SQL `UPDATE` (not read-modify-write) to avoid lost updates from concurrent drops.\n- `decay_once` (`swarmsync/coordinator/reaper.py:160`) is the periodic caller \u2014 the reaper invokes `decay_pheromone` roughly every 1 second, so strength continuously fades unless refreshed by another `drop_pheromone`.\n\nSo relevance decays via exponential half-life rather than hard expiry \u2014 a pheromone never gets deleted, it just asymptotically approaches 0 strength until it's effectively noise.",
+  "tools_offered": [
+    "Bash",
+    "CronCreate",
+    "CronDelete",
+    "CronList",
+    "DesignSync",
+    "EnterWorktree",
+    "ExitWorktree",
+    "LSP",
+    "Read",
+    "ReportFindings",
+    "ScheduleWakeup",
+    "SendMessage",
+    "Skill",
+    "TaskCreate",
+    "TaskGet",
+    "TaskList",
+    "TaskOutput",
+    "TaskStop",
+    "TaskUpdate",
+    "ToolSearch",
+    "Workflow",
+    "mcp__codegraph__codegraph_explore"
+  ],
+  "mcp_servers": [
+    {
+      "name": "codegraph",
+      "status": "connected"
+    }
+  ],
+  "mcp_status": {
+    "codegraph": "connected"
+  },
+  "index_offered": true,
+  "index_first_class": true,
+  "tool_calls": [
+    {
+      "name": "ToolSearch",
+      "input": {
+        "query": "select:mcp__codegraph__codegraph_explore",
+        "max_results": 5
+      }
+    },
+    {
+      "name": "mcp__codegraph__codegraph_explore",
+      "input": {
+        "query": "pheromone table purpose expiry decay relevance"
+      }
+    }
+  ],
+  "tool_call_counts": {
+    "ToolSearch": 1,
+    "mcp__codegraph__codegraph_explore": 1
+  },
+  "n_tool_calls": 2,
+  "index_tool_calls": 1,
+  "toolsearch_calls": 1,
+  "index_tool_errors": 0,
+  "input_tokens": 6,
+  "output_tokens": 910,
+  "cache_creation_input_tokens": 14636,
+  "cache_read_input_tokens": 90705,
+  "total_tokens": 106257,
+  "total_cost_usd": 0.1286955,
+  "wall_s": 13.834179794008378,
+  "duration_api_ms": 12750,
+  "num_turns": 3,
+  "session_id": "b9cb656e-68db-43d9-b331-82a7c876e387",
+  "stop_reason": "end_turn",
+  "transcript_path": "bench/results/pilot/ss-pheromone-decay__codegraph__r0__7edf4edd.stream.jsonl",
+  "exit_code": 0,
+  "extra_config": {
+    "mcp_config": "/home/keith/projects/code-learner/bench/mcp/codegraph.json",
+    "defer_parity": false
+  }
+}

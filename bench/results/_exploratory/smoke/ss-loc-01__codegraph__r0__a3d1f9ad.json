@@ -1,0 +1,116 @@
+{
+  "run_id": "ss-loc-01__codegraph__r0__a3d1f9ad",
+  "task_id": "ss-loc-01",
+  "arm": "codegraph",
+  "repo": "/home/keith/projects/swarm-sync",
+  "model": "sonnet",
+  "rep": 0,
+  "arm_position": 1,
+  "started_at": 1785801750.8209195,
+  "prompt": "In swarm-sync, when a coordinating server shuts down it hands back the operating-system-level claim that stops a second server process from running against the same repository. Which function does that? Answer with one fully-qualified name (module path + symbol).",
+  "ground_truth": {
+    "qualnames": [
+      "swarmsync.repolock.RepoLock.release"
+    ],
+    "match": "all",
+    "decoys": [
+      "swarmsync.blackboard.leases.release",
+      "swarmsync.agent.client.BlackboardClient.release"
+    ],
+    "decoy_note": "A keyword search for 'release' returns the lease-layer release and the HTTP client's release first; neither has anything to do with the OS-level single-server guard."
+  },
+  "ok": true,
+  "error": null,
+  "answer": "Found it: `swarmsync.repolock.RepoLock.release`\n\nWhen the coordinating server shuts down, `RepoLock.release()` (`swarmsync/repolock.py:167`) drops the `flock` held on `<root>/.git/swarmsync.lock` \u2014 the OS-level advisory lock that otherwise stops a second server process from coordinating the same repo.",
+  "tools_offered": [
+    "Bash",
+    "CronCreate",
+    "CronDelete",
+    "CronList",
+    "DesignSync",
+    "EnterWorktree",
+    "ExitWorktree",
+    "LSP",
+    "Read",
+    "ReportFindings",
+    "ScheduleWakeup",
+    "SendMessage",
+    "Skill",
+    "TaskCreate",
+    "TaskGet",
+    "TaskList",
+    "TaskOutput",
+    "TaskStop",
+    "TaskUpdate",
+    "ToolSearch",
+    "Workflow",
+    "mcp__codegraph__codegraph_explore"
+  ],
+  "mcp_servers": [
+    {
+      "name": "codegraph",
+      "status": "connected"
+    }
+  ],
+  "mcp_status": {
+    "codegraph": "connected"
+  },
+  "index_offered": true,
+  "index_first_class": true,
+  "tool_calls": [
+    {
+      "name": "ToolSearch",
+      "input": {
+        "query": "select:mcp__codegraph__codegraph_explore",
+        "max_results": 5
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "cat /home/keith/.claude/projects/-home-keith-projects-swarm-sync/memory/swarm-sync-state.md 2>/dev/null",
+        "description": "Read swarm-sync state memory"
+      }
+    },
+    {
+      "name": "mcp__codegraph__codegraph_explore",
+      "input": {
+        "query": "server shutdown release lock file managed root flock lockfile single instance"
+      }
+    },
+    {
+      "name": "mcp__codegraph__codegraph_explore",
+      "input": {
+        "query": "repolock lock_path_for server startup shutdown release process lock"
+      }
+    }
+  ],
+  "tool_call_counts": {
+    "ToolSearch": 1,
+    "Bash": 1,
+    "mcp__codegraph__codegraph_explore": 2
+  },
+  "n_tool_calls": 4,
+  "index_tool_calls": 2,
+  "toolsearch_calls": 1,
+  "index_tool_errors": 0,
+  "input_tokens": 8,
+  "output_tokens": 905,
+  "cache_creation_input_tokens": 31649,
+  "cache_read_input_tokens": 147915,
+  "total_tokens": 180477,
+  "total_cost_usd": 0.24786749999999996,
+  "wall_s": 17.200159962987527,
+  "duration_api_ms": 16116,
+  "num_turns": 5,
+  "session_id": "0525ff06-c54d-4ada-bbe1-13cdfaadb670",
+  "stop_reason": "end_turn",
+  "transcript_path": "bench/results/_exploratory/smoke/ss-loc-01__codegraph__r0__a3d1f9ad.stream.jsonl",
+  "exit_code": 0,
+  "extra_config": {
+    "mcp_config": "/home/keith/projects/code-learner/bench/mcp/codegraph.json",
+    "defer_parity": false,
+    "nudge_discovery": false,
+    "fast_handshake": true
+  }
+}

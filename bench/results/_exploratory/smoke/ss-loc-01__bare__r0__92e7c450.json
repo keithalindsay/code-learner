@@ -1,0 +1,101 @@
+{
+  "run_id": "ss-loc-01__bare__r0__92e7c450",
+  "task_id": "ss-loc-01",
+  "arm": "bare",
+  "repo": "/home/keith/projects/swarm-sync",
+  "model": "sonnet",
+  "rep": 0,
+  "arm_position": 2,
+  "started_at": 1785801768.022327,
+  "prompt": "In swarm-sync, when a coordinating server shuts down it hands back the operating-system-level claim that stops a second server process from running against the same repository. Which function does that? Answer with one fully-qualified name (module path + symbol).",
+  "ground_truth": {
+    "qualnames": [
+      "swarmsync.repolock.RepoLock.release"
+    ],
+    "match": "all",
+    "decoys": [
+      "swarmsync.blackboard.leases.release",
+      "swarmsync.agent.client.BlackboardClient.release"
+    ],
+    "decoy_note": "A keyword search for 'release' returns the lease-layer release and the HTTP client's release first; neither has anything to do with the OS-level single-server guard."
+  },
+  "ok": true,
+  "error": null,
+  "answer": "**`swarmsync.repolock.RepoLock.release`**\n\nIt calls `fcntl.flock(fd, fcntl.LOCK_UN)` on the descriptor for `<root>/.git/swarmsync.lock`, releasing the OS-level exclusive `flock` that `RepoLock.acquire` took to enforce one server per repo (`swarmsync/repolock.py:167`).",
+  "tools_offered": [
+    "Bash",
+    "CronCreate",
+    "CronDelete",
+    "CronList",
+    "DesignSync",
+    "EnterWorktree",
+    "ExitWorktree",
+    "LSP",
+    "Read",
+    "ReportFindings",
+    "ScheduleWakeup",
+    "SendMessage",
+    "Skill",
+    "TaskCreate",
+    "TaskGet",
+    "TaskList",
+    "TaskOutput",
+    "TaskStop",
+    "TaskUpdate",
+    "ToolSearch",
+    "Workflow"
+  ],
+  "mcp_servers": [],
+  "mcp_status": {},
+  "index_offered": true,
+  "index_first_class": true,
+  "tool_calls": [
+    {
+      "name": "Bash",
+      "input": {
+        "command": "grep -rn \"flock\\|LOCK_UN\\|lockf\\|fcntl\" /home/keith/projects/swarm-sync --include=*.py --include=*.go --include=*.rs --include=*.js --include=*.ts -l 2>/dev/null | grep -v test"
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "grep -n \"flock\\|LOCK_UN\\|def \\|class \" /home/keith/projects/swarm-sync/swarmsync/repolock.py"
+      }
+    },
+    {
+      "name": "Read",
+      "input": {
+        "file_path": "/home/keith/projects/swarm-sync/swarmsync/repolock.py",
+        "offset": 160,
+        "limit": 25
+      }
+    }
+  ],
+  "tool_call_counts": {
+    "Bash": 2,
+    "Read": 1
+  },
+  "n_tool_calls": 3,
+  "index_tool_calls": 0,
+  "toolsearch_calls": 0,
+  "index_tool_errors": 0,
+  "input_tokens": 8,
+  "output_tokens": 748,
+  "cache_creation_input_tokens": 9853,
+  "cache_read_input_tokens": 121951,
+  "total_tokens": 132560,
+  "total_cost_usd": 0.10694730000000001,
+  "wall_s": 14.348302851023618,
+  "duration_api_ms": 13404,
+  "num_turns": 4,
+  "session_id": "67a761b1-e173-49fa-aa9c-c73a19b6eb3d",
+  "stop_reason": "end_turn",
+  "transcript_path": "bench/results/_exploratory/smoke/ss-loc-01__bare__r0__92e7c450.stream.jsonl",
+  "exit_code": 0,
+  "extra_config": {
+    "mcp_config": "/home/keith/projects/code-learner/bench/mcp/bare.json",
+    "defer_parity": false,
+    "nudge_discovery": false,
+    "fast_handshake": true
+  }
+}

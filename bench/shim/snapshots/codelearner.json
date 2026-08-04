@@ -1,0 +1,257 @@
+{
+  "command": [
+    "/home/keith/projects/code-learner/.venv/bin/python",
+    "-m",
+    "codelearner.server"
+  ],
+  "cwd": "/home/keith/projects/swarm-sync",
+  "initialize": {
+    "capabilities": {
+      "experimental": {},
+      "prompts": {
+        "listChanged": false
+      },
+      "resources": {
+        "listChanged": false,
+        "subscribe": false
+      },
+      "tools": {
+        "listChanged": false
+      }
+    },
+    "instructions": "GraphRAG over an indexed codebase.\n\nRetrieval is tier-labelled and the labels mean something. T0 is a parsed fact: the\ntext was read out of the source and nothing had to be decided to reach it. T1 is a\nresolved name -- a call site bound to a symbol by a resolver that carries a\nconfidence below 1 and can be wrong. T2 is an inference, and this index holds one\nonly if it was submitted with citations that hash-matched the file on disk.\n\nThis server does not call a model. If you want an inference stored, you write it:\ncall submit_assertion with the claim and the exact spans that support it. The spans\nare re-read and re-hashed off disk before anything is written. Zero spans is\nrefused; a span whose bytes have changed is refused, and the refusal tells you what\nthe file says now. Cite what you actually read -- retrieval hands you the\ncontent_hash of every hit for exactly this purpose.\n\nEvery refusal carries a stable `code` worth branching on. One of them concerns the\nindex rather than your call: if a human rebuilds the index while you are working,\nthe next call refuses with `index_replaced`. That refusal is not about the call --\nit is telling you that every hash, symbol_id and line number you are holding\ndescribes the previous build. Re-run your retrieval before you cite anything.\n",
+    "protocolVersion": "2024-11-05",
+    "serverInfo": {
+      "name": "codelearner",
+      "version": "0.0.1"
+    }
+  },
+  "tools/list": {
+    "tools": [
+      {
+        "description": "Hybrid retrieval over the index: lexical + dense + graph expansion, fused.\n\n        Returns tier-labelled hits. Each carries qualname, path with a line range, the\n        modalities that found it, `via` -- the account of which symbol's call edge\n        reached it, non-empty only when graph expansion produced the hit -- and the\n        `content_hash` you need to cite it in submit_assertion.\n\n        `facts_only` drops anything above tier 1, and today it drops nothing: no\n        modality in this server retrieves at tier 2, so every hit is already a parsed\n        fact (T0) or a resolved name (T1), and passing it changes no result you will\n        see. It is wired at the seam a tier-2 modality would arrive through, so it\n        starts meaning something the day one exists, and it fails closed until then --\n        a hit arriving under a modality this server does not recognise is treated as\n        an inference and dropped.\n\n        It is NOT what keeps stored inferences out of your context, because none\n        arrive here. The tier-2 claims this index holds hang off symbols, so the flag\n        that does that work is get_symbol's `facts_only`, which is the same promise on\n        the surface where tier 2 actually appears.\n        ",
+        "inputSchema": {
+          "properties": {
+            "query": {
+              "title": "Query",
+              "type": "string"
+            },
+            "k": {
+              "default": 10,
+              "title": "K",
+              "type": "integer"
+            },
+            "facts_only": {
+              "default": false,
+              "title": "Facts Only",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "query"
+          ],
+          "type": "object",
+          "title": "search_codeArguments"
+        },
+        "name": "search_code",
+        "outputSchema": {
+          "type": "object",
+          "additionalProperties": true,
+          "title": "search_codeDictOutput"
+        }
+      },
+      {
+        "description": "One symbol, its resolved callers and callees, and any servable assertions.\n\n        `qualname` is the dotted path from the module root, e.g.\n        'codelearner.db.init_db'; a name this index does not hold is refused with\n        'no_such_symbol'. Callers and callees are tier 1 -- resolved name bindings,\n        each with the confidence its resolver assigned. Unbound call sites are\n        returned separately as tier 0.\n\n        `assertions` is the only tier-2 content this server ever returns. Each is\n        re-verified against the file on disk before it is returned, so one whose\n        evidence has moved is expired rather than served.\n\n        `facts_only` withholds them -- and this is the surface where that flag changes\n        an answer, unlike search_code's, where no modality retrieves at tier 2. Use it\n        when you want only what was parsed out of the source and what a resolver bound,\n        with nothing another agent asserted. The count of withheld claims comes back as\n        `assertions_withheld` and is repeated in `notes`, so a suppressed claim is\n        never an invisible one: you are told that something exists and that you chose\n        not to read it.\n        ",
+        "inputSchema": {
+          "properties": {
+            "qualname": {
+              "title": "Qualname",
+              "type": "string"
+            },
+            "facts_only": {
+              "default": false,
+              "title": "Facts Only",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "qualname"
+          ],
+          "type": "object",
+          "title": "get_symbolArguments"
+        },
+        "name": "get_symbol",
+        "outputSchema": {
+          "type": "object",
+          "additionalProperties": true,
+          "title": "get_symbolDictOutput"
+        }
+      },
+      {
+        "description": "An ordered tour of the codebase: what to read, in what order, and why.\n\n        With a topic, the tour is seeded from retrieval and answers \"read these N\n        things to understand auth\". Without one, it is seeded from call-graph\n        centrality and answers \"read these N things to understand this repo\". Stops\n        are ordered by dependency depth, so a stop's callees come before it.\n        ",
+        "inputSchema": {
+          "properties": {
+            "topic": {
+              "default": "",
+              "title": "Topic",
+              "type": "string"
+            },
+            "limit": {
+              "default": 12,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          "type": "object",
+          "title": "reading_pathArguments"
+        },
+        "name": "reading_path",
+        "outputSchema": {
+          "type": "object",
+          "additionalProperties": true,
+          "title": "reading_pathDictOutput"
+        }
+      },
+      {
+        "description": "Store an inference about a symbol, if and only if its citations hold.\n\n        This is the inversion: the index does no inference of its own, you do, and\n        this gate decides whether it may be stored. Every rule is arithmetic.\n\n        An assertion with zero evidence spans is refused ('evidence_required'), and so\n        is one with no claim text ('empty_claim') -- correct citations under a blank\n        statement are still nothing anyone can check. A span whose bytes no longer\n        hash to what you cited is refused ('hash_mismatch'), and the refusal returns\n        the observed hash and the text that is actually there, so you can correct the\n        citation rather than guess again. A subject_qualname that names no indexed\n        symbol is refused ('unknown_subject') -- verified spans do not make a claim\n        about a symbol that does not exist accountable to anyone.\n\n        Cite what you read: pass the content_hash that search_code or get_symbol\n        returned, or the exact source text at those lines. A span carrying neither is\n        'evidence_unverifiable'. Spans must name a file this index parsed\n        ('file_missing'), inside the repository ('path_escapes_repo',\n        'span_escapes_repo'), at lines that exist in it ('bad_range'), by a path\n        containing no NUL byte ('bad_path'), in a file under 4MiB ('file_too_large').\n        At most 32 spans per submission ('too_many_spans'); the claim is capped at\n        4096 characters ('claim_too_long'); confidence, if given, must be a real\n        number between 0 and 1 ('bad_confidence').\n\n        One refusal is not about your call at all. If a human rebuilds the index while\n        you are working, this returns 'index_replaced' -- before writing anything if\n        the rebuild is already visible, after writing if it lands mid-call, in which\n        case the claim went into the deleted file and is gone. Either way the hashes\n        you are holding are one build old: re-run your retrieval, then submit again.\n        ",
+        "inputSchema": {
+          "properties": {
+            "subject_qualname": {
+              "title": "Subject Qualname",
+              "type": "string"
+            },
+            "claim": {
+              "title": "Claim",
+              "type": "string"
+            },
+            "evidence_spans": {
+              "items": {
+                "$ref": "#/$defs/EvidenceSpanInput"
+              },
+              "title": "Evidence Spans",
+              "type": "array"
+            },
+            "kind": {
+              "default": "purpose",
+              "title": "Kind",
+              "type": "string"
+            },
+            "generator": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Generator"
+            },
+            "confidence": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Confidence"
+            }
+          },
+          "required": [
+            "subject_qualname",
+            "claim",
+            "evidence_spans"
+          ],
+          "type": "object",
+          "$defs": {
+            "EvidenceSpanInput": {
+              "description": "One citation, as the agent supplies it.\n\n`line_start`/`line_end` are 1-based and inclusive, and the bytes they name are\nthe lines themselves WITHOUT the newline that terminates the last one -- so\n`text` is what you would get by copying those lines out of an editor.\n\nExactly one thing is required beyond the location: something to check it against.\n`content_hash` is the sha256 retrieval already handed you for that symbol;\n`text` is the source you read. Either can be compared to the file on disk. A span\nwith neither is a pointer, not evidence -- it names a place without asserting\nanything about what is there, so nothing about it can ever be found to be wrong.",
+              "properties": {
+                "path": {
+                  "description": "repo-root-relative path, e.g. 'codelearner/db.py'",
+                  "title": "Path",
+                  "type": "string"
+                },
+                "line_start": {
+                  "description": "1-based first line of the cited range",
+                  "title": "Line Start",
+                  "type": "integer"
+                },
+                "line_end": {
+                  "description": "1-based last line, inclusive",
+                  "title": "Line End",
+                  "type": "integer"
+                },
+                "content_hash": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "sha256 of the cited bytes, as returned by search_code/get_symbol",
+                  "title": "Content Hash"
+                },
+                "text": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "the exact source at those lines, without a trailing newline",
+                  "title": "Text"
+                }
+              },
+              "required": [
+                "path",
+                "line_start",
+                "line_end"
+              ],
+              "title": "EvidenceSpanInput",
+              "type": "object"
+            }
+          },
+          "title": "submit_assertionArguments"
+        },
+        "name": "submit_assertion",
+        "outputSchema": {
+          "type": "object",
+          "additionalProperties": true,
+          "title": "submit_assertionDictOutput"
+        }
+      },
+      {
+        "description": "What is in this index, by tier.\n\n        Counts of files, symbols, edges and chunks; edges split by tier (T0 call sites\n        as written, T1 bound to a symbol); assertions split by status, including the\n        rejected ones; name resolution rates; and whether the index holds vectors.\n        ",
+        "inputSchema": {
+          "properties": {},
+          "type": "object",
+          "title": "index_statsArguments"
+        },
+        "name": "index_stats",
+        "outputSchema": {
+          "type": "object",
+          "additionalProperties": true,
+          "title": "index_statsDictOutput"
+        }
+      }
+    ]
+  },
+  "prompts/list": {
+    "prompts": []
+  },
+  "resources/list": {
+    "resources": []
+  },
+  "tools_sha256": "b23767a3088dad6f44b92038aed96be532ce02e905b36699317b0cbc17674d9e"
+}

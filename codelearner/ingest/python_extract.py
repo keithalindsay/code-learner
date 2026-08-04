@@ -305,10 +305,19 @@ def extract(source: bytes, rel_path: str, mtime_ns: int = 0) -> FileExtract:
         elif node_type == "import_from_statement":
             module_node = node.child_by_field_name("module_name")
             module_path = _text(source, module_node) if module_node is not None else ""
+            # `!=`, not `is not`. tree-sitter's Python binding returns a FRESH
+            # wrapper object from every `child_by_field_name` call, so an identity
+            # test against `module_node` never matches and the module was never
+            # filtered out of its own import statement. Every `from X import a`
+            # therefore also emitted a phantom edge naming `X.X` -- 211, 942 and 754
+            # of them on swarm-sync, kalshi-bot and facefusion, all landing in the
+            # in-repo denominator whenever the basename happened to match a real
+            # module. The resolution rate was being measured against references that
+            # do not exist in the source.
             names = [
                 c
                 for c in node.named_children
-                if c is not module_node
+                if c != module_node
                 and c.type in ("dotted_name", "aliased_import", "wildcard_import")
             ]
             if not names:

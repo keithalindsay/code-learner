@@ -1,0 +1,96 @@
+{
+  "run_id": "ss-pheromone-decay__codegraph__r1__22fe63c1",
+  "task_id": "ss-pheromone-decay",
+  "arm": "codegraph",
+  "repo": "/home/keith/projects/swarm-sync",
+  "model": "sonnet",
+  "rep": 1,
+  "arm_position": 1,
+  "started_at": 1785799908.0827262,
+  "prompt": "In this repository, what is the purpose of the pheromone table and how does a pheromone stop being relevant over time? Name the functions involved and cite file:line. Answer in under 200 words.",
+  "ground_truth": "PLACEHOLDER - variance probe only, not a judged task",
+  "ok": true,
+  "error": null,
+  "answer": "The `pheromone` table (`swarmsync/blackboard/models.py:173`) records a decaying activity signal \u2014 `(parcel_id, agent_id, kind, strength, updated_at)`, where `kind` is `planned`/`touched`/`done` \u2014 so agents can see recent work on a code parcel without a lease (DESIGN.md \u00a74.1).\n\nIt never gets deleted; instead its `strength` exponentially decays toward 0 and effectively stops mattering once low enough:\n\n- **`drop_pheromone`** (`swarmsync/blackboard/events.py:273`) \u2014 upserts a row per `(parcel_id, agent_id, kind)`; a repeat drop replaces strength/`updated_at` rather than duplicating.\n- **`decay_pheromone`** (`swarmsync/blackboard/events.py:311`) \u2014 one SQL `UPDATE` applying `strength *= 0.5 ** (elapsed / half_life)`, clamped to a floor of 0.0, and bumps `updated_at` to `now` for every row. Done in SQL (not Python read-modify-write) so a concurrent `drop_pheromone` can't be clobbered by a stale decayed value.\n- **`decay_once`** (`swarmsync/coordinator/reaper.py:160`) \u2014 thin wrapper calling `decay_pheromone` each pass.\n- **`run`** (`swarmsync/coordinator/reaper.py:177`) \u2014 the reaper's background loop, runs `reap_once` then `decay_once` every `interval` seconds.\n\nSo relevance decays continuously by half-life rather than expiring at a hard cutoff.",
+  "tools_offered": [
+    "Bash",
+    "CronCreate",
+    "CronDelete",
+    "CronList",
+    "DesignSync",
+    "EnterWorktree",
+    "ExitWorktree",
+    "LSP",
+    "Read",
+    "ReportFindings",
+    "ScheduleWakeup",
+    "SendMessage",
+    "Skill",
+    "TaskCreate",
+    "TaskGet",
+    "TaskList",
+    "TaskOutput",
+    "TaskStop",
+    "TaskUpdate",
+    "ToolSearch",
+    "Workflow",
+    "mcp__codegraph__codegraph_explore"
+  ],
+  "mcp_servers": [
+    {
+      "name": "codegraph",
+      "status": "connected"
+    }
+  ],
+  "mcp_status": {
+    "codegraph": "connected"
+  },
+  "index_offered": true,
+  "index_first_class": true,
+  "tool_calls": [
+    {
+      "name": "ToolSearch",
+      "input": {
+        "query": "select:mcp__codegraph__codegraph_explore",
+        "max_results": 1
+      }
+    },
+    {
+      "name": "mcp__codegraph__codegraph_explore",
+      "input": {
+        "query": "pheromone table decay expiration relevance"
+      }
+    },
+    {
+      "name": "mcp__codegraph__codegraph_explore",
+      "input": {
+        "query": "decay_once reaper pheromone half_life prune"
+      }
+    }
+  ],
+  "tool_call_counts": {
+    "ToolSearch": 1,
+    "mcp__codegraph__codegraph_explore": 2
+  },
+  "n_tool_calls": 3,
+  "index_tool_calls": 2,
+  "toolsearch_calls": 1,
+  "index_tool_errors": 0,
+  "input_tokens": 8,
+  "output_tokens": 1349,
+  "cache_creation_input_tokens": 10353,
+  "cache_read_input_tokens": 138812,
+  "total_tokens": 150522,
+  "total_cost_usd": 0.12402060000000001,
+  "wall_s": 20.34347478998825,
+  "duration_api_ms": 19453,
+  "num_turns": 4,
+  "session_id": "74a5d303-69a3-498e-b0b6-58d6f244e14e",
+  "stop_reason": "end_turn",
+  "transcript_path": "bench/results/pilot/ss-pheromone-decay__codegraph__r1__22fe63c1.stream.jsonl",
+  "exit_code": 0,
+  "extra_config": {
+    "mcp_config": "/home/keith/projects/code-learner/bench/mcp/codegraph.json",
+    "defer_parity": false
+  }
+}

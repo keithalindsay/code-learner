@@ -1,0 +1,100 @@
+{
+  "run_id": "ss-lease-acquire__code-learner__r1__39d2c976",
+  "task_id": "ss-lease-acquire",
+  "arm": "code-learner",
+  "repo": "/home/keith/projects/swarm-sync",
+  "model": "sonnet",
+  "rep": 1,
+  "arm_position": 0,
+  "started_at": 1785800813.404117,
+  "prompt": "In this repository, explain how a lease is acquired: which function performs the compare-and-swap, what happens when the parcel is already leased by another agent, and how the TTL is set. Cite the file:line for each claim. Answer in under 200 words.",
+  "ground_truth": "PLACEHOLDER - variance probe only, not a judged task",
+  "ok": true,
+  "error": null,
+  "answer": "This is a plain code-explanation task with no matching skill \u2014 I'll answer directly from what I found.\n\n**Lease acquisition** happens in `acquire()`, `swarmsync/blackboard/leases.py:187-374`.\n\n**The CAS**: an `INSERT ... SELECT ... WHERE NOT EXISTS (...)` at `swarmsync/blackboard/leases.py:332-356`. The `WHERE NOT EXISTS` subquery is the compare; it only matches rows on the same `parcel_id` that are `status = 'active'`, unexpired (`ttl_expires_at > {_NOW_SQL}`), and conflicting \u2014 i.e. either side is `write`/`exclusive` \u2014 excluding the caller's own same-agent/same-mode row (`leases.py:339-346`). If no such row exists, the INSERT lands atomically (single SQLite statement, so no TOCTOU gap).\n\n**Already leased by another agent**: the `NOT EXISTS` predicate fails, so `RETURNING id` yields no row (`row is None`, `leases.py:357`). The function emits a `lease_denied` event (`leases.py:369-374`) and returns `LeaseResult(granted=False, ...)`, naming the conflicting holder via a follow-up lookup just below (`leases.py:376+`).\n\n**TTL**: set in the same INSERT as `{_NOW_SQL} + :ttl` for `ttl_expires_at` (`leases.py:337`), where `_NOW_SQL` is SQLite's own clock, not Python's \u2014 deliberately, per the C13 comment (`leases.py:205-208, 310-322`), to avoid minting an already-expired lease if the statement was blocked waiting on the writer lock.",
+  "tools_offered": [
+    "Bash",
+    "CronCreate",
+    "CronDelete",
+    "CronList",
+    "DesignSync",
+    "EnterWorktree",
+    "ExitWorktree",
+    "ListMcpResourcesTool",
+    "LSP",
+    "Read",
+    "ReadMcpResourceDirTool",
+    "ReadMcpResourceTool",
+    "ReportFindings",
+    "ScheduleWakeup",
+    "SendMessage",
+    "Skill",
+    "TaskCreate",
+    "TaskGet",
+    "TaskList",
+    "TaskOutput",
+    "TaskStop",
+    "TaskUpdate",
+    "ToolSearch",
+    "Workflow",
+    "mcp__codelearner__get_symbol",
+    "mcp__codelearner__index_stats",
+    "mcp__codelearner__reading_path",
+    "mcp__codelearner__search_code",
+    "mcp__codelearner__submit_assertion"
+  ],
+  "mcp_servers": [
+    {
+      "name": "codelearner",
+      "status": "connected"
+    }
+  ],
+  "mcp_status": {
+    "codelearner": "connected"
+  },
+  "index_offered": true,
+  "index_first_class": true,
+  "tool_calls": [
+    {
+      "name": "Bash",
+      "input": {
+        "command": "grep -rn \"compare.and.swap\\|CAS\\|def acquire\\|fn acquire\\|func acquire\\|acquire_lease\\|AcquireLease\" --include=*.go --include=*.py --include=*.rs --include=*.ts --include=*.js -i . 2>/dev/null | grep -v test | head -50"
+      }
+    },
+    {
+      "name": "Read",
+      "input": {
+        "file_path": "/home/keith/projects/swarm-sync/swarmsync/blackboard/leases.py",
+        "offset": 180,
+        "limit": 200
+      }
+    }
+  ],
+  "tool_call_counts": {
+    "Bash": 1,
+    "Read": 1
+  },
+  "n_tool_calls": 2,
+  "index_tool_calls": 0,
+  "toolsearch_calls": 0,
+  "index_tool_errors": 0,
+  "input_tokens": 6,
+  "output_tokens": 1261,
+  "cache_creation_input_tokens": 7169,
+  "cache_read_input_tokens": 100994,
+  "total_tokens": 109430,
+  "total_cost_usd": 0.0922452,
+  "wall_s": 17.83602668304229,
+  "duration_api_ms": 16719,
+  "num_turns": 3,
+  "session_id": "e12748e1-05de-44ad-8777-eb55e55480d0",
+  "stop_reason": "end_turn",
+  "transcript_path": "bench/results/fastcheck/ss-lease-acquire__code-learner__r1__39d2c976.stream.jsonl",
+  "exit_code": 0,
+  "extra_config": {
+    "mcp_config": "/home/keith/projects/code-learner/bench/mcp/code-learner-fast.json",
+    "defer_parity": false,
+    "nudge_discovery": false,
+    "fast_handshake": true
+  }
+}

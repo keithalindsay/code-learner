@@ -1,0 +1,116 @@
+{
+  "run_id": "kb-exp-01__code-learner__r0__b51440f3",
+  "task_id": "kb-exp-01",
+  "arm": "code-learner",
+  "repo": "/home/keith/projects/kalshi-bot",
+  "model": "sonnet",
+  "rep": 0,
+  "arm_position": 2,
+  "started_at": 1785801709.3181486,
+  "prompt": "`PaperTrader.check_settlements` treats a market as done when its status is any of three values. One of those three was added after the fact, and ten open positions sat unsettled for days before it was. Which value was missing, and why did its absence produce silently stuck positions rather than an error?",
+  "ground_truth": {
+    "committer_prose": "Root cause: check_settlements() only checked status 'settled'|'closed' but Kalshi returns 'finalized'.",
+    "rubric": [
+      "Identifies the accepted-status set as the load-bearing thing, and 'finalized' as the value that was missing.",
+      "States that Kalshi's API actually reports the terminal state as 'finalized', so the two statuses the code did accept never appeared for those markets.",
+      "Explains the silence: a status that does not match simply falls through the loop, so the position stays open and is retried forever -- there is no else branch and nothing to raise, which is why it looked like markets that had not settled yet."
+    ]
+  },
+  "ok": true,
+  "error": null,
+  "answer": "Confirmed by git history at `src/paper_trading/paper_trader.py:788`.\n\n**Missing value: `\"finalized\"`**\n\nThe original code checked `status in (\"settled\", \"closed\")`. Kalshi's API actually returns `\"finalized\"` as the status for markets that have resolved, so any market that settled with that status never matched the tuple. This was fixed in commit `35dc37d` (\"fix: repair trading pipeline...\"), which added `\"finalized\"` after 10 positions from Mar 9\u201310 sat unsettled for days.\n\n**Why it failed silently instead of erroring:**\n\n- The check is a pure membership test (`status in (...)`) inside a loop over `open_positions`, wrapped in a `try/except` per ticker (line 783). There's no `else` branch and no logging when the status doesn't match \u2014 a market with `status=\"finalized\"` just falls through the `if` with no code path taken.\n- Nothing distinguishes \"still open\" from \"closed but in an unrecognized state.\" The loop simply doesn't add the ticker to `settlements` or `to_remove`, so the position remains in `open_positions` and gets rechecked (and silently skipped) on every future run \u2014 indefinitely, with no exception, no warning, and no dashboard indicator that something was wrong. It looks identical to a market that genuinely hasn't settled yet.\n- Since `get_market()` succeeded and returned a well-formed response, there was nothing to throw \u2014 the bug was a gap in a value set, not a runtime error, so it could only be caught by comparing expected vs. actual API status strings (or noticing stale positions), not by any exception path.",
+  "tools_offered": [
+    "Bash",
+    "CronCreate",
+    "CronDelete",
+    "CronList",
+    "DesignSync",
+    "EnterWorktree",
+    "ExitWorktree",
+    "ListMcpResourcesTool",
+    "LSP",
+    "Read",
+    "ReadMcpResourceDirTool",
+    "ReadMcpResourceTool",
+    "ReportFindings",
+    "ScheduleWakeup",
+    "SendMessage",
+    "Skill",
+    "TaskCreate",
+    "TaskGet",
+    "TaskList",
+    "TaskOutput",
+    "TaskStop",
+    "TaskUpdate",
+    "ToolSearch",
+    "Workflow",
+    "mcp__codelearner__get_symbol",
+    "mcp__codelearner__index_stats",
+    "mcp__codelearner__reading_path",
+    "mcp__codelearner__search_code",
+    "mcp__codelearner__submit_assertion"
+  ],
+  "mcp_servers": [
+    {
+      "name": "codelearner",
+      "status": "connected"
+    }
+  ],
+  "mcp_status": {
+    "codelearner": "connected"
+  },
+  "index_offered": true,
+  "index_first_class": true,
+  "tool_calls": [
+    {
+      "name": "Bash",
+      "input": {
+        "command": "grep -rn \"check_settlements\" /home/keith/projects/kalshi-bot --include=*.py -l"
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "grep -n \"check_settlements\" -A 40 /home/keith/projects/kalshi-bot/src/paper_trading/paper_trader.py | head -80"
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "git log -p --follow -L 788,788:src/paper_trading/paper_trader.py | head -300"
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "git log -p -L 788,788:src/paper_trading/paper_trader.py | head -400"
+      }
+    }
+  ],
+  "tool_call_counts": {
+    "Bash": 4
+  },
+  "n_tool_calls": 4,
+  "index_tool_calls": 0,
+  "toolsearch_calls": 0,
+  "index_tool_errors": 0,
+  "input_tokens": 10,
+  "output_tokens": 1189,
+  "cache_creation_input_tokens": 11135,
+  "cache_read_input_tokens": 162451,
+  "total_tokens": 174785,
+  "total_cost_usd": 0.13341029999999998,
+  "wall_s": 25.235855861043092,
+  "duration_api_ms": 24214,
+  "num_turns": 5,
+  "session_id": "80ef7d72-30f5-4baa-a8de-e6e6265c308a",
+  "stop_reason": "end_turn",
+  "transcript_path": "bench/results/_exploratory/smoke/kb-exp-01__code-learner__r0__b51440f3.stream.jsonl",
+  "exit_code": 0,
+  "extra_config": {
+    "mcp_config": "/home/keith/projects/code-learner/bench/mcp/code-learner-fast.json",
+    "defer_parity": false,
+    "nudge_discovery": false,
+    "fast_handshake": true
+  }
+}

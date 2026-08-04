@@ -1,0 +1,114 @@
+{
+  "run_id": "ss-loc-01__code-learner__r0__e08c4ae6",
+  "task_id": "ss-loc-01",
+  "arm": "code-learner",
+  "repo": "/home/keith/projects/swarm-sync",
+  "model": "sonnet",
+  "rep": 0,
+  "arm_position": 0,
+  "started_at": 1785801734.5548642,
+  "prompt": "In swarm-sync, when a coordinating server shuts down it hands back the operating-system-level claim that stops a second server process from running against the same repository. Which function does that? Answer with one fully-qualified name (module path + symbol).",
+  "ground_truth": {
+    "qualnames": [
+      "swarmsync.repolock.RepoLock.release"
+    ],
+    "match": "all",
+    "decoys": [
+      "swarmsync.blackboard.leases.release",
+      "swarmsync.agent.client.BlackboardClient.release"
+    ],
+    "decoy_note": "A keyword search for 'release' returns the lease-layer release and the HTTP client's release first; neither has anything to do with the OS-level single-server guard."
+  },
+  "ok": true,
+  "error": null,
+  "answer": "**`swarmsync.repolock.RepoLock.release`**\n\nThat's the method called at server shutdown that drops the `flock(2)` held on `<root>/.git/swarmsync.lock`, freeing the OS-level advisory lock so a second `swarmsync-serve` process can subsequently claim it against the same repo.",
+  "tools_offered": [
+    "Bash",
+    "CronCreate",
+    "CronDelete",
+    "CronList",
+    "DesignSync",
+    "EnterWorktree",
+    "ExitWorktree",
+    "ListMcpResourcesTool",
+    "LSP",
+    "Read",
+    "ReadMcpResourceDirTool",
+    "ReadMcpResourceTool",
+    "ReportFindings",
+    "ScheduleWakeup",
+    "SendMessage",
+    "Skill",
+    "TaskCreate",
+    "TaskGet",
+    "TaskList",
+    "TaskOutput",
+    "TaskStop",
+    "TaskUpdate",
+    "ToolSearch",
+    "Workflow",
+    "mcp__codelearner__get_symbol",
+    "mcp__codelearner__index_stats",
+    "mcp__codelearner__reading_path",
+    "mcp__codelearner__search_code",
+    "mcp__codelearner__submit_assertion"
+  ],
+  "mcp_servers": [
+    {
+      "name": "codelearner",
+      "status": "connected"
+    }
+  ],
+  "mcp_status": {
+    "codelearner": "connected"
+  },
+  "index_offered": true,
+  "index_first_class": true,
+  "tool_calls": [
+    {
+      "name": "Bash",
+      "input": {
+        "command": "grep -rn \"flock\\|LOCK_EX\\|pidfile\\|PidFile\\|lockfile\" /home/keith/projects/swarm-sync --include=*.go -l | head -50"
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "ls && echo --- && git ls-files | grep -v node_modules | head -100"
+      }
+    },
+    {
+      "name": "Read",
+      "input": {
+        "file_path": "/home/keith/projects/swarm-sync/swarmsync/repolock.py"
+      }
+    }
+  ],
+  "tool_call_counts": {
+    "Bash": 2,
+    "Read": 1
+  },
+  "n_tool_calls": 3,
+  "index_tool_calls": 0,
+  "toolsearch_calls": 0,
+  "index_tool_errors": 0,
+  "input_tokens": 8,
+  "output_tokens": 520,
+  "cache_creation_input_tokens": 13806,
+  "cache_read_input_tokens": 123965,
+  "total_tokens": 138299,
+  "total_cost_usd": 0.1278495,
+  "wall_s": 16.265020438004285,
+  "duration_api_ms": 15157,
+  "num_turns": 4,
+  "session_id": "bd6e004b-792a-4648-9c7f-25bf25ed11f7",
+  "stop_reason": "end_turn",
+  "transcript_path": "bench/results/_exploratory/smoke/ss-loc-01__code-learner__r0__e08c4ae6.stream.jsonl",
+  "exit_code": 0,
+  "extra_config": {
+    "mcp_config": "/home/keith/projects/code-learner/bench/mcp/code-learner-fast.json",
+    "defer_parity": false,
+    "nudge_discovery": false,
+    "fast_handshake": true
+  }
+}

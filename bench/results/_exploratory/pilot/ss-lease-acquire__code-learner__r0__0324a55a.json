@@ -1,0 +1,102 @@
+{
+  "run_id": "ss-lease-acquire__code-learner__r0__0324a55a",
+  "task_id": "ss-lease-acquire",
+  "arm": "code-learner",
+  "repo": "/home/keith/projects/swarm-sync",
+  "model": "sonnet",
+  "rep": 0,
+  "arm_position": 1,
+  "started_at": 1785799672.4357474,
+  "prompt": "In this repository, explain how a lease is acquired: which function performs the compare-and-swap, what happens when the parcel is already leased by another agent, and how the TTL is set. Cite the file:line for each claim. Answer in under 200 words.",
+  "ground_truth": "PLACEHOLDER - variance probe only, not a judged task",
+  "ok": true,
+  "error": null,
+  "answer": "A lease is acquired by `acquire()` in `swarmsync/blackboard/leases.py:187`.\n\n**CAS INSERT**: The atomic grant is a single `INSERT \u2026 SELECT \u2026 WHERE NOT EXISTS (...)` at `leases.py:332-356`. It inserts a new lease row only if no conflicting active lease exists \u2014 SQLite's single-writer serialization makes this check-and-insert atomic, so racing agents can't double-lease the same parcel.\n\n**Already leased by another agent**: The `WHERE NOT EXISTS` subquery (`leases.py:339-346`) blocks the insert when another active, non-expired lease on the same `parcel_id` conflicts (write/exclusive vs. anything, or exclusive vs. exclusive). When the CAS returns no row (`leases.py:359,369`), it emits a `lease_denied` event and runs a second, read-only lookup (`leases.py:390-404`) to name the blocking holder for the error message \u2014 a write/exclusive holder is preferred, else the soonest-to-expire reader (`leases.py:400`). If the \"conflicting\" holder is the requester itself (e.g., write vs. exclusive on the same parcel), the reason says so explicitly (`leases.py:412-421`) rather than implying a third party.\n\n**TTL**: Defaults to `DEFAULT_TTL_SECONDS = 30.0` (`leases.py:85`), overridable via the `ttl` param. It's stamped as `ttl_expires_at = SQLite's own clock + :ttl` inside the INSERT itself (`leases.py:337`), never a Python `time.time()` value \u2014 this avoids minting an already-expired lease if the statement had to wait behind other writers (explained in the comment at `leases.py:310-322`).",
+  "tools_offered": [
+    "Bash",
+    "CronCreate",
+    "CronDelete",
+    "CronList",
+    "DesignSync",
+    "EnterWorktree",
+    "ExitWorktree",
+    "LSP",
+    "Read",
+    "ReportFindings",
+    "ScheduleWakeup",
+    "SendMessage",
+    "Skill",
+    "TaskCreate",
+    "TaskGet",
+    "TaskList",
+    "TaskOutput",
+    "TaskStop",
+    "TaskUpdate",
+    "ToolSearch",
+    "Workflow"
+  ],
+  "mcp_servers": [
+    {
+      "name": "codelearner",
+      "status": "pending"
+    }
+  ],
+  "mcp_status": {
+    "codelearner": "pending"
+  },
+  "index_offered": true,
+  "index_first_class": false,
+  "tool_calls": [
+    {
+      "name": "Bash",
+      "input": {
+        "command": "grep -rn \"compare.and.swap\\|CompareAndSwap\\|def acquire\\|func acquire\\|fn acquire\\|acquire_lease\\|AcquireLease\" /home/keith/projects/swarm-sync --include=\"*.py\" --include=\"*.go\" --include=\"*.rs\" --include=\"*.ts\" --include=\"*.js\" -il 2>/dev/null | head -20"
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "grep -n \"def \\|cas\\|CAS\\|compare\" /home/keith/projects/swarm-sync/swarmsync/blackboard/leases.py | head -50"
+      }
+    },
+    {
+      "name": "Read",
+      "input": {
+        "file_path": "/home/keith/projects/swarm-sync/swarmsync/blackboard/leases.py",
+        "offset": 187,
+        "limit": 250
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "grep -n \"DEFAULT_TTL_SECONDS\" /home/keith/projects/swarm-sync/swarmsync/blackboard/leases.py | head -5"
+      }
+    }
+  ],
+  "tool_call_counts": {
+    "Bash": 3,
+    "Read": 1
+  },
+  "n_tool_calls": 4,
+  "index_tool_calls": 0,
+  "toolsearch_calls": 0,
+  "index_tool_errors": 0,
+  "input_tokens": 10,
+  "output_tokens": 1363,
+  "cache_creation_input_tokens": 16221,
+  "cache_read_input_tokens": 163108,
+  "total_tokens": 180702,
+  "total_cost_usd": 0.16673340000000003,
+  "wall_s": 21.405572597053833,
+  "duration_api_ms": 20274,
+  "num_turns": 5,
+  "session_id": "98e3d0f7-67c3-432c-8644-51f9cf32e164",
+  "stop_reason": "end_turn",
+  "transcript_path": "bench/results/pilot/ss-lease-acquire__code-learner__r0__0324a55a.stream.jsonl",
+  "exit_code": 0,
+  "extra_config": {
+    "mcp_config": "/home/keith/projects/code-learner/bench/mcp/code-learner.json",
+    "defer_parity": false
+  }
+}

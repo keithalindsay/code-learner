@@ -121,10 +121,62 @@ spans establish nothing" against every symbol in the repo because the CLI could 
 a model. That is exactly the outage-mistaken-for-refusal collapse `GeneratorUnavailable`
 exists to prevent, arriving through a door `is_error` alone would have closed.
 
-`modelUsage` can hold more than one entry: with tools enabled a `claude-haiku-4-5` entry
-appears beside the answering model, having spent tokens on harness-internal work. Under
-`--tools ""` there is normally exactly one entry, and more than one is warned about
-because it means something other than the answer consumed budget.
+## Attribution is a membership test, because counting tokens broke a real run
+
+`modelUsage` routinely holds more than one entry: a `claude-haiku-4-5` entry appears
+beside the answering model, having spent a few tokens on harness-internal work. Something
+has to decide which of them the claim belongs to.
+
+The first version of this module took the entry with the most OUTPUT tokens, on the theory
+that the answer is the thing that was written. **It broke a 151-symbol run at symbol 105
+and made 46 symbols unreachable**, and the way it broke is the point:
+
+    result : '{"claim": "", "cited_refs": []}'
+    claude-haiku-4-5-20251001   output_tokens=17
+    claude-opus-5[1m]           output_tokens=18
+
+That is a correct abstention -- a first-class answer in this design, which `llm.py` states
+in bold -- and it is about eighteen tokens long, one token clear of the harness's
+incidental usage. Argmax therefore sat on a knife edge that tipped whenever the generator
+did the *best* thing available to it, filed a legitimate abstention as a fallback to
+another model, and aborted the run. The guard fired hardest exactly where the generator
+was behaving well, which is the worst possible place for a guard to fire.
+
+The rule is now a membership test, and the question it asks is **"did the model this run
+is named for participate at all?"** An entry exists for a model whenever that model ran,
+no matter how little it wrote, so:
+
+- the run's model present in `modelUsage` -> it answered; any other entry is overhead;
+- the run's model **absent** -> that, and only that, is a substitution.
+
+Nothing is counted, so nothing can be one token away from the wrong answer. The failure
+direction inverts: a quiet answer can no longer look like a substitution, because absence
+is not something brevity can produce, and overhead can never be mistaken for the run's
+model because it carries a different id.
+
+**Resolving the name the first time** is the one place a choice still has to be made, and
+it is made by refusing to guess. One entry, and there is nothing to choose -- `_run` has
+already refused any envelope without a textual `result`, so the session model ran and has
+an entry, and a lone entry beside a real answer names it rather than winning a comparison.
+More than one, with no `model=` pinned, and the call raises rather than picking a
+favourite; the message names the candidates and the argument that settles it.
+
+That is why the probe is two words long. Harness side-work scales with the request: the
+same probe carrying the real ~850-token system prompt comes back with a `claude-haiku-4-5`
+entry alongside the answering model, while the two-word version comes back with one entry.
+Probing with the real prompt looks more rigorous and manufactures the exact ambiguity the
+resolution must not have.
+
+**`--model` is NOT passed by default, and the reason is measured.** Pinning removes the
+attribution question entirely -- the request is matched by identity from the first call
+and a harness fallback is caught before a single claim is written -- but `--model opus`
+reports itself as `claude-opus-5` while the unpinned call on the same account reports
+`claude-opus-5[1m]`. Those are the same weights and two different strings in
+`assertions.generator`, so switching the default would orphan every claim an earlier run
+had already stored and split the column that exists to keep runs comparable. The `[1m]`
+suffix is also an entitlement of one account and cannot be a library default. So the
+default stays unpinned, `model=` is available for a caller who wants identity matching from
+call one, and the trade is written down here rather than discovered later.
 
 ## Fail closed, and keep outage apart from refusal
 
@@ -150,6 +202,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess  # noqa: S404 - fixed argv, no shell; every failure raises GeneratorUnavailable
 from collections.abc import Mapping, Sequence
@@ -362,21 +415,26 @@ def child_env(base: Mapping[str, str] | None = None) -> dict[str, str]:
     return env
 
 
-def answering_model(envelope: Mapping[str, object]) -> str:
-    """The model id that actually produced the answer, out of `modelUsage`.
+# A trailing context-window entitlement (`claude-opus-5[1m]`) and a trailing release date
+# (`claude-haiku-4-5-20251001`) are decoration on the same identity, and both appear and
+# disappear depending on how the model was asked for. They are stripped before any
+# comparison so that `--model claude-opus-5` matching `claude-opus-5[1m]` is an identity
+# and not a near-miss to be guessed at.
+_ID_DECORATION = re.compile(r"\[[^]]*\]\s*$|-\d{8}$")
 
-    Raises `GeneratorUnavailable` when `modelUsage` is missing or empty. That is a strong
-    reaction to a bookkeeping field and it is deliberate: the id is what gets written into
-    `assertions.generator`, an unlabelled claim is not something this project has a use
-    for, and an empty `modelUsage` is also the observed shape of an envelope whose call
-    failed. Losing the call is cheap; a store of claims nobody can attribute is not.
 
-    Normally there is exactly one entry and no heuristic runs. More than one appears when
-    the harness spent tokens on internal work -- with tools enabled a `claude-haiku-4-5`
-    entry shows up beside the answering model -- so the entry with the most OUTPUT tokens
-    is taken, since the answer is the thing that was written. That is a heuristic, it is
-    warned about when it fires, and ties break on the id so two identical envelopes cannot
-    produce two different names.
+def _identity(model_id: str) -> str:
+    """A model id reduced to the part that names the weights. Comparison happens here."""
+    return _ID_DECORATION.sub("", model_id.strip().lower()).strip()
+
+
+def _entry_identities(envelope: Mapping[str, object]) -> dict[str, set[str]]:
+    """Every `modelUsage` id, mapped to the identities it answers to.
+
+    `canonicalModel` is carried in the envelope beside each entry and is the harness's own
+    answer to "which model is this really" -- `claude-opus-5[1m]` canonicalises to
+    `claude-opus-5`. It is read rather than re-derived, because a rule this module invents
+    for collapsing ids would be a second opinion about a fact the harness already states.
     """
     usage = envelope.get("modelUsage")
     if not isinstance(usage, Mapping) or not usage:
@@ -386,25 +444,118 @@ def answering_model(envelope: Mapping[str, object]) -> str:
             "is worse than a lost call, and an empty `modelUsage` is also what a failed "
             "call returns -- so this is treated as no answer at all."
         )
-    scored: list[tuple[int, str]] = []
+    entries: dict[str, set[str]] = {}
     for model_id, stats in usage.items():
         if not isinstance(model_id, str) or not model_id.strip():
             continue
-        raw = stats.get("outputTokens") if isinstance(stats, Mapping) else None
-        tokens = raw if isinstance(raw, int) and not isinstance(raw, bool) else 0
-        scored.append((tokens, model_id))
-    if not scored:
+        names = {_identity(model_id)}
+        if isinstance(stats, Mapping):
+            canonical = stats.get("canonicalModel")
+            if isinstance(canonical, str) and canonical.strip():
+                names.add(_identity(canonical))
+        entries[model_id] = names
+    if not entries:
         raise GeneratorUnavailable(
-            f"the claude CLI returned a `modelUsage` with no usable model id: {usage!r}"
+            f"the claude CLI returned a `modelUsage` with no usable model id: "
+            f"{envelope.get('modelUsage')!r}"
         )
-    if len(scored) > 1:
-        logger.warning(
-            "the response reports %d models (%s); attributing the claim to the one that "
-            "wrote the most output. Something other than the answer spent budget here.",
-            len(scored),
-            ", ".join(sorted(model_id for _, model_id in scored)),
+    return entries
+
+
+def _answers_to_request(names: set[str], request: str) -> bool:
+    """Whether an entry answers to what a caller asked `--model` for.
+
+    Looser than the identity test above, because `--model` accepts an alias: `opus` is a
+    legal way to ask for `claude-opus-5`. So a request also matches when it is one of the
+    hyphen-delimited words of an identity. That is deliberately not symmetric with the
+    strict comparison used once a run has been named -- an alias is how a request is
+    written, never how an answer is recorded, and `opus` matching `claude-opus-5` must not
+    also make `claude-opus-5` acceptable where `claude-opus-6` was recorded.
+    """
+    wanted = _identity(request)
+    return any(wanted == name or wanted in name.split("-") for name in names)
+
+
+def answering_model(
+    envelope: Mapping[str, object],
+    *,
+    expected: str | None = None,
+    requested: str | None = None,
+) -> str:
+    """Which model in `modelUsage` this claim belongs to. A membership test, never a count.
+
+    Raises `GeneratorUnavailable` when `modelUsage` is missing or empty. That is a strong
+    reaction to a bookkeeping field and it is deliberate: the id is what gets written into
+    `assertions.generator`, an unlabelled claim is not something this project has a use
+    for, and an empty `modelUsage` is also the observed shape of an envelope whose call
+    failed. Losing the call is cheap; a store of claims nobody can attribute is not.
+
+    Three cases, in the order they are asked:
+
+    **`expected` -- the run already has a name.** The only question is whether that model
+    participated, and an entry exists for a model whenever it ran, however little it wrote.
+    Present: attribute to it, and keep the ORIGINALLY recorded string as the name even if
+    the decoration moved, so the `generator` column does not split mid-run. Absent: that is
+    a substitution, and `ModelSubstituted` stops the run.
+
+    **`requested` -- a caller pinned `--model`.** Identity matching against the request
+    from the very first call, so a harness fallback is caught before any claim is written.
+
+    **Neither.** One entry and there is nothing to choose. More than one and this REFUSES,
+    naming the candidates: guessing is what broke a run before (see the module docstring),
+    and an operator adding `model=` is a ten-second fix while a store attributed to the
+    wrong model is not fixable at all.
+
+    Nothing here counts tokens. That is the whole correction: the previous rule took the
+    entry with the most output, and a correct abstention is about eighteen tokens against
+    an incidental seventeen, so the guard misfired precisely when the generator was doing
+    the best thing available to it.
+    """
+    entries = _entry_identities(envelope)
+
+    if expected is not None:
+        wanted = _identity(expected)
+        for model_id, names in entries.items():
+            if wanted in names:
+                if model_id != expected:
+                    logger.warning(
+                        "the run is recorded as %r and this response reports the same "
+                        "model as %r. Same weights, different decoration; the recorded "
+                        "name is kept so the generator column does not split mid-run.",
+                        expected,
+                        model_id,
+                    )
+                return expected
+        raise ModelSubstituted(
+            f"this run is recorded as {NAME_PREFIX}/{expected} and that model does not "
+            f"appear in the response at all -- it reports {sorted(entries)}. Continuing "
+            "would file another model's claims under this run's generator name, which is "
+            "the confusion that column exists to prevent. Re-run with an explicit "
+            "`model=` once the fallback has cleared."
         )
-    return max(scored)[1]
+
+    if requested:
+        matched = [m for m, names in entries.items() if _answers_to_request(names, requested)]
+        if len(matched) == 1:
+            return matched[0]
+        if not matched:
+            raise ModelSubstituted(
+                f"{requested!r} was requested and no model answering to that name appears "
+                f"in the response, which reports {sorted(entries)}. The harness answered "
+                "with something else, so nothing from this call can be attributed."
+            )
+        raise GeneratorUnavailable(
+            f"{requested!r} matches {sorted(matched)} in the same response, so this claim "
+            "cannot be attributed to one model. Pass a fully qualified `model=` id."
+        )
+
+    if len(entries) == 1:
+        return next(iter(entries))
+    raise GeneratorUnavailable(
+        f"the response reports {sorted(entries)} and no model was pinned, so which one "
+        "this run should be named for cannot be established. Guessing is what this rule "
+        "exists to stop -- pass `model=` to name it."
+    )
 
 
 def _run(argv: Sequence[str], *, timeout: float, role: str, outage_detail: str) -> dict[str, object]:
@@ -525,6 +676,11 @@ class _ClaudeCodeBackend:
         self._cli = resolve_cli(cli)
         self._timeout = timeout
         self._answered_model: str | None = None
+        # Ids seen beside the run's own model. Harness overhead is expected and is not an
+        # error, but "the extra entries are overhead" is an assumption, and an assumption
+        # that is never checked is how the previous rule survived long enough to break a
+        # run. A model appearing here that was not there before is worth one warning.
+        self._auxiliary_models: set[str] = set()
         if collides_with_judge(CLAUDE_LINEAGE):
             logger.warning(
                 "the faithfulness judge is in the %r lineage, which is this generator's. "
@@ -544,7 +700,7 @@ class _ClaudeCodeBackend:
         harness is free to ignore) or with a placeholder (which would reach the database),
         the first read spends one minimal call to find out.
 
-        Cached afterwards, and re-checked on every call: see `_observe`.
+        Cached afterwards, and re-checked on every call: see `_attribute`.
         """
         if self._answered_model is None:
             self._answered_model = self._probe_model()
@@ -556,15 +712,30 @@ class _ClaudeCodeBackend:
         return self._answered_model
 
     def _probe_model(self) -> str:
-        """One deliberately trivial call, purely to learn which model answers.
+        """One deliberately tiny call whose only product is a name.
 
-        Kept minimal -- a two-word system prompt and a one-word user prompt -- because its
-        only output is the `modelUsage` key. It runs through the same argv builder as a
-        real call so that what it measures is the configuration that will actually be
-        used: a probe with different flags could resolve a different model than the run.
+        Small on purpose, and this is the opposite of what it looks like. The obvious
+        design is to probe with the generator's real prompt, on the theory that the name
+        should be resolved under the conditions the run will use. That was tried and it is
+        worse: **the amount of harness side-work in an envelope scales with the request.**
+        Measured, a two-word probe comes back with exactly one entry, and the same probe
+        carrying the real ~850-token system prompt comes back with a `claude-haiku-4-5`
+        entry beside the answering model -- which is precisely the ambiguity the name
+        resolution must not have.
+
+        The soundness argument does not need the big prompt anyway. `_run` has already
+        refused any envelope without a textual `result`, so the session model demonstrably
+        ran, so it demonstrably has a `modelUsage` entry. A single-entry envelope carrying
+        a real answer therefore NAMES the session model -- it is not a guess between
+        candidates, there is only one candidate and it is known to have answered.
+
+        It goes through the same `build_argv` as a real call, so the sandbox and the
+        configuration are identical; only the prompt is smaller.
         """
-        envelope = self._call_raw(system="Answer with the single word: ok.", user="ok")
-        return answering_model(envelope)
+        return answering_model(
+            self._call_raw(system="Answer with the single word: ok.", user="ok"),
+            requested=self._requested_model,
+        )
 
     def _call_raw(self, *, system: str, user: str) -> dict[str, object]:
         return _run(
@@ -577,28 +748,47 @@ class _ClaudeCodeBackend:
     def _call(self, *, system: str, user: str) -> str:
         """One call, returning the model's raw text, having pinned who wrote it."""
         envelope = self._call_raw(system=system, user=user)
-        self._observe(answering_model(envelope))
+        self._attribute(envelope)
         return str(envelope.get("result") or "")
 
-    def _observe(self, model_id: str) -> None:
-        """Pin the answering model, and refuse to continue if it changed mid-run.
+    def _attribute(self, envelope: Mapping[str, object]) -> None:
+        """Pin the answering model, and refuse to continue if it stopped appearing.
 
-        The first answer fixes the name. A later answer from a different model means the
-        harness fell back, and every row already written -- plus every row still to come,
-        since `pipeline.learn` captured `name` once before its loop -- would be filed
-        under a model that did not write it. There is no repair for that after the fact
-        and nothing downstream can see it, so the run stops here.
+        The first answer fixes the name. A later response in which that model does not
+        appear at all means the harness fell back, and every row already written -- plus
+        every row still to come, since `pipeline.learn` captured `name` once before its
+        loop -- would be filed under a model that did not write it. There is no repair for
+        that after the fact and nothing downstream can see it, so the run stops there.
+
+        `answering_model` owns the rule; this owns the state. The split matters because
+        the rule has to be testable against one envelope, and the bug it replaced was only
+        visible on a run of a hundred and fifty.
         """
         if self._answered_model is None:
-            self._answered_model = model_id
-            return
-        if model_id != self._answered_model:
-            raise ModelSubstituted(
-                f"this run is recorded as {NAME_PREFIX}/{self._answered_model} but the "
-                f"harness answered with {model_id!r}. Continuing would file both models' "
-                "claims under one generator name, which is the confusion that column "
-                "exists to prevent. Re-run with an explicit `model=` once the fallback "
-                "has cleared."
+            self._answered_model = answering_model(envelope, requested=self._requested_model)
+        else:
+            answering_model(envelope, expected=self._answered_model)
+        self._warn_about_new_companions(envelope)
+
+    def _warn_about_new_companions(self, envelope: Mapping[str, object]) -> None:
+        """One warning per model id that turns up beside this run's own, and is new.
+
+        Extra entries are harness overhead, and treating them as such is what makes the
+        membership rule sound. It is still an assumption. A model that has never been seen
+        on this run appearing now is either new overhead or a co-author, and this module
+        cannot tell those apart from one envelope -- so it says so once, rather than
+        silently, and does not stop a run over it.
+        """
+        for model_id in _entry_identities(envelope):
+            if model_id == self._answered_model or model_id in self._auxiliary_models:
+                continue
+            self._auxiliary_models.add(model_id)
+            logger.warning(
+                "%r answered alongside %r on this run. It is being treated as harness "
+                "overhead, which is what the attribution rule assumes -- but this module "
+                "cannot tell overhead from a co-author out of one response.",
+                model_id,
+                self._answered_model,
             )
 
 

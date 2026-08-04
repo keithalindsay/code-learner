@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "codelearner": {
+      "type": "stdio",
+      "command": "/home/keith/projects/code-learner/.venv/bin/python",
+      "args": ["-m", "codelearner.server"]
+    }
+  }
+}

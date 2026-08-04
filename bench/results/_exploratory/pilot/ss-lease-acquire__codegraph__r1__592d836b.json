@@ -1,0 +1,170 @@
+{
+  "run_id": "ss-lease-acquire__codegraph__r1__592d836b",
+  "task_id": "ss-lease-acquire",
+  "arm": "codegraph",
+  "repo": "/home/keith/projects/swarm-sync",
+  "model": "sonnet",
+  "rep": 1,
+  "arm_position": 1,
+  "started_at": 1785799810.555056,
+  "prompt": "In this repository, explain how a lease is acquired: which function performs the compare-and-swap, what happens when the parcel is already leased by another agent, and how the TTL is set. Cite the file:line for each claim. Answer in under 200 words.",
+  "ground_truth": "PLACEHOLDER - variance probe only, not a judged task",
+  "ok": true,
+  "error": null,
+  "answer": "Now I have everything needed to answer.\n\n**Lease acquisition** goes through `acquire()` in `swarmsync/blackboard/leases.py:187`, called from the `POST /lease` handler at `swarmsync/server/app.py:664`.\n\n**The compare-and-swap** is the `INSERT ... SELECT ... WHERE NOT EXISTS` at `swarmsync/blackboard/leases.py:332-356`. It inserts a new `active` lease row only if no conflicting active, unexpired lease exists for that `parcel_id` (conflict = the existing lease or the request is `write`/`exclusive`, and it isn't the same agent+mode). This makes grant-or-deny a single atomic SQLite statement, so a losing racer just fails the `NOT EXISTS` rather than double-granting.\n\n**When already leased by another agent**, the `INSERT` returns no row (`swarmsync/blackboard/leases.py:357-359`). The function then emits a `lease_denied` event (line 369) and runs a descriptive lookup (lines 390-404) to name the blocking holder \u2014 preferring a write/exclusive holder, then the soonest-to-expire \u2014 returning `LeaseResult(granted=False, reason=..., holder=..., holder_ttl_expires_at=...)` (lines 425-430).\n\n**TTL**: defaults to `DEFAULT_TTL_SECONDS = 30.0` (line 85) unless the caller passes `ttl`; it's stamped as `ttl_expires_at = SQLite's own clock (_NOW_SQL) + :ttl` (line 337/343), never Python's `time.time()`, to avoid minting an already-expired lease under lock contention (explained lines 310-322). The hook's TTL is validated/clamped in `swarmsync/hooks/adapter.py:180` (`_hook_lease_ttl`).",
+  "tools_offered": [
+    "Bash",
+    "CronCreate",
+    "CronDelete",
+    "CronList",
+    "DesignSync",
+    "EnterWorktree",
+    "ExitWorktree",
+    "LSP",
+    "Read",
+    "ReportFindings",
+    "ScheduleWakeup",
+    "SendMessage",
+    "Skill",
+    "TaskCreate",
+    "TaskGet",
+    "TaskList",
+    "TaskOutput",
+    "TaskStop",
+    "TaskUpdate",
+    "ToolSearch",
+    "Workflow",
+    "mcp__codegraph__codegraph_explore"
+  ],
+  "mcp_servers": [
+    {
+      "name": "codegraph",
+      "status": "connected"
+    }
+  ],
+  "mcp_status": {
+    "codegraph": "connected"
+  },
+  "index_offered": true,
+  "index_first_class": true,
+  "tool_calls": [
+    {
+      "name": "ToolSearch",
+      "input": {
+        "query": "select:mcp__codegraph__codegraph_explore",
+        "max_results": 1
+      }
+    },
+    {
+      "name": "mcp__codegraph__codegraph_explore",
+      "input": {
+        "query": "lease acquire compare-and-swap TTL parcel leased by another agent"
+      }
+    },
+    {
+      "name": "mcp__codegraph__codegraph_explore",
+      "input": {
+        "query": "server leases.py grant_lease UPDATE parcel SET lease_holder WHERE compare and swap SQL"
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "grep -n \"def try_acquire\\|def acquire\\|def grant\\|INSERT INTO leases\\|def lease(\" swarmsync/server/leases.py 2>/dev/null | head -30",
+        "description": "Find lease acquisition function in server/leases.py"
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "find . -path ./node_modules -prune -o -name \"*.py\" -print | xargs grep -ln \"def try_acquire\\|def acquire_lease\\|def grant_lease\" 2>/dev/null",
+        "description": "Find file defining lease acquisition"
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "grep -rln \"def try_acquire\\|def acquire_lease\\|def grant_lease\\|def do_lease\" --include=\"*.py\" . 2>/dev/null",
+        "description": "Search for lease acquisition function definition"
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "grep -n \"def try_acquire\\|def acquire_lease\\|def grant_lease\\|def do_lease\" tests/test_connection_model.py",
+        "description": "Show matching lines in test file"
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "grep -rn \"\\\"/lease\\\"\\|'/lease'\\|def post_lease\\|@app.post(\\\"/lease\" swarmsync/server/app.py | head -20",
+        "description": "Find /lease endpoint handler"
+      }
+    },
+    {
+      "name": "Read",
+      "input": {
+        "file_path": "/home/keith/projects/swarm-sync/swarmsync/server/app.py",
+        "offset": 638,
+        "limit": 100
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "grep -n \"^def \\|^import\\|^from\" swarmsync/server/leases.py | head -30",
+        "description": "List function definitions in server/leases.py"
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "grep -n \"^def \\|^class \\|^import\\|^from\\|CAS\\|UPDATE\\|INSERT INTO leases\\|WHERE.*expires\" swarmsync/blackboard/leases.py | head -60",
+        "description": "Inspect blackboard/leases.py for acquire logic"
+      }
+    },
+    {
+      "name": "Read",
+      "input": {
+        "file_path": "/home/keith/projects/swarm-sync/swarmsync/blackboard/leases.py",
+        "offset": 187,
+        "limit": 246
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "grep -n \"DEFAULT_TTL_SECONDS\" swarmsync/blackboard/leases.py | head -5",
+        "description": "Find default TTL constant definition"
+      }
+    }
+  ],
+  "tool_call_counts": {
+    "ToolSearch": 1,
+    "mcp__codegraph__codegraph_explore": 2,
+    "Bash": 8,
+    "Read": 2
+  },
+  "n_tool_calls": 13,
+  "index_tool_calls": 2,
+  "toolsearch_calls": 1,
+  "index_tool_errors": 0,
+  "input_tokens": 28,
+  "output_tokens": 2760,
+  "cache_creation_input_tokens": 24199,
+  "cache_read_input_tokens": 631230,
+  "total_tokens": 658217,
+  "total_cost_usd": 0.3760470000000001,
+  "wall_s": 48.99559328897158,
+  "duration_api_ms": 47519,
+  "num_turns": 14,
+  "session_id": "14e64340-838a-4a4d-8045-b15432311a32",
+  "stop_reason": "end_turn",
+  "transcript_path": "bench/results/pilot/ss-lease-acquire__codegraph__r1__592d836b.stream.jsonl",
+  "exit_code": 0,
+  "extra_config": {
+    "mcp_config": "/home/keith/projects/code-learner/bench/mcp/codegraph.json",
+    "defer_parity": false
+  }
+}

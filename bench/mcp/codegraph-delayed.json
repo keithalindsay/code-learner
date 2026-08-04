@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "codegraph": {
+      "type": "stdio",
+      "command": "/home/keith/projects/code-learner/.venv/bin/python",
+      "args": ["/home/keith/projects/code-learner/bench/shim/delay.py", "codegraph", "serve", "--mcp"],
+      "env": {
+        "DO_NOT_TRACK": "1",
+        "CODEGRAPH_TELEMETRY": "0",
+        "CODEGRAPH_NO_UPDATE_CHECK": "1",
+        "BENCH_MCP_DELAY_S": "1.2"
+      }
+    }
+  }
+}

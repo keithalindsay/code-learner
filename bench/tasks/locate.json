@@ -1,0 +1,412 @@
+[
+ {
+  "id": "ss-loc-01",
+  "repo": "swarm-sync",
+  "kind": "locate",
+  "answer_type": "definition",
+  "difficulty": "medium",
+  "question": "In swarm-sync, when a coordinating server shuts down it hands back the operating-system-level claim that stops a second server process from running against the same repository. Which function does that? Answer with one fully-qualified name (module path + symbol).",
+  "ground_truth": {
+   "qualnames": ["swarmsync.repolock.RepoLock.release"],
+   "match": "all",
+   "decoys": [
+    "swarmsync.blackboard.leases.release",
+    "swarmsync.agent.client.BlackboardClient.release"
+   ],
+   "decoy_note": "A keyword search for 'release' returns the lease-layer release and the HTTP client's release first; neither has anything to do with the OS-level single-server guard."
+  },
+  "flags": {"has_decoy": true, "answer_count": 1}
+ },
+ {
+  "id": "ss-loc-02",
+  "repo": "swarm-sync",
+  "kind": "locate",
+  "answer_type": "definition",
+  "difficulty": "easy",
+  "question": "swarm-sync scores every indexed symbol by how much of the codebase would be disturbed if that symbol changed. Which function computes that score for every symbol in one pass? Answer with one fully-qualified name.",
+  "ground_truth": {
+   "qualnames": ["swarmsync.classifier.graph.blast_radius"],
+   "match": "all",
+   "decoys": []
+  },
+  "flags": {"has_decoy": false, "answer_count": 1}
+ },
+ {
+  "id": "ss-loc-03",
+  "repo": "swarm-sync",
+  "kind": "locate",
+  "answer_type": "callers",
+  "difficulty": "medium",
+  "question": "Which functions inside the `swarmsync` package -- excluding everything under `tests/` -- call `swarmsync.classifier.graph.build_graph`? List every one by fully-qualified name.",
+  "ground_truth": {
+   "qualnames": [
+    "swarmsync.classifier.store.run_index",
+    "swarmsync.coordinator.broker.load_scheduling_graph",
+    "swarmsync.coordinator.gate._reverse_dep_files"
+   ],
+   "match": "all",
+   "decoys": [],
+   "verified_by": "grep -rn 'build_graph(' swarmsync/ -> store.py:227, broker.py:262, gate.py:191"
+  },
+  "flags": {"has_decoy": false, "answer_count": 3}
+ },
+ {
+  "id": "ss-loc-04",
+  "repo": "swarm-sync",
+  "kind": "locate",
+  "answer_type": "impact",
+  "difficulty": "hard",
+  "question": "`swarmsync.blackboard.parcel_id.split` returns the two halves of a parcel identifier as a tuple. If that tuple's order were swapped, which non-test functions in the `swarmsync` package would silently start doing the wrong thing? List every one by fully-qualified name. Note that two of them reach it under an alias.",
+  "ground_truth": {
+   "qualnames": [
+    "swarmsync.agent.runner.run_agent",
+    "swarmsync.blackboard.leases._ensure_parcel",
+    "swarmsync.cli._held_paths",
+    "swarmsync.coordinator.integrator._snapshot_touched_contracts",
+    "swarmsync.coordinator.integrator.integrate"
+   ],
+   "match": "all",
+   "decoys": [],
+   "verified_by": "grep: integrator.py:194 (_snapshot_touched_contracts), integrator.py:561 (integrate), cli.py:73 (_held_paths), leases.py:173 via `_split_parcel_id` alias (_ensure_parcel), runner.py:437 via the same alias (run_agent)"
+  },
+  "flags": {"has_decoy": false, "answer_count": 5, "requires_alias_resolution": true}
+ },
+ {
+  "id": "ss-loc-05",
+  "repo": "swarm-sync",
+  "kind": "locate",
+  "answer_type": "definition",
+  "difficulty": "medium",
+  "question": "Which function does an operator invoke to start swarm-sync's HTTP blackboard service for a repository? Answer with one fully-qualified name.",
+  "ground_truth": {
+   "qualnames": ["swarmsync.server.serve.main"],
+   "match": "all",
+   "decoys": [
+    "swarmsync.cli.main",
+    "swarmsync.hooks.adapter.main",
+    "demo.run_demo.main",
+    "demo._crash_agent.main"
+   ],
+   "decoy_note": "Five symbols are named `main`. Only one boots the server."
+  },
+  "flags": {"has_decoy": true, "answer_count": 1}
+ },
+ {
+  "id": "ss-loc-06",
+  "repo": "swarm-sync",
+  "kind": "locate",
+  "answer_type": "definition",
+  "difficulty": "hard",
+  "question": "Before swarm-sync runs a repository's tests to judge a merge, it narrows the run to the test files that could possibly be affected by the change. Which function walks the dependency graph to produce that narrowed set of files? Answer with one fully-qualified name -- the function that computes the set, not the one that runs the tests.",
+  "ground_truth": {
+   "qualnames": ["swarmsync.coordinator.gate._reverse_dep_files"],
+   "match": "all",
+   "decoys": ["swarmsync.coordinator.gate.run_impact_tests"],
+   "decoy_note": "The obvious keyword match for 'impact'/'tests' is `run_impact_tests`, which is this function's CALLER. It is additionally re-exported from `swarmsync/coordinator/integrator.py` as a module-level compatibility alias, so a text search finds the name in two modules while the index holds only one definition -- which is itself the discrimination being tested."
+  },
+  "flags": {"has_decoy": true, "answer_count": 1}
+ },
+ {
+  "id": "ss-loc-07",
+  "repo": "swarm-sync",
+  "kind": "locate",
+  "answer_type": "definition",
+  "difficulty": "medium",
+  "question": "A lease request can name a target that is syntactically invalid. Which function in swarm-sync's blackboard layer inspects that name and returns a human-readable description of what is wrong with it, rather than raising? Answer with one fully-qualified name.",
+  "ground_truth": {
+   "qualnames": ["swarmsync.blackboard.leases._parcel_id_problem"],
+   "match": "all",
+   "decoys": []
+  },
+  "flags": {"has_decoy": false, "answer_count": 1}
+ },
+ {
+  "id": "ss-loc-08",
+  "repo": "swarm-sync",
+  "kind": "locate",
+  "answer_type": "callers",
+  "difficulty": "medium",
+  "question": "Two functions in the `swarmsync` package move a branch's tip under a timestamped `rejected/` ref before that branch is deleted. Name both callers by fully-qualified name.",
+  "ground_truth": {
+   "qualnames": [
+    "swarmsync.agent.runner._cleanup_worktree",
+    "swarmsync.worktree.git_ops._discard_orphan_worktree"
+   ],
+   "match": "all",
+   "decoys": [],
+   "verified_by": "grep -rn 'park_branch(' swarmsync/ -> runner.py:203, git_ops.py:401"
+  },
+  "flags": {"has_decoy": false, "answer_count": 2}
+ },
+ {
+  "id": "ss-loc-09",
+  "repo": "swarm-sync",
+  "kind": "locate",
+  "answer_type": "impact",
+  "difficulty": "medium",
+  "question": "A swarm-sync agent that is SIGKILLed leaves its checkout behind on disk. Which function reclaims those abandoned checkouts, and which function calls it on the normal path? Give both fully-qualified names.",
+  "ground_truth": {
+   "qualnames": [
+    "swarmsync.worktree.git_ops.prune_orphan_worktrees",
+    "swarmsync.worktree.git_ops.add_worktree"
+   ],
+   "match": "all",
+   "decoys": ["swarmsync.coordinator.reaper.reap_once"],
+   "decoy_note": "'Reclaims what a dead agent left behind' reads like the reaper's job; the reaper reclaims leases and deliberately never touches worktrees."
+  },
+  "flags": {"has_decoy": true, "answer_count": 2}
+ },
+ {
+  "id": "ss-loc-10",
+  "repo": "swarm-sync",
+  "kind": "locate",
+  "answer_type": "definition",
+  "difficulty": "hard",
+  "question": "Two functions in swarm-sync ask git for the top-level directory of the repository containing a given path. Which of the two runs on the Claude Code hook path? Answer with one fully-qualified name.",
+  "ground_truth": {
+   "qualnames": ["swarmsync.hooks.adapter._git_toplevel"],
+   "match": "all",
+   "decoys": ["swarmsync.cli._git_toplevel"],
+   "decoy_note": "Identical basename in two modules; only the module tells you which is which."
+  },
+  "flags": {"has_decoy": true, "answer_count": 1}
+ },
+ {
+  "id": "ss-loc-11",
+  "repo": "swarm-sync",
+  "kind": "locate",
+  "answer_type": "definition",
+  "difficulty": "medium",
+  "question": "When swarm-sync refuses to boot because another process already coordinates the repository, the refusal names that other process. Which function works out which process it is? Answer with one fully-qualified name.",
+  "ground_truth": {
+   "qualnames": ["swarmsync.repolock.holder_pid_if_held"],
+   "match": "all",
+   "decoys": ["swarmsync.repolock.RepoLock.active", "swarmsync.repolock.lock_path_for"]
+  },
+  "flags": {"has_decoy": true, "answer_count": 1}
+ },
+
+ {
+  "id": "kb-loc-01",
+  "repo": "kalshi-bot",
+  "kind": "locate",
+  "answer_type": "definition",
+  "difficulty": "hard",
+  "question": "Three modules in kalshi-bot define a function with the same name that returns a per-city baseline forecast error in degrees Fahrenheit, and the three do not agree on their numbers. Which of the three is the module that declares itself the single source of truth the others were meant to import from? Answer with one fully-qualified name.",
+  "ground_truth": {
+   "qualnames": ["src.weather.constants.get_baseline_error_f"],
+   "match": "all",
+   "decoys": [
+    "src.weather.ensemble.get_baseline_error_f",
+    "src.strategies.weather_strategy.get_baseline_error_f"
+   ],
+   "decoy_note": "All three have near-identical bodies and docstrings; only constants.py carries the 6.0 baseline and the SSOT declaration. The other two are stale copies at 5.5."
+  },
+  "flags": {"has_decoy": true, "answer_count": 1}
+ },
+ {
+  "id": "kb-loc-02",
+  "repo": "kalshi-bot",
+  "kind": "locate",
+  "answer_type": "definition",
+  "difficulty": "hard",
+  "question": "When kalshi-bot settles a paper trade on an index or crypto contract, it needs the date on which that contract expired. Which function derives that date? Answer with one fully-qualified name.",
+  "ground_truth": {
+   "qualnames": ["src.trading.financial_settler._parse_expiry_date_from_ticker"],
+   "match": "all",
+   "decoys": [
+    "src.trading.exit_engine.parse_ticker",
+    "src.weather.forecast.parse_ticker_info",
+    "src.trading.intraday_scanner._parse_ticker_info",
+    "research.exceedance_fit.replay.parse_ticker",
+    "research.forecast_fusion.validate_v2.parse_ticker"
+   ],
+   "decoy_note": "Five other symbols parse Kalshi tickers; a keyword search for ticker parsing lands on them first, and none of them yields an expiry date."
+  },
+  "flags": {"has_decoy": true, "answer_count": 1}
+ },
+ {
+  "id": "kb-loc-03",
+  "repo": "kalshi-bot",
+  "kind": "locate",
+  "answer_type": "definition",
+  "difficulty": "easy",
+  "question": "Kalshi temperature contracts are directionally ambiguous: the same ticker shape can mean 'above the strike' or 'below the strike'. Which single function must every intraday probability flow through so the direction comes from the market's own metadata rather than from the ticker string? Answer with one fully-qualified name.",
+  "ground_truth": {
+   "qualnames": ["src.weather.strike.prob_yes_from_extremum"],
+   "match": "all",
+   "decoys": []
+  },
+  "flags": {"has_decoy": false, "answer_count": 1}
+ },
+ {
+  "id": "kb-loc-04",
+  "repo": "kalshi-bot",
+  "kind": "locate",
+  "answer_type": "callers",
+  "difficulty": "medium",
+  "question": "Which functions under `src/` call `src.weather.strike.prob_yes_from_extremum`? List every one by fully-qualified name. Ignore call sites under `tests/`, `research/` and `scripts/`.",
+  "ground_truth": {
+   "qualnames": [
+    "src.latency_probe.probe.compute_p_v2",
+    "src.weather.metar_signals.detect_signals"
+   ],
+   "match": "all",
+   "decoys": [],
+   "verified_by": "grep -rn 'prob_yes_from_extremum(' src/"
+  },
+  "flags": {"has_decoy": false, "answer_count": 2}
+ },
+ {
+  "id": "kb-loc-05",
+  "repo": "kalshi-bot",
+  "kind": "locate",
+  "answer_type": "definition",
+  "difficulty": "easy",
+  "question": "kalshi-bot's setup watcher is built so that adding a new chart setup is one subclass plus one decorator. Name the base class and the decorator, both fully qualified.",
+  "ground_truth": {
+   "qualnames": [
+    "src.watcher.detector.SetupDetector",
+    "src.watcher.detector.register_setup"
+   ],
+   "match": "all",
+   "decoys": ["src.price_action.detectors.base.SignalDetector"],
+   "decoy_note": "`SignalDetector` is a separate, older detector base class in another package."
+  },
+  "flags": {"has_decoy": true, "answer_count": 2}
+ },
+ {
+  "id": "kb-loc-06",
+  "repo": "kalshi-bot",
+  "kind": "locate",
+  "answer_type": "callers",
+  "difficulty": "medium",
+  "question": "One function in `src/weather/` drops isolated implausible temperature readings before they reach a daily tracker, while keeping genuine frontal passages. Which functions under `src/` call it? Give fully-qualified names.",
+  "ground_truth": {
+   "qualnames": [
+    "src.weather.metar_history.build_day_tracker",
+    "src.latency_probe.probe.StationState._despiked"
+   ],
+   "match": "all",
+   "decoys": [
+    "research.forecast_fusion.calibrate.despike",
+    "scripts.analysis.metar_vs_cli.despike"
+   ],
+   "decoy_note": "Two other modules define their own `despike`; the question is about the one in src/weather and its callers.",
+   "verified_by": "grep -rn 'despike_readings(' src/"
+  },
+  "flags": {"has_decoy": true, "answer_count": 2}
+ },
+ {
+  "id": "kb-loc-07",
+  "repo": "kalshi-bot",
+  "kind": "locate",
+  "answer_type": "definition",
+  "difficulty": "hard",
+  "question": "kalshi-bot has two Kelly position-sizing entry points in two different packages. One is the live implementation; the other is a compatibility wrapper that translates an older argument shape and delegates. Give both fully-qualified names and say which is which.",
+  "ground_truth": {
+   "qualnames": [
+    "src.risk.kelly.size_position",
+    "src.paper_trading.kelly.kelly_criterion"
+   ],
+   "match": "all",
+   "decoys": [
+    "src.backtest.engine.BacktestEngine._kelly_size",
+    "src.strategies.safe_compounder.SafeCompounder._half_kelly",
+    "src._archive.basketball_strategy.BasketballStrategy._kelly_size"
+   ],
+   "decoy_note": "Three further symbols contain 'kelly' in their names; none is either of the two entry points.",
+   "note": "`src.risk.kelly.size_position` is the implementation; `src.paper_trading.kelly.kelly_criterion` is the deprecated wrapper (calls it at kelly.py:136)."
+  },
+  "flags": {"has_decoy": true, "answer_count": 2, "requires_direction": true}
+ },
+ {
+  "id": "kb-loc-08",
+  "repo": "kalshi-bot",
+  "kind": "locate",
+  "answer_type": "impact",
+  "difficulty": "hard",
+  "question": "If the return type of `src.risk.kelly.size_position` changed shape, which call sites under `src/` would need updating? List them by fully-qualified name. Ignore anything under `tests/`. Note that two call sites reach it under an import alias.",
+  "ground_truth": {
+   "qualnames": [
+    "src.backtest.engine.BacktestEngine._pipeline_evaluate_trade",
+    "src.march_madness.edge_calculator.EdgeCalculator._apply_kelly_sizing",
+    "src.paper_trading.kelly.kelly_criterion",
+    "src.paper_trading.paper_trader.PaperTrader.analyze_market",
+    "src.risk.kelly.kelly_size_for_signal",
+    "src.strategies.blackscholes_strategy.BlackScholesStrategy.analyze_market"
+   ],
+   "match": "all",
+   "decoys": [],
+   "verified_by": "grep -rn 'size_position(' src/ -> engine.py:1149, edge_calculator.py:492, paper_trading/kelly.py:136, risk/kelly.py:628; plus `_kelly_size_position(` alias at blackscholes_strategy.py:537 and paper_trader.py:643"
+  },
+  "flags": {"has_decoy": false, "answer_count": 6, "requires_alias_resolution": true}
+ },
+ {
+  "id": "kb-loc-09",
+  "repo": "kalshi-bot",
+  "kind": "locate",
+  "answer_type": "definition",
+  "difficulty": "medium",
+  "question": "kalshi-bot's circuit breaker has both an internal transition helper and an operator-facing override. Which method does an emergency-stop script call to drive the breaker straight to its hardest-stop condition, bypassing the usual evaluation? Answer with one fully-qualified name.",
+  "ground_truth": {
+   "qualnames": ["src.risk.circuit_breaker.CircuitBreaker.force_state"],
+   "match": "all",
+   "decoys": [
+    "src.risk.circuit_breaker.CircuitBreaker._set_state",
+    "src.risk.circuit_breaker.CircuitBreaker._evaluate"
+   ],
+   "decoy_note": "`_set_state` is the internal transition and is the closer keyword match for 'force into a state'."
+  },
+  "flags": {"has_decoy": true, "answer_count": 1}
+ },
+ {
+  "id": "kb-loc-10",
+  "repo": "kalshi-bot",
+  "kind": "locate",
+  "answer_type": "definition",
+  "difficulty": "medium",
+  "question": "Four classes in kalshi-bot define a method with the same name for booking a trade. Which one writes the trade into the durable paper-trading ledger on disk? Answer with one fully-qualified name.",
+  "ground_truth": {
+   "qualnames": ["src.paper_trading.ledger.PaperLedger.record_trade"],
+   "match": "all",
+   "decoys": [
+    "src.risk.circuit_breaker.CircuitBreaker.record_trade",
+    "src.trading.auto_trader.DailyBudget.record_trade",
+    "src._archive.risk_manager.RiskManager.record_trade"
+   ],
+   "decoy_note": "Three same-named methods on other classes; one of them is in an `_archive` package that is dead code."
+  },
+  "flags": {"has_decoy": true, "answer_count": 1}
+ },
+ {
+  "id": "kb-loc-11",
+  "repo": "kalshi-bot",
+  "kind": "locate",
+  "answer_type": "definition",
+  "difficulty": "medium",
+  "question": "The intraday scanner reads a list of cities to skip from configuration. Give the fully-qualified name of the function that resolves that list, and say what it returns when the configuration key is present but set to an empty list.",
+  "ground_truth": {
+   "qualnames": ["src.trading.intraday_scanner._get_excluded_cities"],
+   "match": "all",
+   "decoys": [],
+   "note": "An explicit empty list (and an explicit null) both yield an empty set -- no exclusions. Only a MISSING key falls back to the {\"PHX\", \"HOU\"} default."
+  },
+  "flags": {"has_decoy": false, "answer_count": 1, "requires_reading_body": true}
+ },
+ {
+  "id": "kb-loc-12",
+  "repo": "kalshi-bot",
+  "kind": "locate",
+  "answer_type": "definition",
+  "difficulty": "medium",
+  "question": "One function in `src/weather/` reconstructs a station's whole local-day observation history on every scan instead of accumulating it in memory across scans. Which one? Answer with one fully-qualified name.",
+  "ground_truth": {
+   "qualnames": ["src.weather.metar_history.build_day_tracker"],
+   "match": "all",
+   "decoys": ["src.weather.metar_signals.DailyTracker"],
+   "decoy_note": "`DailyTracker` is the type being built, not the function that rebuilds it."
+  },
+  "flags": {"has_decoy": true, "answer_count": 1}
+ }
+]
