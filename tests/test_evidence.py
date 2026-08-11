@@ -163,6 +163,18 @@ def test_assemble_evidence_refuses_an_invalid_span_before_slicing(indexed_repo):
     assert error.value.code == "invalid_span"
 
 
+def test_assemble_evidence_refuses_a_non_numeric_indexed_coordinate(indexed_repo):
+    root, conn = indexed_repo
+    alpha = _hit(conn, "sample.alpha")
+    conn.execute("UPDATE symbols SET byte_end = ? WHERE id = ?", ("not-an-int", alpha.symbol_id))
+
+    with pytest.raises(EvidenceError) as error:
+        assemble_evidence(conn, root, [alpha], budget_bytes=10_000)
+
+    assert error.value.code == "invalid_span"
+    assert error.value.symbol_id == alpha.symbol_id
+
+
 def test_assemble_evidence_refuses_a_path_outside_the_repository(indexed_repo):
     root, conn = indexed_repo
     alpha = _hit(conn, "sample.alpha")
@@ -175,6 +187,23 @@ def test_assemble_evidence_refuses_a_path_outside_the_repository(indexed_repo):
         assemble_evidence(conn, root, [alpha], budget_bytes=10_000)
 
     assert error.value.code == "path_escapes_repo"
+
+
+def test_assemble_evidence_refuses_an_absolute_indexed_path_inside_the_repository(
+    indexed_repo,
+):
+    root, conn = indexed_repo
+    alpha = _hit(conn, "sample.alpha")
+    conn.execute(
+        "UPDATE files SET path = ? WHERE id = (SELECT file_id FROM symbols WHERE id = ?)",
+        (str((root / "sample.py").resolve()), alpha.symbol_id),
+    )
+
+    with pytest.raises(EvidenceError) as error:
+        assemble_evidence(conn, root, [alpha], budget_bytes=10_000)
+
+    assert error.value.code == "path_escapes_repo"
+    assert error.value.symbol_id == alpha.symbol_id
 
 
 def test_assemble_evidence_refuses_a_missing_indexed_source(indexed_repo):

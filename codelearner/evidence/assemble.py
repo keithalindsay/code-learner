@@ -61,7 +61,10 @@ def assemble_evidence(
         if row is None:
             omitted.append(symbol_id)
             continue
-        candidate = root / str(row["path"])
+        path = Path(str(row["path"]))
+        if path.is_absolute():
+            raise EvidenceError("path_escapes_repo", symbol_id)
+        candidate = root / path
         try:
             if candidate.is_symlink():
                 raise EvidenceError("file_not_regular", symbol_id)
@@ -86,10 +89,13 @@ def assemble_evidence(
         except OSError:
             raise EvidenceError("file_not_regular", symbol_id) from None
 
-        byte_start = int(row["byte_start"])
-        byte_end = int(row["byte_end"])
-        line_start = int(row["line_start"])
-        line_end = int(row["line_end"])
+        try:
+            byte_start = int(row["byte_start"])
+            byte_end = int(row["byte_end"])
+            line_start = int(row["line_start"])
+            line_end = int(row["line_end"])
+        except (OverflowError, TypeError, ValueError):
+            raise EvidenceError("invalid_span", symbol_id) from None
         if (
             byte_start < 0
             or byte_end <= byte_start
@@ -106,7 +112,7 @@ def assemble_evidence(
         section = EvidenceSection(
             symbol_id=symbol_id,
             qualname=str(row["qualname"]),
-            path=str(row["path"]),
+            path=str(path),
             line_start=line_start,
             line_end=line_end,
             content_hash=str(row["content_hash"]),
