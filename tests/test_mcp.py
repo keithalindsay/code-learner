@@ -186,6 +186,12 @@ def test_all_five_tools_are_registered_with_descriptions_and_schemas(served):
         "include_source",
         "evidence_budget",
     }
+    search_schema = by_name["search_code"].input_schema
+    assert search_schema["required"] == ["query"]
+    assert search_schema["properties"]["k"]["default"] == 10
+    assert search_schema["properties"]["facts_only"]["default"] is False
+    assert search_schema["properties"]["include_source"]["default"] is False
+    assert search_schema["properties"]["evidence_budget"]["default"] == 16_384
     # `facts_only` is on BOTH read tools, and on this one it is the copy that can
     # change an answer -- `get_symbol` returns the only tier-2 content the server has.
     # Pinned in the schema because an agent chooses a call from the schema, and a flag
@@ -198,6 +204,17 @@ def test_all_five_tools_are_registered_with_descriptions_and_schemas(served):
     # a citation needs a hash and guesses the field names.
     span_schema = by_name["submit_assertion"].input_schema["properties"]["evidence_spans"]
     assert span_schema["type"] == "array"
+
+
+def test_search_code_description_distinguishes_compact_and_verified_source_modes(served):
+    """The tool description must not call opt-in source unavailable after it was added."""
+    _, _, server = served
+    description = {tool.name: tool.description for tool in asyncio.run(server.list_tools())}["search_code"]
+    description = " ".join(description.split()).lower()
+
+    assert "compact mode returns locations from the index snapshot" in description
+    assert "`include_source` returns complete, current, verified symbol bodies" in description
+    assert "refuses stale or unsafe source" in description
 
 
 # The descriptions are the product surface an agent actually reads, so they are held
@@ -887,7 +904,9 @@ def test_search_with_source_refuses_source_changed_since_indexing(served):
     assert payload["ok"] is False
     assert payload["error"]["code"] == "evidence_unavailable"
     assert "Source evidence could not be assembled." in payload["error"]["message"]
-    assert str(repo) not in payload["error"]["message"]
+    serialized = json.dumps(payload, sort_keys=True)
+    assert str(repo) not in serialized
+    assert str(repo / "core.py") not in serialized
 
 
 def test_search_without_source_does_not_read_a_deleted_indexed_file(served):

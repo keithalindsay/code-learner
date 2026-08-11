@@ -1460,13 +1460,13 @@ def build_server(
         edge from something that does -- `via` names the edge -- which no text search
         reaches at any level of cleverness.
 
-        Where it does not help. It hands back no code: to read a body you open the
-        file at the path and lines returned, and get_symbol is the cheaper stop first
-        if you want the signature, docstring and call edges without one. For an exact
-        string, a regex, or anything outside the parsed languages, searching the
-        working tree directly is both better and current -- this answers from the
-        index as it was last built, so a file edited since then is described as it
-        was, and index_stats says what the index covers. `k` is clamped to 100.
+        Where it does not help. Compact mode returns locations from the index
+        snapshot; `include_source` returns complete, current, verified symbol bodies
+        and refuses stale or unsafe source. get_symbol is the cheaper stop first if
+        you want the signature, docstring and call edges. For an exact string, a
+        regex, or anything outside the parsed languages, searching the working tree
+        directly is both better and current; index_stats says what the index covers.
+        `k` is clamped to 100.
 
         `facts_only` drops anything above tier 1, and today it drops nothing: no
         modality in this server retrieves at tier 2, so every hit is already a parsed
