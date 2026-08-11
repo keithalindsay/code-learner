@@ -1428,7 +1428,7 @@ def build_server(
     )
 
     @server.tool()
-    def search_code(
+    async def search_code(
         query: str,
         k: int = 10,
         facts_only: bool = False,
@@ -1492,7 +1492,7 @@ def build_server(
         )
 
     @server.tool()
-    def get_symbol(qualname: str, facts_only: bool = False) -> dict[str, Any]:
+    async def get_symbol(qualname: str, facts_only: bool = False) -> dict[str, Any]:
         """Everything the index knows about one symbol, including who calls it.
 
         Returns its kind, path, line range, signature, docstring and content_hash;
@@ -1537,7 +1537,7 @@ def build_server(
         return _guard(source, _get_symbol_body, qualname=qualname, facts_only=facts_only)
 
     @server.tool()
-    def reading_path(topic: str = "", limit: int = 12) -> dict[str, Any]:
+    async def reading_path(topic: str = "", limit: int = 12) -> dict[str, Any]:
         """Where to start reading an unfamiliar codebase, in dependency order.
 
         With a `topic`, the tour is seeded from retrieval and answers "read these N
@@ -1562,7 +1562,7 @@ def build_server(
         return _guard(source, _reading_path_body, topic=topic, limit=limit)
 
     @server.tool()
-    def submit_assertion(
+    async def submit_assertion(
         subject_qualname: str,
         claim: str,
         evidence_spans: list[EvidenceSpanInput],
@@ -1618,7 +1618,7 @@ def build_server(
         )
 
     @server.tool()
-    def index_stats() -> dict[str, Any]:
+    async def index_stats() -> dict[str, Any]:
         """What this index covers, and what is in it by tier.
 
         The repo root it is bound to; counts of files, symbols, edges and chunks;
