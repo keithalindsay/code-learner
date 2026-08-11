@@ -317,10 +317,15 @@ def _stdio_handshake(cwd: Path, timeout: float = 120.0) -> dict[str, Any]:
     answers fails this test in `timeout` seconds rather than parking the suite on a
     pipe read.
     """
+    env = os.environ.copy()
+    existing_pythonpath = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = os.pathsep.join(
+        part for part in (str(PROJECT_ROOT), existing_pythonpath) if part
+    )
     proc = subprocess.Popen(  # noqa: S603 - argv is this interpreter and this package
         [sys.executable, "-m", "codelearner.server", str(cwd)],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True, bufsize=1, cwd=str(cwd),
+        text=True, bufsize=1, cwd=str(cwd), env=env,
     )
     replies: dict[str, Any] = {}
     errors: list[str] = []
@@ -349,7 +354,16 @@ def _stdio_handshake(cwd: Path, timeout: float = 120.0) -> dict[str, Any]:
     def wait_for(key: str, what: str) -> None:
         deadline = time.monotonic() + timeout
         while key not in replies and time.monotonic() < deadline:
-            arrived.wait(timeout=1.0)
+            returncode = proc.poll()
+            if returncode is not None:
+                # Give the stderr reader the EOF it needs, then report the actual
+                # startup failure instead of disguising it as a two-minute timeout.
+                arrived.wait(timeout=0.1)
+                pytest.fail(
+                    f"server exited with {returncode} before {what}. "
+                    f"stderr:\n{''.join(errors)}"
+                )
+            arrived.wait(timeout=0.05)
             arrived.clear()
         assert key in replies, f"no {what} within {timeout}s. stderr:\n{''.join(errors)}"
 
@@ -830,6 +844,36 @@ def test_search_without_source_options_keeps_the_compact_response_contract(serve
 
     assert set(payload) == {"ok", "query", "k", "facts_only", "count", "notes", "hits"}
     assert "evidence" not in payload
+
+
+def test_index_source_serializes_work_off_the_event_loop(tmp_path):
+    source = server_app.IndexSource(path=tmp_path / "unused.db")
+    active = 0
+    max_active = 0
+    worker_threads: list[int] = []
+
+    def work(value):
+        nonlocal active, max_active
+        worker_threads.append(threading.get_ident())
+        active += 1
+        max_active = max(max_active, active)
+        time.sleep(0.05)
+        active -= 1
+        return value
+
+    async def exercise():
+        first = asyncio.create_task(source.run_sync(work, 1))
+        second = asyncio.create_task(source.run_sync(work, 2))
+        await asyncio.sleep(0.01)
+        assert not first.done()
+        # If work ran inline, the sleep above could not resume until both calls ended.
+        assert active == 1
+        return await asyncio.gather(first, second)
+
+    assert asyncio.run(exercise()) == [1, 2]
+    assert max_active == 1
+    assert set(worker_threads) != {threading.get_ident()}
+    source.close()
 
 
 def test_search_with_source_returns_the_complete_top_symbol_as_evidence(served):

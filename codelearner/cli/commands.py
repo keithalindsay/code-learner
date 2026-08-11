@@ -1100,10 +1100,23 @@ def cmd_search(args: Any, factory: EmbedderFactory) -> int:
     hits = facts_only(result.hits) if args.facts_only else list(result.hits)
     evidence: EvidenceBundle | None = None
     if args.include_source:
+        stored_root = db.stored_repo_root(conn)
+        if stored_root is None:
+            raise CliError(
+                f"the index at {index_path} is not bound to a repository. Re-index "
+                "it before requesting source evidence."
+            )
+        evidence_root = Path(stored_root).expanduser().resolve()
+        if getattr(args, "repo_explicit", False) and repo != evidence_root:
+            raise CliError(
+                f"--repo names {repo}, but the index at {index_path} belongs to the "
+                f"different repository {evidence_root}. Use that repository or its "
+                "index."
+            )
         try:
             evidence = assemble_evidence(
                 conn,
-                repo,
+                evidence_root,
                 hits,
                 budget_bytes=args.evidence_budget,
             )

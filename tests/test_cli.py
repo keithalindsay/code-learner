@@ -795,6 +795,23 @@ def test_search_source_refuses_an_edited_file_without_printing_its_body(tmp_path
     assert "1 | def frobnicate_widgets():" not in captured.out + captured.err
 
 
+def test_search_source_refuses_explicit_index_bound_to_another_repo(tmp_path, capsys):
+    indexed_repo, index_path = _indexed(tmp_path / "indexed", capsys)
+    other_repo = _mkrepo(tmp_path / "other")
+
+    assert main(
+        [
+            "search", QUERY, "--repo", str(other_repo),
+            "--index-path", str(index_path), "--include-source",
+        ],
+        embedder_factory=fake_factory,
+    ) == 1
+    captured = capsys.readouterr()
+    assert "different repository" in captured.err
+    assert str(indexed_repo) in captured.err
+    assert "Traceback" not in captured.err
+
+
 def test_k_limits_the_result_count(tmp_path, capsys):
     repo, _ = _indexed(tmp_path, capsys)
     payload = _search_json(capsys, ["search", QUERY, "--repo", str(repo), "--k", "1", "--json"])

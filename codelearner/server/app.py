@@ -22,9 +22,14 @@ the project's central claim -- now sits in a leaf that both import as peers.
 """
 from __future__ import annotations
 
+import asyncio
 import math
 import sqlite3
-from dataclasses import dataclass
+from collections.abc import AsyncIterator
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -295,6 +300,32 @@ class IndexSource:
     _identity: tuple[int, int] | None = None
     _embedder: Embedder | None = None
     _embed_checked: bool = False
+    _executor: ThreadPoolExecutor | None = field(default=None, init=False, repr=False)
+
+    async def run_sync(self, fn: Any, /, *args: Any, **kwargs: Any) -> Any:
+        """Run one index operation on this source's sole owning worker.
+
+        SQLite connections and embedders stay on the thread that created them, all
+        calls are serialized, and the MCP event loop remains available for protocol
+        traffic while retrieval or filesystem work runs.
+        """
+        if self._executor is None:
+            self._executor = ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="codelearner-index"
+            )
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._executor, partial(fn, *args, **kwargs)
+        )
+
+    def close(self) -> None:
+        """Close worker-owned state and stop the worker."""
+        executor, self._executor = self._executor, None
+        if executor is None:
+            self._drop()
+            return
+        executor.submit(self._drop).result()
+        executor.shutdown(wait=True)
 
     def _identity_now(self) -> tuple[int, int] | None:
         """`(st_dev, st_ino)` of the file at `path`, or None if nothing is there.
@@ -1421,10 +1452,19 @@ def build_server(
     and ~1.2GB of VRAM to prove wiring that three floats prove just as well.
     """
     source = IndexSource(path=Path(index_path), embedder_factory=embedder_factory)
+
+    @asynccontextmanager
+    async def lifespan(_server: MCPServer) -> AsyncIterator[None]:
+        try:
+            yield
+        finally:
+            source.close()
+
     server: MCPServer = MCPServer(
         name=SERVER_NAME,
         version=version,
         instructions=INSTRUCTIONS,
+        lifespan=lifespan,
     )
 
     @server.tool()
@@ -1481,7 +1521,8 @@ def build_server(
         that does that work is get_symbol's `facts_only`, which is the same promise on
         the surface where tier 2 actually appears.
         """
-        return _guard(
+        return await source.run_sync(
+            _guard,
             source,
             _search_body,
             query=query,
@@ -1534,7 +1575,9 @@ def build_server(
         never an invisible one: you are told that something exists and that you chose
         not to read it.
         """
-        return _guard(source, _get_symbol_body, qualname=qualname, facts_only=facts_only)
+        return await source.run_sync(
+            _guard, source, _get_symbol_body, qualname=qualname, facts_only=facts_only
+        )
 
     @server.tool()
     async def reading_path(topic: str = "", limit: int = 12) -> dict[str, Any]:
@@ -1559,7 +1602,9 @@ def build_server(
         and when you have a specific question, search_code is. `limit` is clamped
         to 100.
         """
-        return _guard(source, _reading_path_body, topic=topic, limit=limit)
+        return await source.run_sync(
+            _guard, source, _reading_path_body, topic=topic, limit=limit
+        )
 
     @server.tool()
     async def submit_assertion(
@@ -1606,7 +1651,8 @@ def build_server(
         case the claim went into the deleted file and is gone. Either way the hashes
         you are holding are one build old: re-run your retrieval, then submit again.
         """
-        return _guard(
+        return await source.run_sync(
+            _guard,
             source,
             _submit_body,
             subject_qualname=subject_qualname,
@@ -1637,7 +1683,7 @@ def build_server(
         is advance warning that get_symbol's callers will be sparse, since only bound
         edges appear there.
         """
-        return _guard(source, _stats_body)
+        return await source.run_sync(_guard, source, _stats_body)
 
     # Appended after the tools are registered, so the first handshake sees the real
     # answer to "does this server hold any prompt or resource" rather than the answer

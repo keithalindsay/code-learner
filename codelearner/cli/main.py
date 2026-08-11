@@ -32,6 +32,14 @@ from .commands import (
 
 DEFAULT_K = 10
 
+
+class _RepoPathAction(argparse.Action):
+    """Record that --repo came from the caller rather than the cwd default."""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        setattr(namespace, self.dest, values)
+        namespace.repo_explicit = True
+
 # Exit codes. 0 success, 1 a condition the tool predicted and explained, 2 a usage
 # error (argparse's own convention, kept rather than re-invented). The distinction
 # matters to a script: 2 means the command line was wrong, 1 means the world was.
@@ -262,8 +270,10 @@ def _add_index_location(parser: argparse.ArgumentParser) -> None:
         "--repo",
         type=Path,
         default=Path.cwd(),
+        action=_RepoPathAction,
         help="repository whose index to use (default: the working directory)",
     )
+    parser.set_defaults(repo_explicit=False)
     parser.add_argument(
         "--index-path",
         type=Path,

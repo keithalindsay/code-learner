@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import errno
+import os
 import sqlite3
+import stat
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -23,6 +26,61 @@ class EvidenceError(RuntimeError):
         self.symbol_id = symbol_id
         self.message = "Source evidence could not be assembled."
         super().__init__(self.message)
+
+
+def _read_source_file(root: Path, path: Path, *, symbol_id: int) -> bytes:
+    """Read a repo-relative regular file through one rooted descriptor chain.
+
+    Every path component is opened relative to its already-open parent and with
+    symlink following disabled. The final descriptor supplies both the metadata and
+    the bounded bytes, so a pathname replacement cannot change what is checked.
+    Platforms without these primitives fail closed instead of weakening the check.
+    """
+    if not os.supports_dir_fd or not hasattr(os, "O_NOFOLLOW"):
+        raise EvidenceError("file_not_regular", symbol_id)
+    parts = path.parts
+    if not parts or any(part in {"", ".", ".."} for part in parts):
+        raise EvidenceError("path_escapes_repo", symbol_id)
+
+    descriptors: list[int] = []
+    try:
+        directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        descriptors.append(os.open(root, directory_flags))
+        for part in parts[:-1]:
+            descriptors.append(os.open(part, directory_flags, dir_fd=descriptors[-1]))
+        file_flags = os.O_RDONLY | os.O_NOFOLLOW
+        descriptors.append(os.open(parts[-1], file_flags, dir_fd=descriptors[-1]))
+        file_stat = os.fstat(descriptors[-1])
+        if not stat.S_ISREG(file_stat.st_mode):
+            raise EvidenceError("file_not_regular", symbol_id)
+        if file_stat.st_size > MAX_SOURCE_FILE_BYTES:
+            raise EvidenceError("file_too_large", symbol_id)
+
+        chunks: list[bytes] = []
+        remaining = MAX_SOURCE_FILE_BYTES + 1
+        while remaining:
+            chunk = os.read(descriptors[-1], min(65_536, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        raw = b"".join(chunks)
+        if len(raw) > MAX_SOURCE_FILE_BYTES:
+            raise EvidenceError("file_too_large", symbol_id)
+        return raw
+    except EvidenceError:
+        raise
+    except FileNotFoundError:
+        raise EvidenceError("file_missing", symbol_id) from None
+    except OSError as exc:
+        code = "file_missing" if exc.errno == errno.ENOENT else "file_not_regular"
+        raise EvidenceError(code, symbol_id) from None
+    finally:
+        for descriptor in reversed(descriptors):
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
 
 
 def assemble_evidence(
@@ -64,30 +122,7 @@ def assemble_evidence(
         path = Path(str(row["path"]))
         if path.is_absolute():
             raise EvidenceError("path_escapes_repo", symbol_id)
-        candidate = root / path
-        try:
-            if candidate.is_symlink():
-                raise EvidenceError("file_not_regular", symbol_id)
-        except OSError:
-            raise EvidenceError("file_not_regular", symbol_id) from None
-        try:
-            resolved = candidate.resolve()
-        except (OSError, ValueError):
-            raise EvidenceError("path_escapes_repo", symbol_id) from None
-        if not resolved.is_relative_to(root):
-            raise EvidenceError("path_escapes_repo", symbol_id)
-        try:
-            if not candidate.exists():
-                raise EvidenceError("file_missing", symbol_id)
-            if not candidate.is_file():
-                raise EvidenceError("file_not_regular", symbol_id)
-            if candidate.stat().st_size > MAX_SOURCE_FILE_BYTES:
-                raise EvidenceError("file_too_large", symbol_id)
-            raw = candidate.read_bytes()
-        except FileNotFoundError:
-            raise EvidenceError("file_missing", symbol_id) from None
-        except OSError:
-            raise EvidenceError("file_not_regular", symbol_id) from None
+        raw = _read_source_file(root, path, symbol_id=symbol_id)
 
         coordinates = (
             row["byte_start"],
@@ -97,18 +132,21 @@ def assemble_evidence(
         )
         if any(type(coordinate) is not int for coordinate in coordinates):
             raise EvidenceError("invalid_span", symbol_id) from None
-        byte_start, byte_end, line_start, line_end = coordinates
+        byte_start, byte_end, indexed_line_start, indexed_line_end = coordinates
         if (
             byte_start < 0
             or byte_end <= byte_start
             or byte_end > len(raw)
-            or line_start < 1
-            or line_end < line_start
+            or indexed_line_start < 1
+            or indexed_line_end < indexed_line_start
         ):
             raise EvidenceError("invalid_span", symbol_id)
         symbol_source = raw[byte_start:byte_end]
         if content_hash(symbol_source) != str(row["content_hash"]):
             raise EvidenceError("source_changed", symbol_id)
+
+        line_start = raw[:byte_start].count(b"\n") + 1
+        line_end = raw[:byte_end].count(b"\n") + 1
 
         source = number_source(symbol_source.decode("utf-8", "replace"), line_start)
         section = EvidenceSection(

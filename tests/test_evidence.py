@@ -1,3 +1,4 @@
+import os
 import subprocess
 from pathlib import Path
 
@@ -135,6 +136,94 @@ def test_assemble_evidence_refuses_an_edited_indexed_symbol(indexed_repo):
 
     assert error.value.code == "source_changed"
     assert error.value.symbol_id == alpha.symbol_id
+
+
+def test_assemble_evidence_reports_live_lines_after_prefix_newlines_move_symbol(
+    indexed_repo,
+):
+    root, conn = indexed_repo
+    beta = _hit(conn, "sample.beta")
+    original = (root / "sample.py").read_bytes()
+    row = conn.execute(
+        "SELECT byte_start FROM symbols WHERE id = ?", (beta.symbol_id,)
+    ).fetchone()
+    byte_start = row["byte_start"]
+    prefix = original[:byte_start]
+    assert b'    """' in prefix
+    # Same byte length and the symbol's indexed bytes are untouched, but one extra
+    # newline moves the source location down by one line.
+    moved_prefix = prefix.replace(b'    """', b'\n   """', 1)
+    assert len(moved_prefix) == len(prefix)
+    (root / "sample.py").write_bytes(moved_prefix + original[byte_start:])
+
+    section = assemble_evidence(conn, root, [beta], budget_bytes=10_000).sections[0]
+
+    assert section.line_start == beta.line_start + 1
+    assert section.line_end == beta.line_end + 1
+    assert section.source.startswith(f"{beta.line_start + 1} | def beta():")
+
+
+def test_rooted_reader_rejects_symlinked_intermediate_directory(tmp_path):
+    from codelearner.evidence.assemble import _read_source_file
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "sample.py").write_text(SOURCE)
+    (root / "pkg").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(EvidenceError) as error:
+        _read_source_file(root, Path("pkg/sample.py"), symbol_id=7)
+    assert error.value.code == "file_not_regular"
+
+
+def test_rooted_reader_bounds_the_read_even_when_fstat_size_is_small(tmp_path, monkeypatch):
+    from codelearner.evidence import assemble as assemble_module
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "sample.py").write_bytes(b"x" * (MAX_SOURCE_FILE_BYTES + 1))
+    real_fstat = os.fstat
+
+    def stale_fstat(fd):
+        stat = real_fstat(fd)
+        values = list(stat)
+        values[6] = 1
+        return os.stat_result(values)
+
+    monkeypatch.setattr(assemble_module.os, "fstat", stale_fstat)
+    with pytest.raises(EvidenceError) as error:
+        assemble_module._read_source_file(root, Path("sample.py"), symbol_id=7)
+    assert error.value.code == "file_too_large"
+
+
+def test_rooted_reader_keeps_reading_open_file_when_path_is_replaced(tmp_path, monkeypatch):
+    from codelearner.evidence import assemble as assemble_module
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    target = root / "sample.py"
+    target.write_bytes(b"original")
+    outside = tmp_path / "outside.py"
+    outside.write_bytes(b"replacement")
+    real_read = os.read
+    replaced = False
+
+    def replace_then_read(fd, size):
+        nonlocal replaced
+        if not replaced:
+            replaced = True
+            target.unlink()
+            target.symlink_to(outside)
+        return real_read(fd, size)
+
+    monkeypatch.setattr(assemble_module.os, "read", replace_then_read)
+
+    assert assemble_module._read_source_file(
+        root, Path("sample.py"), symbol_id=7
+    ) == b"original"
+    assert replaced is True
 
 
 def test_assemble_evidence_refuses_a_symlink_replacing_indexed_source(indexed_repo, tmp_path):
