@@ -160,6 +160,8 @@ _STORE_REFUSALS = (
 #   too_many_spans        over MAX_EVIDENCE_SPANS citations in one submission
 #   claim_too_long        over MAX_CLAIM_CHARS characters of claim
 #   bad_confidence        confidence is not a real number in [0, 1]
+#   evidence_unavailable  requested source is stale or unsafe to assemble; re-index or
+#                         fix the working tree before asking for source again
 #
 # TELL THE HUMAN -- no argument of yours will change the answer:
 #   no_index              nothing at the index path; someone must run `codelearner index`
@@ -178,6 +180,7 @@ ERROR_CODES = frozenset(
         "bad_request",
         "claim_too_long",
         "empty_claim",
+        "evidence_unavailable",
         "evidence_required",
         "evidence_stale",
         "evidence_unverifiable",
@@ -915,14 +918,20 @@ def _servable_for(
 # ---------------------------------------------------------------------------
 
 def _search_body(
-    conn: sqlite3.Connection, source: IndexSource, query: str, k: int, facts_only: bool
+    conn: sqlite3.Connection,
+    source: IndexSource,
+    query: str,
+    k: int,
+    facts_only: bool,
+    include_source: bool,
+    evidence_budget: int,
 ) -> dict[str, Any]:
     k = max(1, min(int(k), MAX_K))
     embedder, notes = source.embedder(conn)
     result = search(conn, query, k=k, embedder=embedder, use_dense=embedder is not None)
     hits = facts_only_filter(result.hits) if facts_only else list(result.hits)
     hashes = _symbol_hashes(conn, [h.symbol_id for h in hits])
-    return {
+    payload = {
         "ok": True,
         "query": query,
         "k": k,
@@ -937,6 +946,25 @@ def _search_body(
             for rank, hit in enumerate(hits, start=1)
         ],
     }
+    if include_source:
+        from ..evidence import EvidenceError, assemble_evidence
+
+        try:
+            evidence = assemble_evidence(
+                conn,
+                source.repo_root(conn),
+                hits,
+                budget_bytes=evidence_budget,
+            )
+        except EvidenceError as exc:
+            raise ToolError(
+                "evidence_unavailable",
+                exc.message,
+                evidence_code=exc.code,
+                symbol_id=exc.symbol_id,
+            ) from exc
+        payload["evidence"] = evidence.as_json()
+    return payload
 
 
 def _edge_json(row: sqlite3.Row, other: str) -> dict[str, Any]:
@@ -1400,18 +1428,29 @@ def build_server(
     )
 
     @server.tool()
-    def search_code(query: str, k: int = 10, facts_only: bool = False) -> dict[str, Any]:
+    def search_code(
+        query: str,
+        k: int = 10,
+        facts_only: bool = False,
+        include_source: bool = False,
+        evidence_budget: int = 16_384,
+    ) -> dict[str, Any]:
         """Find the symbols in this repository that bear on a question.
 
         Hybrid retrieval over a pre-built index: lexical (FTS5) + dense (embeddings,
         when the index holds them) + call-graph expansion, fused into one ranked list.
         One call covers the whole repository.
 
-        Returns LOCATIONS, not source. Each hit carries qualname, path, a line range,
-        the tier its evidence rests on, the modalities that found it, `via` -- the
-        symbol whose resolved call edge reached it, non-empty only when graph
-        expansion produced the hit -- and the `content_hash` submit_assertion needs
-        before it will accept a citation of it.
+        By default returns LOCATIONS, not source. Each hit carries qualname, path, a
+        line range, the tier its evidence rests on, the modalities that found it,
+        `via` -- the symbol whose resolved call edge reached it, non-empty only when
+        graph expansion produced the hit -- and the `content_hash` submit_assertion
+        needs before it will accept a citation of it.
+
+        Set `include_source=true` to add opt-in evidence sections: each is a complete,
+        line-numbered symbol body from the current working tree. `evidence_budget` is
+        clamped to 65,536 bytes. If indexed source is stale or unsafe to read, the
+        call fails rather than presenting indexed source as current.
 
         Two things it does that reading and grepping files does not. The dense
         modality matches on meaning, so a query phrased as the question you actually
@@ -1442,7 +1481,15 @@ def build_server(
         that does that work is get_symbol's `facts_only`, which is the same promise on
         the surface where tier 2 actually appears.
         """
-        return _guard(source, _search_body, query=query, k=k, facts_only=facts_only)
+        return _guard(
+            source,
+            _search_body,
+            query=query,
+            k=k,
+            facts_only=facts_only,
+            include_source=include_source,
+            evidence_budget=evidence_budget,
+        )
 
     @server.tool()
     def get_symbol(qualname: str, facts_only: bool = False) -> dict[str, Any]:

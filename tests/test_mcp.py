@@ -183,6 +183,8 @@ def test_all_five_tools_are_registered_with_descriptions_and_schemas(served):
         "query",
         "k",
         "facts_only",
+        "include_source",
+        "evidence_budget",
     }
     # `facts_only` is on BOTH read tools, and on this one it is the copy that can
     # change an answer -- `get_symbol` returns the only tier-2 content the server has.
@@ -801,6 +803,103 @@ def test_search_returns_tier_labelled_hits_with_locations_and_hashes(served):
     # Always present, empty when the hit was not reached by graph expansion. A
     # consumer must not have to probe for the key to learn whether one exists.
     assert "via" in top
+
+
+def test_search_without_source_options_keeps_the_compact_response_contract(served):
+    """The opt-in evidence response must not quietly reshape the default payload."""
+    _, _, server = served
+
+    payload = call(server, "search_code", query=QUERY)
+
+    assert set(payload) == {"ok", "query", "k", "facts_only", "count", "notes", "hits"}
+    assert "evidence" not in payload
+
+
+def test_search_with_source_returns_the_complete_top_symbol_as_evidence(served):
+    """Requested source is whole-symbol, line-numbered, and identifies a returned hit."""
+    _, _, server = served
+
+    payload = call(
+        server,
+        "search_code",
+        query="frobnicate widgets",
+        k=2,
+        include_source=True,
+        evidence_budget=4096,
+    )
+
+    evidence = payload["evidence"]
+    assert set(evidence) == {
+        "budget_bytes",
+        "used_bytes",
+        "truncated",
+        "sections_omitted",
+        "omitted_symbol_ids",
+        "sections",
+    }
+    assert evidence["sections"][0]["source"] == (
+        "1 | def frobnicate_widgets():\n"
+        "2 |     \"\"\"Frobnicate every widget on the tray.\"\"\"\n"
+        "3 |     return _plumbing()"
+    )
+    section_ids = {section["symbol_id"] for section in evidence["sections"]}
+    hit_ids = {hit["symbol_id"] for hit in payload["hits"]}
+    assert evidence["sections"][0]["symbol_id"] == payload["hits"][0]["symbol_id"]
+    assert section_ids <= hit_ids
+
+
+def test_search_with_source_and_zero_budget_reports_every_hit_as_omitted(served):
+    """A zero byte source allowance returns explicit omission metadata, not partial text."""
+    _, _, server = served
+
+    payload = call(server, "search_code", query=QUERY, k=2, include_source=True, evidence_budget=0)
+
+    assert payload["evidence"]["budget_bytes"] == 0
+    assert payload["evidence"]["used_bytes"] == 0
+    assert payload["evidence"]["sections"] == []
+    assert payload["evidence"]["omitted_symbol_ids"] == [
+        hit["symbol_id"] for hit in payload["hits"]
+    ]
+
+
+def test_search_with_source_clamps_evidence_budget_to_the_byte_ceiling(served):
+    """An oversized request cannot turn MCP retrieval into an unbounded source read."""
+    _, _, server = served
+
+    payload = call(
+        server,
+        "search_code",
+        query=QUERY,
+        include_source=True,
+        evidence_budget=65_537,
+    )
+
+    assert payload["evidence"]["budget_bytes"] == 65_536
+
+
+def test_search_with_source_refuses_source_changed_since_indexing(served):
+    """Indexed bytes are not presented as current source after an edit on disk."""
+    repo, _, server = served
+    (repo / "core.py").write_text(CORE.replace("every widget on the tray", "nothing at all"))
+
+    payload = call(server, "search_code", query=QUERY, include_source=True)
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "evidence_unavailable"
+    assert "Source evidence could not be assembled." in payload["error"]["message"]
+    assert str(repo) not in payload["error"]["message"]
+
+
+def test_search_without_source_does_not_read_a_deleted_indexed_file(served):
+    """Compact search remains available when no source evidence was requested."""
+    repo, _, server = served
+    (repo / "core.py").unlink()
+
+    payload = call(server, "search_code", query=QUERY, include_source=False)
+
+    assert payload["ok"] is True
+    assert payload["hits"]
+    assert "evidence" not in payload
 
 
 def test_graph_reached_hits_are_tier_1_and_explain_themselves(served):
