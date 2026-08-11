@@ -32,6 +32,14 @@ from .commands import (
 
 DEFAULT_K = 10
 
+
+class _RepoPathAction(argparse.Action):
+    """Record that --repo came from the caller rather than the cwd default."""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        setattr(namespace, self.dest, values)
+        namespace.repo_explicit = True
+
 # Exit codes. 0 success, 1 a condition the tool predicted and explained, 2 a usage
 # error (argparse's own convention, kept rather than re-invented). The distinction
 # matters to a script: 2 means the command line was wrong, 1 means the world was.
@@ -43,6 +51,13 @@ def _positive_int(text: str) -> int:
     value = int(text)
     if value < 1:
         raise argparse.ArgumentTypeError(f"must be 1 or greater, got {value}")
+    return value
+
+
+def _nonnegative_int(text: str) -> int:
+    value = int(text)
+    if value < 0:
+        raise argparse.ArgumentTypeError(f"must be 0 or greater, got {value}")
     return value
 
 
@@ -131,6 +146,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--rerank",
         action="store_true",
         help="reorder results with a cross-encoder that reads the query (slow, downloads a model)",
+    )
+    p_search.add_argument(
+        "--include-source",
+        action="store_true",
+        help="include complete, current source for returned symbols",
+    )
+    p_search.add_argument(
+        "--evidence-budget",
+        type=_nonnegative_int,
+        default=16_384,
+        metavar="BYTES",
+        help="source-evidence byte budget when --include-source is set (default: 16384)",
     )
     p_search.add_argument("--json", action="store_true", help="emit JSON instead of a table")
     p_search.set_defaults(func=cmd_search)
@@ -243,8 +270,10 @@ def _add_index_location(parser: argparse.ArgumentParser) -> None:
         "--repo",
         type=Path,
         default=Path.cwd(),
+        action=_RepoPathAction,
         help="repository whose index to use (default: the working directory)",
     )
+    parser.set_defaults(repo_explicit=False)
     parser.add_argument(
         "--index-path",
         type=Path,

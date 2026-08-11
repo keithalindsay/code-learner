@@ -648,6 +648,18 @@ def test_embed_uses_the_injected_embedder_and_records_the_model(tmp_path, capsys
 # search
 # ---------------------------------------------------------------------------
 
+def test_search_source_flags_parse_with_the_shared_default_budget():
+    """Removing either flag would leave the CLI unable to request bounded source."""
+    default = build_parser().parse_args(["search", "lease", "--include-source"])
+    explicit = build_parser().parse_args(
+        ["search", "lease", "--include-source", "--evidence-budget", "2048"]
+    )
+
+    assert default.include_source is True
+    assert default.evidence_budget == 16_384
+    assert explicit.evidence_budget == 2048
+
+
 def test_search_shows_qualname_and_file_line(tmp_path, capsys):
     repo, _ = _indexed(tmp_path, capsys)
     assert main(["search", QUERY, "--repo", str(repo)], embedder_factory=fake_factory) == 0
@@ -669,6 +681,135 @@ def test_search_json_is_one_parseable_document_with_a_stable_hit_shape(tmp_path,
     }
     assert payload["hits"][0]["rank"] == 1
     assert payload["hits"][0]["tier"] == "T0"
+    assert "evidence" not in payload
+
+
+def test_search_json_adds_the_mcp_evidence_shape_only_when_source_is_requested(tmp_path, capsys):
+    """A CLI source request must be the assembler's response, not a second format."""
+    repo, _ = _indexed(tmp_path, capsys)
+
+    payload = _search_json(
+        capsys,
+        [
+            "search",
+            QUERY,
+            "--repo",
+            str(repo),
+            "--json",
+            "--include-source",
+            "--evidence-budget",
+            "4096",
+        ],
+    )
+
+    evidence = payload["evidence"]
+    assert set(evidence) == {
+        "budget_bytes",
+        "used_bytes",
+        "truncated",
+        "sections_omitted",
+        "omitted_symbol_ids",
+        "sections",
+    }
+    assert evidence["budget_bytes"] == 4096
+    assert any(
+        section["source"]
+        == (
+            "1 | def frobnicate_widgets():\n"
+            "2 |     \"\"\"Frobnicate every widget on the tray.\"\"\"\n"
+            "3 |     return _plumbing()"
+        )
+        for section in evidence["sections"]
+    )
+    assert {section["symbol_id"] for section in evidence["sections"]} <= {
+        hit["symbol_id"] for hit in payload["hits"]
+    }
+
+
+def test_search_json_zero_source_budget_records_every_hit_as_omitted(tmp_path, capsys):
+    """A zero allowance must report omissions rather than silently drop source."""
+    repo, _ = _indexed(tmp_path, capsys)
+
+    payload = _search_json(
+        capsys,
+        [
+            "search",
+            QUERY,
+            "--repo",
+            str(repo),
+            "--json",
+            "--include-source",
+            "--evidence-budget",
+            "0",
+        ],
+    )
+
+    evidence = payload["evidence"]
+    assert evidence["budget_bytes"] == 0
+    assert evidence["used_bytes"] == 0
+    assert evidence["truncated"] is True
+    assert evidence["sections"] == []
+    assert evidence["sections_omitted"] == payload["count"]
+    assert evidence["omitted_symbol_ids"] == [hit["symbol_id"] for hit in payload["hits"]]
+
+
+def test_search_source_human_output_follows_ranked_hits_with_numbered_sections(tmp_path, capsys):
+    """Human source stays on stdout and retains the indexed lines a reader can cite."""
+    repo, _ = _indexed(tmp_path, capsys)
+
+    assert main(
+        [
+            "search",
+            QUERY,
+            "--repo",
+            str(repo),
+            "--include-source",
+            "--evidence-budget",
+            "4096",
+        ],
+        embedder_factory=fake_factory,
+    ) == 0
+    captured = capsys.readouterr()
+
+    assert "source evidence (" in captured.out
+    assert "/4096 bytes; 0 section(s) omitted)" in captured.out
+    assert "--- core.frobnicate_widgets  core.py:1-3  sha256:" in captured.out
+    assert "1 | def frobnicate_widgets():" in captured.out
+    assert "1 | def frobnicate_widgets():" not in captured.err
+
+
+def test_search_source_refuses_an_edited_file_without_printing_its_body(tmp_path, capsys):
+    """Removing the current-source check would publish stale indexed coordinates."""
+    repo, _ = _indexed(tmp_path, capsys)
+    (repo / "core.py").write_text(REPO_FILES["core.py"].replace("every widget", "nothing"))
+
+    assert main(
+        ["search", QUERY, "--repo", str(repo), "--include-source"],
+        embedder_factory=fake_factory,
+    ) == 1
+    captured = capsys.readouterr()
+
+    assert "Source evidence could not be assembled." in captured.err
+    assert "Traceback" not in captured.err
+    assert str(repo / "core.py") not in captured.out + captured.err
+    assert "1 | def frobnicate_widgets():" not in captured.out + captured.err
+
+
+def test_search_source_refuses_explicit_index_bound_to_another_repo(tmp_path, capsys):
+    indexed_repo, index_path = _indexed(tmp_path / "indexed", capsys)
+    other_repo = _mkrepo(tmp_path / "other")
+
+    assert main(
+        [
+            "search", QUERY, "--repo", str(other_repo),
+            "--index-path", str(index_path), "--include-source",
+        ],
+        embedder_factory=fake_factory,
+    ) == 1
+    captured = capsys.readouterr()
+    assert "different repository" in captured.err
+    assert str(indexed_repo) in captured.err
+    assert "Traceback" not in captured.err
 
 
 def test_k_limits_the_result_count(tmp_path, capsys):

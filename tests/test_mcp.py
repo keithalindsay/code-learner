@@ -183,7 +183,15 @@ def test_all_five_tools_are_registered_with_descriptions_and_schemas(served):
         "query",
         "k",
         "facts_only",
+        "include_source",
+        "evidence_budget",
     }
+    search_schema = by_name["search_code"].input_schema
+    assert search_schema["required"] == ["query"]
+    assert search_schema["properties"]["k"]["default"] == 10
+    assert search_schema["properties"]["facts_only"]["default"] is False
+    assert search_schema["properties"]["include_source"]["default"] is False
+    assert search_schema["properties"]["evidence_budget"]["default"] == 16_384
     # `facts_only` is on BOTH read tools, and on this one it is the copy that can
     # change an answer -- `get_symbol` returns the only tier-2 content the server has.
     # Pinned in the schema because an agent chooses a call from the schema, and a flag
@@ -196,6 +204,17 @@ def test_all_five_tools_are_registered_with_descriptions_and_schemas(served):
     # a citation needs a hash and guesses the field names.
     span_schema = by_name["submit_assertion"].input_schema["properties"]["evidence_spans"]
     assert span_schema["type"] == "array"
+
+
+def test_search_code_description_distinguishes_compact_and_verified_source_modes(served):
+    """The tool description must not call opt-in source unavailable after it was added."""
+    _, _, server = served
+    description = {tool.name: tool.description for tool in asyncio.run(server.list_tools())}["search_code"]
+    description = " ".join(description.split()).lower()
+
+    assert "compact mode returns locations from the index snapshot" in description
+    assert "`include_source` returns complete, current, verified symbol bodies" in description
+    assert "refuses stale or unsafe source" in description
 
 
 # The descriptions are the product surface an agent actually reads, so they are held
@@ -298,10 +317,15 @@ def _stdio_handshake(cwd: Path, timeout: float = 120.0) -> dict[str, Any]:
     answers fails this test in `timeout` seconds rather than parking the suite on a
     pipe read.
     """
+    env = os.environ.copy()
+    existing_pythonpath = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = os.pathsep.join(
+        part for part in (str(PROJECT_ROOT), existing_pythonpath) if part
+    )
     proc = subprocess.Popen(  # noqa: S603 - argv is this interpreter and this package
         [sys.executable, "-m", "codelearner.server", str(cwd)],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True, bufsize=1, cwd=str(cwd),
+        text=True, bufsize=1, cwd=str(cwd), env=env,
     )
     replies: dict[str, Any] = {}
     errors: list[str] = []
@@ -330,7 +354,16 @@ def _stdio_handshake(cwd: Path, timeout: float = 120.0) -> dict[str, Any]:
     def wait_for(key: str, what: str) -> None:
         deadline = time.monotonic() + timeout
         while key not in replies and time.monotonic() < deadline:
-            arrived.wait(timeout=1.0)
+            returncode = proc.poll()
+            if returncode is not None:
+                # Give the stderr reader the EOF it needs, then report the actual
+                # startup failure instead of disguising it as a two-minute timeout.
+                arrived.wait(timeout=0.1)
+                pytest.fail(
+                    f"server exited with {returncode} before {what}. "
+                    f"stderr:\n{''.join(errors)}"
+                )
+            arrived.wait(timeout=0.05)
             arrived.clear()
         assert key in replies, f"no {what} within {timeout}s. stderr:\n{''.join(errors)}"
 
@@ -801,6 +834,135 @@ def test_search_returns_tier_labelled_hits_with_locations_and_hashes(served):
     # Always present, empty when the hit was not reached by graph expansion. A
     # consumer must not have to probe for the key to learn whether one exists.
     assert "via" in top
+
+
+def test_search_without_source_options_keeps_the_compact_response_contract(served):
+    """The opt-in evidence response must not quietly reshape the default payload."""
+    _, _, server = served
+
+    payload = call(server, "search_code", query=QUERY)
+
+    assert set(payload) == {"ok", "query", "k", "facts_only", "count", "notes", "hits"}
+    assert "evidence" not in payload
+
+
+def test_index_source_serializes_work_off_the_event_loop(tmp_path):
+    source = server_app.IndexSource(path=tmp_path / "unused.db")
+    active = 0
+    max_active = 0
+    worker_threads: list[int] = []
+
+    def work(value):
+        nonlocal active, max_active
+        worker_threads.append(threading.get_ident())
+        active += 1
+        max_active = max(max_active, active)
+        time.sleep(0.05)
+        active -= 1
+        return value
+
+    async def exercise():
+        first = asyncio.create_task(source.run_sync(work, 1))
+        second = asyncio.create_task(source.run_sync(work, 2))
+        await asyncio.sleep(0.01)
+        assert not first.done()
+        # If work ran inline, the sleep above could not resume until both calls ended.
+        assert active == 1
+        return await asyncio.gather(first, second)
+
+    assert asyncio.run(exercise()) == [1, 2]
+    assert max_active == 1
+    assert set(worker_threads) != {threading.get_ident()}
+    source.close()
+
+
+def test_search_with_source_returns_the_complete_top_symbol_as_evidence(served):
+    """Requested source is whole-symbol, line-numbered, and identifies a returned hit."""
+    _, _, server = served
+
+    payload = call(
+        server,
+        "search_code",
+        query="frobnicate widgets",
+        k=2,
+        include_source=True,
+        evidence_budget=4096,
+    )
+
+    evidence = payload["evidence"]
+    assert set(evidence) == {
+        "budget_bytes",
+        "used_bytes",
+        "truncated",
+        "sections_omitted",
+        "omitted_symbol_ids",
+        "sections",
+    }
+    assert evidence["sections"][0]["source"] == (
+        "1 | def frobnicate_widgets():\n"
+        "2 |     \"\"\"Frobnicate every widget on the tray.\"\"\"\n"
+        "3 |     return _plumbing()"
+    )
+    section_ids = {section["symbol_id"] for section in evidence["sections"]}
+    hit_ids = {hit["symbol_id"] for hit in payload["hits"]}
+    assert evidence["sections"][0]["symbol_id"] == payload["hits"][0]["symbol_id"]
+    assert section_ids <= hit_ids
+
+
+def test_search_with_source_and_zero_budget_reports_every_hit_as_omitted(served):
+    """A zero byte source allowance returns explicit omission metadata, not partial text."""
+    _, _, server = served
+
+    payload = call(server, "search_code", query=QUERY, k=2, include_source=True, evidence_budget=0)
+
+    assert payload["evidence"]["budget_bytes"] == 0
+    assert payload["evidence"]["used_bytes"] == 0
+    assert payload["evidence"]["sections"] == []
+    assert payload["evidence"]["omitted_symbol_ids"] == [
+        hit["symbol_id"] for hit in payload["hits"]
+    ]
+
+
+def test_search_with_source_clamps_evidence_budget_to_the_byte_ceiling(served):
+    """An oversized request cannot turn MCP retrieval into an unbounded source read."""
+    _, _, server = served
+
+    payload = call(
+        server,
+        "search_code",
+        query=QUERY,
+        include_source=True,
+        evidence_budget=65_537,
+    )
+
+    assert payload["evidence"]["budget_bytes"] == 65_536
+
+
+def test_search_with_source_refuses_source_changed_since_indexing(served):
+    """Indexed bytes are not presented as current source after an edit on disk."""
+    repo, _, server = served
+    (repo / "core.py").write_text(CORE.replace("every widget on the tray", "nothing at all"))
+
+    payload = call(server, "search_code", query=QUERY, include_source=True)
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "evidence_unavailable"
+    assert "Source evidence could not be assembled." in payload["error"]["message"]
+    serialized = json.dumps(payload, sort_keys=True)
+    assert str(repo) not in serialized
+    assert str(repo / "core.py") not in serialized
+
+
+def test_search_without_source_does_not_read_a_deleted_indexed_file(served):
+    """Compact search remains available when no source evidence was requested."""
+    repo, _, server = served
+    (repo / "core.py").unlink()
+
+    payload = call(server, "search_code", query=QUERY, include_source=False)
+
+    assert payload["ok"] is True
+    assert payload["hits"]
+    assert "evidence" not in payload
 
 
 def test_graph_reached_hits_are_tier_1_and_explain_themselves(served):

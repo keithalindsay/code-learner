@@ -22,9 +22,14 @@ the project's central claim -- now sits in a leaf that both import as peers.
 """
 from __future__ import annotations
 
+import asyncio
 import math
 import sqlite3
-from dataclasses import dataclass
+from collections.abc import AsyncIterator
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -160,6 +165,8 @@ _STORE_REFUSALS = (
 #   too_many_spans        over MAX_EVIDENCE_SPANS citations in one submission
 #   claim_too_long        over MAX_CLAIM_CHARS characters of claim
 #   bad_confidence        confidence is not a real number in [0, 1]
+#   evidence_unavailable  requested source is stale or unsafe to assemble; re-index or
+#                         fix the working tree before asking for source again
 #
 # TELL THE HUMAN -- no argument of yours will change the answer:
 #   no_index              nothing at the index path; someone must run `codelearner index`
@@ -178,6 +185,7 @@ ERROR_CODES = frozenset(
         "bad_request",
         "claim_too_long",
         "empty_claim",
+        "evidence_unavailable",
         "evidence_required",
         "evidence_stale",
         "evidence_unverifiable",
@@ -292,6 +300,32 @@ class IndexSource:
     _identity: tuple[int, int] | None = None
     _embedder: Embedder | None = None
     _embed_checked: bool = False
+    _executor: ThreadPoolExecutor | None = field(default=None, init=False, repr=False)
+
+    async def run_sync(self, fn: Any, /, *args: Any, **kwargs: Any) -> Any:
+        """Run one index operation on this source's sole owning worker.
+
+        SQLite connections and embedders stay on the thread that created them, all
+        calls are serialized, and the MCP event loop remains available for protocol
+        traffic while retrieval or filesystem work runs.
+        """
+        if self._executor is None:
+            self._executor = ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="codelearner-index"
+            )
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._executor, partial(fn, *args, **kwargs)
+        )
+
+    def close(self) -> None:
+        """Close worker-owned state and stop the worker."""
+        executor, self._executor = self._executor, None
+        if executor is None:
+            self._drop()
+            return
+        executor.submit(self._drop).result()
+        executor.shutdown(wait=True)
 
     def _identity_now(self) -> tuple[int, int] | None:
         """`(st_dev, st_ino)` of the file at `path`, or None if nothing is there.
@@ -915,14 +949,20 @@ def _servable_for(
 # ---------------------------------------------------------------------------
 
 def _search_body(
-    conn: sqlite3.Connection, source: IndexSource, query: str, k: int, facts_only: bool
+    conn: sqlite3.Connection,
+    source: IndexSource,
+    query: str,
+    k: int,
+    facts_only: bool,
+    include_source: bool,
+    evidence_budget: int,
 ) -> dict[str, Any]:
     k = max(1, min(int(k), MAX_K))
     embedder, notes = source.embedder(conn)
     result = search(conn, query, k=k, embedder=embedder, use_dense=embedder is not None)
     hits = facts_only_filter(result.hits) if facts_only else list(result.hits)
     hashes = _symbol_hashes(conn, [h.symbol_id for h in hits])
-    return {
+    payload = {
         "ok": True,
         "query": query,
         "k": k,
@@ -937,6 +977,25 @@ def _search_body(
             for rank, hit in enumerate(hits, start=1)
         ],
     }
+    if include_source:
+        from ..evidence import EvidenceError, assemble_evidence
+
+        try:
+            evidence = assemble_evidence(
+                conn,
+                source.repo_root(conn),
+                hits,
+                budget_bytes=evidence_budget,
+            )
+        except EvidenceError as exc:
+            raise ToolError(
+                "evidence_unavailable",
+                exc.message,
+                evidence_code=exc.code,
+                symbol_id=exc.symbol_id,
+            ) from exc
+        payload["evidence"] = evidence.as_json()
+    return payload
 
 
 def _edge_json(row: sqlite3.Row, other: str) -> dict[str, Any]:
@@ -1393,25 +1452,45 @@ def build_server(
     and ~1.2GB of VRAM to prove wiring that three floats prove just as well.
     """
     source = IndexSource(path=Path(index_path), embedder_factory=embedder_factory)
+
+    @asynccontextmanager
+    async def lifespan(_server: MCPServer) -> AsyncIterator[None]:
+        try:
+            yield
+        finally:
+            source.close()
+
     server: MCPServer = MCPServer(
         name=SERVER_NAME,
         version=version,
         instructions=INSTRUCTIONS,
+        lifespan=lifespan,
     )
 
     @server.tool()
-    def search_code(query: str, k: int = 10, facts_only: bool = False) -> dict[str, Any]:
+    async def search_code(
+        query: str,
+        k: int = 10,
+        facts_only: bool = False,
+        include_source: bool = False,
+        evidence_budget: int = 16_384,
+    ) -> dict[str, Any]:
         """Find the symbols in this repository that bear on a question.
 
         Hybrid retrieval over a pre-built index: lexical (FTS5) + dense (embeddings,
         when the index holds them) + call-graph expansion, fused into one ranked list.
         One call covers the whole repository.
 
-        Returns LOCATIONS, not source. Each hit carries qualname, path, a line range,
-        the tier its evidence rests on, the modalities that found it, `via` -- the
-        symbol whose resolved call edge reached it, non-empty only when graph
-        expansion produced the hit -- and the `content_hash` submit_assertion needs
-        before it will accept a citation of it.
+        By default returns LOCATIONS, not source. Each hit carries qualname, path, a
+        line range, the tier its evidence rests on, the modalities that found it,
+        `via` -- the symbol whose resolved call edge reached it, non-empty only when
+        graph expansion produced the hit -- and the `content_hash` submit_assertion
+        needs before it will accept a citation of it.
+
+        Set `include_source=true` to add opt-in evidence sections: each is a complete,
+        line-numbered symbol body from the current working tree. `evidence_budget` is
+        clamped to 65,536 bytes. If indexed source is stale or unsafe to read, the
+        call fails rather than presenting indexed source as current.
 
         Two things it does that reading and grepping files does not. The dense
         modality matches on meaning, so a query phrased as the question you actually
@@ -1421,13 +1500,13 @@ def build_server(
         edge from something that does -- `via` names the edge -- which no text search
         reaches at any level of cleverness.
 
-        Where it does not help. It hands back no code: to read a body you open the
-        file at the path and lines returned, and get_symbol is the cheaper stop first
-        if you want the signature, docstring and call edges without one. For an exact
-        string, a regex, or anything outside the parsed languages, searching the
-        working tree directly is both better and current -- this answers from the
-        index as it was last built, so a file edited since then is described as it
-        was, and index_stats says what the index covers. `k` is clamped to 100.
+        Where it does not help. Compact mode returns locations from the index
+        snapshot; `include_source` returns complete, current, verified symbol bodies
+        and refuses stale or unsafe source. get_symbol is the cheaper stop first if
+        you want the signature, docstring and call edges. For an exact string, a
+        regex, or anything outside the parsed languages, searching the working tree
+        directly is both better and current; index_stats says what the index covers.
+        `k` is clamped to 100.
 
         `facts_only` drops anything above tier 1, and today it drops nothing: no
         modality in this server retrieves at tier 2, so every hit is already a parsed
@@ -1442,10 +1521,19 @@ def build_server(
         that does that work is get_symbol's `facts_only`, which is the same promise on
         the surface where tier 2 actually appears.
         """
-        return _guard(source, _search_body, query=query, k=k, facts_only=facts_only)
+        return await source.run_sync(
+            _guard,
+            source,
+            _search_body,
+            query=query,
+            k=k,
+            facts_only=facts_only,
+            include_source=include_source,
+            evidence_budget=evidence_budget,
+        )
 
     @server.tool()
-    def get_symbol(qualname: str, facts_only: bool = False) -> dict[str, Any]:
+    async def get_symbol(qualname: str, facts_only: bool = False) -> dict[str, Any]:
         """Everything the index knows about one symbol, including who calls it.
 
         Returns its kind, path, line range, signature, docstring and content_hash;
@@ -1487,10 +1575,12 @@ def build_server(
         never an invisible one: you are told that something exists and that you chose
         not to read it.
         """
-        return _guard(source, _get_symbol_body, qualname=qualname, facts_only=facts_only)
+        return await source.run_sync(
+            _guard, source, _get_symbol_body, qualname=qualname, facts_only=facts_only
+        )
 
     @server.tool()
-    def reading_path(topic: str = "", limit: int = 12) -> dict[str, Any]:
+    async def reading_path(topic: str = "", limit: int = 12) -> dict[str, Any]:
         """Where to start reading an unfamiliar codebase, in dependency order.
 
         With a `topic`, the tour is seeded from retrieval and answers "read these N
@@ -1512,10 +1602,12 @@ def build_server(
         and when you have a specific question, search_code is. `limit` is clamped
         to 100.
         """
-        return _guard(source, _reading_path_body, topic=topic, limit=limit)
+        return await source.run_sync(
+            _guard, source, _reading_path_body, topic=topic, limit=limit
+        )
 
     @server.tool()
-    def submit_assertion(
+    async def submit_assertion(
         subject_qualname: str,
         claim: str,
         evidence_spans: list[EvidenceSpanInput],
@@ -1559,7 +1651,8 @@ def build_server(
         case the claim went into the deleted file and is gone. Either way the hashes
         you are holding are one build old: re-run your retrieval, then submit again.
         """
-        return _guard(
+        return await source.run_sync(
+            _guard,
             source,
             _submit_body,
             subject_qualname=subject_qualname,
@@ -1571,7 +1664,7 @@ def build_server(
         )
 
     @server.tool()
-    def index_stats() -> dict[str, Any]:
+    async def index_stats() -> dict[str, Any]:
         """What this index covers, and what is in it by tier.
 
         The repo root it is bound to; counts of files, symbols, edges and chunks;
@@ -1590,7 +1683,7 @@ def build_server(
         is advance warning that get_symbol's callers will be sparse, since only bound
         edges appear there.
         """
-        return _guard(source, _stats_body)
+        return await source.run_sync(_guard, source, _stats_body)
 
     # Appended after the tools are registered, so the first handshake sees the real
     # answer to "does this server hold any prompt or resource" rather than the answer
