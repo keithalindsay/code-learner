@@ -175,6 +175,32 @@ def test_assemble_evidence_refuses_a_non_numeric_indexed_coordinate(indexed_repo
     assert error.value.symbol_id == alpha.symbol_id
 
 
+@pytest.mark.parametrize(
+    ("select_coordinate", "update_coordinate"),
+    [
+        ("SELECT byte_start FROM symbols WHERE id = ?", "UPDATE symbols SET byte_start = ? WHERE id = ?"),
+        ("SELECT byte_end FROM symbols WHERE id = ?", "UPDATE symbols SET byte_end = ? WHERE id = ?"),
+        ("SELECT line_start FROM symbols WHERE id = ?", "UPDATE symbols SET line_start = ? WHERE id = ?"),
+        ("SELECT line_end FROM symbols WHERE id = ?", "UPDATE symbols SET line_end = ? WHERE id = ?"),
+    ],
+)
+def test_assemble_evidence_refuses_real_indexed_coordinates(
+    indexed_repo,
+    select_coordinate,
+    update_coordinate,
+):
+    root, conn = indexed_repo
+    alpha = _hit(conn, "sample.alpha")
+    coordinate = conn.execute(select_coordinate, (alpha.symbol_id,)).fetchone()[0]
+    conn.execute(update_coordinate, (float(coordinate) + 0.5, alpha.symbol_id))
+
+    with pytest.raises(EvidenceError) as error:
+        assemble_evidence(conn, root, [alpha], budget_bytes=10_000)
+
+    assert error.value.code == "invalid_span"
+    assert error.value.symbol_id == alpha.symbol_id
+
+
 def test_assemble_evidence_refuses_a_path_outside_the_repository(indexed_repo):
     root, conn = indexed_repo
     alpha = _hit(conn, "sample.alpha")

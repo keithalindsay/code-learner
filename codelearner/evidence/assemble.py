@@ -89,13 +89,15 @@ def assemble_evidence(
         except OSError:
             raise EvidenceError("file_not_regular", symbol_id) from None
 
-        try:
-            byte_start = int(row["byte_start"])
-            byte_end = int(row["byte_end"])
-            line_start = int(row["line_start"])
-            line_end = int(row["line_end"])
-        except (OverflowError, TypeError, ValueError):
+        coordinates = (
+            row["byte_start"],
+            row["byte_end"],
+            row["line_start"],
+            row["line_end"],
+        )
+        if any(type(coordinate) is not int for coordinate in coordinates):
             raise EvidenceError("invalid_span", symbol_id) from None
+        byte_start, byte_end, line_start, line_end = coordinates
         if (
             byte_start < 0
             or byte_end <= byte_start
