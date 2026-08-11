@@ -46,6 +46,13 @@ def _positive_int(text: str) -> int:
     return value
 
 
+def _nonnegative_int(text: str) -> int:
+    value = int(text)
+    if value < 0:
+        raise argparse.ArgumentTypeError(f"must be 0 or greater, got {value}")
+    return value
+
+
 def _default_embedder(model_name: str) -> Embedder:
     """Build the real embedder. Imported late -- the import pulls in torch."""
     from ..index import SentenceTransformerEmbedder
@@ -131,6 +138,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--rerank",
         action="store_true",
         help="reorder results with a cross-encoder that reads the query (slow, downloads a model)",
+    )
+    p_search.add_argument(
+        "--include-source",
+        action="store_true",
+        help="include complete, current source for returned symbols",
+    )
+    p_search.add_argument(
+        "--evidence-budget",
+        type=_nonnegative_int,
+        default=16_384,
+        metavar="BYTES",
+        help="source-evidence byte budget when --include-source is set (default: 16384)",
     )
     p_search.add_argument("--json", action="store_true", help="emit JSON instead of a table")
     p_search.set_defaults(func=cmd_search)

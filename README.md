@@ -1767,12 +1767,27 @@ for a key to find out whether an explanation exists.
 model](#the-tier-model). It reports what it can see and names its own method, so the
 counts read as floors.
 
+By default `search` returns locations from the index snapshot, not source. Pass
+`--include-source` to append complete, line-numbered current symbol bodies after the
+ranked results (or an `evidence` object in `--json` mode). The assembler re-reads only
+indexed paths beneath `--repo`, refuses symlinks and unsafe files, and verifies each
+whole symbol against its indexed hash before printing it. If those bytes have changed
+since indexing, search fails rather than presenting stale source as current; compact
+search remains available when source was not requested.
+
+`--evidence-budget BYTES` sets the source-response allowance (default 16,384; capped
+at 65,536). It includes whole symbols in retrieval order or records them as omitted —
+it never truncates a symbol to fit. The human header and JSON `evidence` metadata
+always report the used bytes, budget, and omitted sections.
+
 | flag | effect |
 |---|---|
 | `-k N` | results to return (default 10) |
 | `--facts-only` | T0/T1 only. **Filters nothing today** — no retrieval path emits a tier-2 modality, so this is wired and inert (WP17.3) |
 | `--no-lexical`, `--no-dense`, `--no-graph` | turn a modality off; the switches the ablation needs |
 | `--rerank` | reorder with a cross-encoder that reads the query (opt-in; downloads ~3.4GB on first use, and says so and answers anyway if it cannot load) |
+| `--include-source` | add complete, current, hash-verified source evidence for returned symbols |
+| `--evidence-budget BYTES` | byte budget for `--include-source` (default 16,384; maximum 65,536) |
 | `--json` | machine-readable output on stdout, notes on stderr |
 | `--repo`, `--index-path` | which index to use (default: `$PWD/.codelearner/index.db`) |
 

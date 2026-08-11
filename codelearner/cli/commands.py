@@ -31,6 +31,7 @@ from typing import Any
 
 from .. import db, gpu
 from ..assertions import boundaries, store
+from ..evidence import EvidenceBundle, EvidenceError, assemble_evidence
 from ..index import Embedder, embed_chunks
 from ..ingest import index_repo, iter_python_files
 from ..retrieve import load_reranker, search, stored_embed_model
@@ -1012,8 +1013,25 @@ def cmd_index(args: Any, factory: EmbedderFactory) -> int:
 # search
 # ---------------------------------------------------------------------------
 
+def _print_evidence(bundle: EvidenceBundle) -> None:
+    """Render opt-in current source after the ranked results."""
+    print()
+    print(
+        "source evidence "
+        f"({bundle.used_bytes}/{bundle.budget_bytes} bytes; "
+        f"{bundle.sections_omitted} section(s) omitted)"
+    )
+    for section in bundle.sections:
+        print(
+            f"--- {section.qualname}  {section.path}:{section.line_start}-{section.line_end}  "
+            f"sha256:{section.content_hash} ---"
+        )
+        print(section.source)
+
+
 def cmd_search(args: Any, factory: EmbedderFactory) -> int:
-    index_path = resolve_index_path(args.repo.expanduser().resolve(), args.index_path)
+    repo = args.repo.expanduser().resolve()
+    index_path = resolve_index_path(repo, args.index_path)
     conn, drift = open_index(index_path)
 
     use_lexical = not args.no_lexical
@@ -1080,6 +1098,17 @@ def cmd_search(args: Any, factory: EmbedderFactory) -> int:
         reranker=reranker,
     )
     hits = facts_only(result.hits) if args.facts_only else list(result.hits)
+    evidence: EvidenceBundle | None = None
+    if args.include_source:
+        try:
+            evidence = assemble_evidence(
+                conn,
+                repo,
+                hits,
+                budget_bytes=args.evidence_budget,
+            )
+        except EvidenceError as exc:
+            raise CliError(exc.message) from exc
 
     # Notes go to stderr unconditionally so that `--json` on stdout stays a single
     # parseable document and a shell pipeline does not have to strip warnings.
@@ -1087,28 +1116,26 @@ def cmd_search(args: Any, factory: EmbedderFactory) -> int:
         print(f"codelearner: {note}", file=sys.stderr)
 
     if args.json:
-        print(
-            json.dumps(
-                {
-                    "query": args.query,
-                    "index": str(index_path),
-                    "k": args.k,
-                    "facts_only": args.facts_only,
-                    "modalities": {
-                        "lexical": use_lexical,
-                        "dense": use_dense,
-                        "graph": use_graph,
-                    },
-                    "count": len(hits),
-                    # The machine-readable half of the stderr note. A consumer that
-                    # never sees stderr would otherwise be the one surface that
-                    # cannot tell it is being handed line numbers that have moved.
-                    "drift": drift.as_json(),
-                    "hits": [hit_json(hit, i) for i, hit in enumerate(hits, start=1)],
-                },
-                indent=2,
-            )
-        )
+        payload: dict[str, Any] = {
+            "query": args.query,
+            "index": str(index_path),
+            "k": args.k,
+            "facts_only": args.facts_only,
+            "modalities": {
+                "lexical": use_lexical,
+                "dense": use_dense,
+                "graph": use_graph,
+            },
+            "count": len(hits),
+            # The machine-readable half of the stderr note. A consumer that
+            # never sees stderr would otherwise be the one surface that
+            # cannot tell it is being handed line numbers that have moved.
+            "drift": drift.as_json(),
+            "hits": [hit_json(hit, i) for i, hit in enumerate(hits, start=1)],
+        }
+        if evidence is not None:
+            payload["evidence"] = evidence.as_json()
+        print(json.dumps(payload, indent=2))
         return 0
 
     enabled = [
@@ -1118,10 +1145,12 @@ def cmd_search(args: Any, factory: EmbedderFactory) -> int:
     ]
     if not hits:
         print(f"no results for {args.query!r}  [{'+'.join(enabled)}]")
-        return 0
-    print(f"{len(hits)} result(s) for {args.query!r}  [{'+'.join(enabled)}, k={args.k}]")
-    for rank, hit in enumerate(hits, start=1):
-        print(format_hit(hit, rank))
+    else:
+        print(f"{len(hits)} result(s) for {args.query!r}  [{'+'.join(enabled)}, k={args.k}]")
+        for rank, hit in enumerate(hits, start=1):
+            print(format_hit(hit, rank))
+    if evidence is not None:
+        _print_evidence(evidence)
     return 0
 
 
