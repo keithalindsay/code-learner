@@ -102,21 +102,6 @@ def _search_page(
     ]
 
 
-def _present_document_ids(
-    conn: sqlite3.Connection, assertion_ids: Sequence[int]
-) -> set[int]:
-    present: set[int] = set()
-    for batch in store._chunks(list(assertion_ids)):
-        placeholders = ",".join("?" * len(batch))
-        for row in conn.execute(
-            "SELECT assertion_id FROM assertion_documents "  # noqa: S608
-            f"WHERE assertion_id IN ({placeholders})",
-            tuple(batch),
-        ):
-            present.add(int(row["assertion_id"]))
-    return present
-
-
 def _validate_bounds(k: int, page_size: int, max_candidates: int) -> None:
     for name, value in (
         ("k", k),
@@ -152,21 +137,18 @@ def search_assertions(
 
     results: list[AssertionCandidate] = []
     seen_ids: set[int] = set()
-    offset = 0
-    examined = 0
-    while len(results) < k and examined < max_candidates:
-        limit = min(page_size, max_candidates - examined)
-        page = _search_page(conn, match, limit=limit, offset=offset)
-        if not page:
+    # Capture the bounded rank order before verification can mark an assertion stale
+    # and remove its FTS document. BM25 depends on corpus statistics, so querying the
+    # next OFFSET after a removal can reorder every survivor and skip a candidate;
+    # an immutable window keeps refill deterministic while remaining hard-capped.
+    snapshot = _search_page(conn, match, limit=max_candidates, offset=0)
+    for start in range(0, len(snapshot), page_size):
+        if len(results) == k:
             break
-        offset += len(page)
-        examined += len(page)
-
+        page = snapshot[start:start + page_size]
         new_rows = [row for row in page if row.assertion_id not in seen_ids]
         seen_ids.update(row.assertion_id for row in new_rows)
         if not new_rows:
-            if len(page) < limit:
-                break
             continue
 
         ids = [row.assertion_id for row in new_rows]
@@ -210,12 +192,5 @@ def search_assertions(
             )
             if len(results) == k:
                 break
-        # A terminal verification failure removes its derived document in the same
-        # authoritative transition. Compensate the OFFSET for those rows or the
-        # shrunken result set moves the next candidate behind the cursor.
-        present_ids = _present_document_ids(conn, ids)
-        offset -= sum(assertion_id not in present_ids for assertion_id in ids)
-        if len(page) < limit:
-            break
 
     return results

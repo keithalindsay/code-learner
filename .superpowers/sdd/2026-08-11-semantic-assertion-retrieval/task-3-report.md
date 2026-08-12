@@ -147,3 +147,87 @@ Exit 0 at 100% with the existing skip and no failures.
 None blocking. This task deliberately implements lexical assertion retrieval only;
 mixed source/assertion fusion, promotion, conflict labeling, and package-level
 orchestration remain Task 4 scope.
+
+## Review fix round 1: immutable bounded ranking snapshot
+
+### Finding verified
+
+The mutable OFFSET refill was not sound when verification expired a candidate. FTS5
+BM25 is corpus-relative: removing a stale assertion document can change both scores and
+the order of every surviving row. Subtracting the number of removed rows repaired only
+a positional shrink; it could not repair a reorder across the cursor.
+
+The reviewer's fourteen-filler standalone construction initially passed when copied
+into this test fixture because the stored canonical documents also contain kind,
+subject, and evidence fields. A diagnostic sweep verified the same mechanism and found
+that nineteen fillers is the smallest locally deterministic value that produces the
+load-bearing order change with those complete canonical documents: initial IDs
+`3,2,1`, followed by survivor order `1,2` after ID 3 expires. The public API, query,
+policy states, page size, candidate cap, and expected result are otherwise unchanged.
+
+### RED evidence
+
+Command:
+
+```text
+/home/keith/projects/code-learner/.venv/bin/python -m pytest tests/test_assertion_retrieve.py::test_bm25_reordering_after_expiry_does_not_skip_snapshot_candidate -q
+```
+
+Observed: exit 1. `search_assertions(..., "a b", k=1, page_size=2,
+max_candidates=10)` returned `[]` instead of supported assertion ID 1. The first page
+contained stale supported ID 3 and pending ID 2. Verification expired ID 3 and removed
+its FTS document; the changed BM25 corpus reordered survivors to `1,2`, so the
+compensated OFFSET skipped ID 1.
+
+### Fix
+
+`search_assertions` now performs one deterministic FTS query ordered by
+`bm25(assertions_fts), assertion_id` with `LIMIT max_candidates` and `OFFSET 0` before
+any metadata or filesystem work can mutate the index. This captures only bounded IDs
+and scores. Retrieval then processes that immutable sequence in `page_size` slices,
+batch-loading page metadata, applying serving policy before filesystem verification,
+deduplicating IDs before I/O, and stopping once `k` verified candidates are found or
+the snapshot is exhausted. The mutable OFFSET loop, document-presence query, and
+positional compensation were removed.
+
+The hard cap is unchanged: the snapshot query cannot return more than
+`max_candidates`. Metadata and citation verification remain page-bounded rather than
+loading or verifying the entire snapshot at once.
+
+### GREEN evidence
+
+Regression command: exit 0.
+
+Task 3 focused command:
+
+```text
+/home/keith/projects/code-learner/.venv/bin/python -m pytest tests/test_assertion_retrieve.py -q
+```
+
+Exit 0: 24 tests passed.
+
+Compatibility and import-DAG command:
+
+```text
+/home/keith/projects/code-learner/.venv/bin/python -m pytest tests/test_assertion_retrieve.py tests/test_assertions.py tests/test_retrieve.py tests/test_generate_purpose.py::test_the_module_import_graph_is_a_dag -q
+```
+
+Exit 0 at 100%: 130 tests passed.
+
+Static verification:
+
+```text
+/home/keith/projects/code-learner/.venv/bin/ruff check codelearner/retrieve/assertions.py codelearner/retrieve/lexical.py codelearner/assertions/store.py tests/test_assertion_retrieve.py
+/home/keith/projects/code-learner/.venv/bin/mypy --ignore-missing-imports codelearner/retrieve/assertions.py codelearner/assertions/store.py
+git diff --check
+```
+
+Observed respectively: `All checks passed!`,
+`Success: no issues found in 2 source files`, and exit 0.
+
+### Fix-round concerns
+
+None blocking. The snapshot deliberately holds only bounded assertion IDs and raw BM25
+scores; authoritative assertion rows, verdicts, spans, and filesystem reads remain
+page-scoped. This preserves refill determinism without converting the hard cap into an
+unbounded or eager verification scan.

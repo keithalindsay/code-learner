@@ -64,6 +64,7 @@ def assertion_index(tmp_path) -> AssertionIndex:
     root.mkdir()
     (root / "leases.py").write_text(SOURCE)
     (root / "stable.py").write_text(SOURCE)
+    (root / "stale.py").write_text(SOURCE)
     conn = db.init_db(tmp_path / "index.db")
     db.bind_repo_root(conn, root)
     return AssertionIndex(root, conn)
@@ -154,15 +155,15 @@ def test_duplicate_ids_across_pages_are_verified_once(assertion_index, monkeypat
 
     first = assertion_index.add("lease first")
     second = assertion_index.add("lease second")
-    pages = [
-        [retrieval._SearchRow(first, -2.0)],
-        [retrieval._SearchRow(first, -1.5), retrieval._SearchRow(second, -1.0)],
-        [],
+    snapshot = [
+        retrieval._SearchRow(first, -2.0),
+        retrieval._SearchRow(first, -1.5),
+        retrieval._SearchRow(second, -1.0),
     ]
     verified: list[tuple[int, ...]] = []
     original = retrieval._verify_loaded_assertions
 
-    monkeypatch.setattr(retrieval, "_search_page", lambda *args, **kwargs: pages.pop(0))
+    monkeypatch.setattr(retrieval, "_search_page", lambda *args, **kwargs: snapshot)
 
     def recording_verify(conn, repo_root, assertions):
         verified.append(tuple(assertion.id for assertion in assertions))
@@ -171,7 +172,7 @@ def test_duplicate_ids_across_pages_are_verified_once(assertion_index, monkeypat
     monkeypatch.setattr(retrieval, "_verify_loaded_assertions", recording_verify)
 
     hits = search_assertions(
-        assertion_index.conn, assertion_index.root, "lease", k=2, page_size=1
+        assertion_index.conn, assertion_index.root, "lease", k=2, page_size=2
     )
 
     assert [hit.assertion_id for hit in hits] == [first, second]
@@ -221,6 +222,38 @@ def test_expired_top_row_does_not_shift_refill_past_next_candidate(assertion_ind
         "lease",
         k=1,
         page_size=1,
+    )
+
+    assert [hit.assertion_id for hit in hits] == [supported]
+    assert _status(assertion_index, expired) == store.STATUS_STALE
+
+
+def test_bm25_reordering_after_expiry_does_not_skip_snapshot_candidate(assertion_index):
+    supported = assertion_index.add("a a a a b b", path="stable.py")
+    assertion_index.add(
+        # Nineteen fillers is the smallest count that makes this fixture's full
+        # canonical documents reorder survivors from 2,1 to 1,2 after ID 3 leaves
+        # the corpus. The reviewer's standalone construction used fourteen; our
+        # fixture also includes its canonical kind/subject/evidence fields.
+        "a a a a b b b b b b b " + "x " * 19,
+        path="stable.py",
+        verdict=None,
+    )
+    expired = assertion_index.add(
+        "a a a a a a a a b b b b b b b b b " + "x " * 15,
+        path="stale.py",
+    )
+    (assertion_index.root / "stale.py").write_text(
+        SOURCE.replace("owner", "other")
+    )
+
+    hits = search_assertions(
+        assertion_index.conn,
+        assertion_index.root,
+        "a b",
+        k=1,
+        page_size=2,
+        max_candidates=10,
     )
 
     assert [hit.assertion_id for hit in hits] == [supported]
