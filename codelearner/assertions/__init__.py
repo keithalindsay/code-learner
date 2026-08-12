@@ -15,6 +15,13 @@ the list was five states, and the sixth was the one on which the two actually di
 """
 
 from .boundaries import expire_narrowed_citations
+from .policy import (
+    PRODUCTION_POLICY,
+    RESEARCH_PENDING_POLICY,
+    PolicyDecision,
+    ServingPolicy,
+    evaluate_metadata,
+)
 from .stale import (
     METHOD_HASH,
     METHOD_STAT,
@@ -64,6 +71,8 @@ from .store import (
 __all__ = [
     "METHOD_HASH",
     "METHOD_STAT",
+    "PRODUCTION_POLICY",
+    "RESEARCH_PENDING_POLICY",
     "REASON_DECORATORS_EXCLUDED",
     "REASON_FILE_MISSING",
     "REASON_HASH_MISMATCH",
@@ -85,12 +94,15 @@ __all__ = [
     "InvalidSpan",
     "SpanEscapesRepo",
     "NotReinstatable",
+    "PolicyDecision",
     "RefreshReport",
     "ServedAssertion",
+    "ServingPolicy",
     "SpanCheck",
     "UnknownSubject",
     "assertions_with_status",
     "expire_narrowed_citations",
+    "evaluate_metadata",
     "is_servable",
     "mark_stale",
     "record_verdict",

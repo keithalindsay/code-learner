@@ -6,12 +6,28 @@ from .graph import expand, neighbours
 from .lexical import Hit, search_lexical
 from .rerank import CrossEncoderReranker, Reranker, load_reranker
 from .search import SearchResult, search
+from .types import (
+    AssertionCandidate,
+    Candidate,
+    CandidateSearchResult,
+    Freshness,
+    ScoreContribution,
+    SourceCandidate,
+    VerdictSummary,
+)
 
 __all__ = [
     "CrossEncoderReranker",
+    "AssertionCandidate",
+    "Candidate",
+    "CandidateSearchResult",
+    "Freshness",
     "Hit",
     "Reranker",
+    "ScoreContribution",
     "SearchResult",
+    "SourceCandidate",
+    "VerdictSummary",
     "expand",
     "load_reranker",
     # Exported because `generate` traverses the call graph and must do it the way
