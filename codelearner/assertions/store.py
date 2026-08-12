@@ -1051,6 +1051,69 @@ def _load_assertions(
     ]
 
 
+def load_assertions_by_ids(
+    conn: sqlite3.Connection, assertion_ids: Sequence[int]
+) -> list[Assertion]:
+    """Load only the supplied assertions, preserving first-occurrence input order.
+
+    The public bounded reader for retrieval paths. IDs are deduplicated before any
+    query and split into SQLite-safe chunks; missing IDs are omitted. This is
+    deliberately separate from ``assertions_with_status`` and
+    ``servable_assertions`` so a candidate window never becomes a scan of the whole
+    assertion store by accident.
+    """
+    ordered_ids = list(dict.fromkeys(assertion_ids))
+    loaded: dict[int, Assertion] = {}
+    for batch in _chunks(ordered_ids):
+        placeholders = ",".join("?" * len(batch))
+        for assertion in _load_assertions(
+            conn,
+            f"id IN ({placeholders})",  # noqa: S608 - placeholders only
+            tuple(batch),
+        ):
+            loaded[assertion.id] = assertion
+    return [loaded[assertion_id] for assertion_id in ordered_ids if assertion_id in loaded]
+
+
+def verify_assertions(
+    conn: sqlite3.Connection,
+    repo_root: db.StrPath,
+    assertion_ids: Sequence[int],
+) -> list[Assertion]:
+    """Re-hash only the supplied assertions and return those servable right now.
+
+    Terminal evidence failures use :func:`mark_stale`, preserving the authoritative
+    lifecycle transition, staleness log, derived-document removal, and transaction
+    behavior. A transient unreadability withholds the assertion for this call and
+    writes nothing. IDs are deduplicated before both database and filesystem work.
+    """
+    root = _repo_root(conn, repo_root)
+    cache: dict[str, bytes | _Unread] = {}
+    verified: list[Assertion] = []
+    for assertion in load_assertions_by_ids(conn, assertion_ids):
+        if assertion.status != STATUS_ACTIVE:
+            continue
+        if not assertion.spans:
+            mark_stale(conn, assertion.id, REASON_NO_EVIDENCE)
+            continue
+        failure = _first_failure(root, assertion.spans, cache)
+        if failure is None:
+            verified.append(assertion)
+            continue
+        reason, span, observed = failure
+        if reason == REASON_UNREADABLE:
+            continue
+        mark_stale(
+            conn,
+            assertion.id,
+            reason,
+            span_id=span.id,
+            expected_hash=span.content_hash,
+            observed_hash=observed,
+        )
+    return verified
+
+
 def servable_assertions(
     conn: sqlite3.Connection,
     repo_root: db.StrPath | None = None,
