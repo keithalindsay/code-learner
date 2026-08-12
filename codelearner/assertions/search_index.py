@@ -59,21 +59,38 @@ def sync_assertion_document(conn: sqlite3.Connection, assertion_id: int) -> None
 
 def rebuild_assertion_documents(conn: sqlite3.Connection) -> None:
     """Reconstruct every live document from authoritative assertion rows."""
+    # An external-content token index may have diverged from its content table.
+    # Repair that relationship before DELETE triggers try to remove tokens that are
+    # no longer there, then rebuild once more from the freshly derived documents.
+    conn.execute("INSERT INTO assertions_fts(assertions_fts) VALUES ('rebuild')")
     conn.execute("DELETE FROM assertion_documents")
     assertion_ids = [
         int(row[0]) for row in conn.execute("SELECT id FROM assertions ORDER BY id")
     ]
     for assertion_id in assertion_ids:
         sync_assertion_document(conn, assertion_id)
+    conn.execute("INSERT INTO assertions_fts(assertions_fts) VALUES ('rebuild')")
 
 
 def assertion_search_structures_present(conn: sqlite3.Connection) -> bool:
-    """Return whether both derived assertion search tables exist."""
-    names = {
-        str(row[0])
+    """Return whether the derived tables and their synchronization triggers exist."""
+    required_triggers = {
+        "assertions_fts_insert",
+        "assertions_fts_delete",
+        "assertions_fts_update",
+    }
+    objects = {
+        str(row[0]): (str(row[1]), str(row[2] or ""))
         for row in conn.execute(
-            "SELECT name FROM sqlite_master WHERE name IN (?, ?)",
-            ("assertion_documents", "assertions_fts"),
+            "SELECT name, type, sql FROM sqlite_master WHERE name IN (?,?,?,?,?)",
+            ("assertion_documents", "assertions_fts", *sorted(required_triggers)),
         )
     }
-    return names == {"assertion_documents", "assertions_fts"}
+    documents = objects.get("assertion_documents")
+    fts = objects.get("assertions_fts")
+    if documents is None or documents[0] != "table" or fts is None or fts[0] != "table":
+        return False
+    fts_sql = " ".join(fts[1].casefold().split())
+    if "create virtual table" not in fts_sql or "using fts5" not in fts_sql:
+        return False
+    return all(name in objects and objects[name][0] == "trigger" for name in required_triggers)

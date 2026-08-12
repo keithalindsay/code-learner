@@ -1,6 +1,8 @@
 """Derived lexical documents for authoritative tier-2 assertions."""
 from __future__ import annotations
 
+import pytest
+
 from codelearner import db
 from codelearner.assertions import store
 from codelearner.assertions.store import Assertion, EvidenceSpan
@@ -148,6 +150,28 @@ def test_rebuild_reconstructs_only_active_documents(tmp_path):
     ] == [active]
 
 
+def test_rebuild_recovers_from_cleared_fts_tokens_without_losing_documents(tmp_path):
+    from codelearner.assertions.search_index import rebuild_assertion_documents
+
+    index = db.init_db(tmp_path / "index.db")
+    active = _stored_assertion(index)
+    _stored_assertion(index, status=store.STATUS_REJECTED)
+    index.execute("INSERT INTO assertions_fts(assertions_fts) VALUES ('delete-all')")
+    assert index.execute("SELECT count(*) FROM assertion_documents").fetchone()[0] == 1
+    assert index.execute(
+        "SELECT count(*) FROM assertions_fts WHERE assertions_fts MATCH 'renewal'"
+    ).fetchone()[0] == 0
+
+    rebuild_assertion_documents(index)
+
+    assert [
+        row[0]
+        for row in index.execute(
+            "SELECT rowid FROM assertions_fts WHERE assertions_fts MATCH 'renewal'"
+        )
+    ] == [active]
+
+
 def test_structure_probe_requires_both_derived_tables(tmp_path):
     from codelearner.assertions.search_index import assertion_search_structures_present
 
@@ -155,4 +179,62 @@ def test_structure_probe_requires_both_derived_tables(tmp_path):
     assert assertion_search_structures_present(index) is True
 
     index.execute("DROP TABLE assertions_fts")
+    assert assertion_search_structures_present(index) is False
+
+
+def test_structure_probe_rejects_a_view_named_like_the_fts_table(tmp_path):
+    from codelearner.assertions.search_index import assertion_search_structures_present
+
+    index = db.init_db(tmp_path / "index.db")
+    index.execute("DROP TABLE assertions_fts")
+    index.execute(
+        "CREATE VIEW assertions_fts AS "
+        "SELECT assertion_id AS rowid, text FROM assertion_documents"
+    )
+
+    assert assertion_search_structures_present(index) is False
+
+
+def test_structure_probe_requires_assertion_documents_to_be_a_table(tmp_path):
+    from codelearner.assertions.search_index import assertion_search_structures_present
+
+    index = db.init_db(tmp_path / "index.db")
+    index.execute("DROP TABLE assertion_documents")
+    index.execute(
+        "CREATE VIEW assertion_documents AS "
+        "SELECT id AS assertion_id, claim AS text, claim AS text_hash FROM assertions"
+    )
+    for operation in ("INSERT", "DELETE", "UPDATE"):
+        index.execute(
+            f"CREATE TRIGGER assertions_fts_{operation.casefold()} "
+            f"INSTEAD OF {operation} ON assertion_documents BEGIN SELECT 1; END"
+        )
+
+    assert assertion_search_structures_present(index) is False
+
+
+def test_structure_probe_rejects_a_non_fts_table_with_the_expected_name(tmp_path):
+    from codelearner.assertions.search_index import assertion_search_structures_present
+
+    index = db.init_db(tmp_path / "index.db")
+    index.execute("DROP TABLE assertions_fts")
+    index.execute("CREATE TABLE assertions_fts (text TEXT)")
+
+    assert assertion_search_structures_present(index) is False
+
+
+@pytest.mark.parametrize(
+    "trigger",
+    [
+        "assertions_fts_insert",
+        "assertions_fts_delete",
+        "assertions_fts_update",
+    ],
+)
+def test_structure_probe_requires_each_fts_sync_trigger(tmp_path, trigger):
+    from codelearner.assertions.search_index import assertion_search_structures_present
+
+    index = db.init_db(tmp_path / "index.db")
+    index.execute(f"DROP TRIGGER {trigger}")
+
     assert assertion_search_structures_present(index) is False
