@@ -363,6 +363,13 @@ def _atomic(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
         yield joined
 
 
+def _sync_assertion_document(conn: sqlite3.Connection, assertion_id: int) -> None:
+    """Load the derived-index dependency only at the mutation boundary."""
+    from . import search_index
+
+    search_index.sync_assertion_document(conn, assertion_id)
+
+
 def _repo_root(conn: sqlite3.Connection, repo_root: db.StrPath | None) -> Path:
     """Resolve where the cited files live, preferring the index's own binding.
 
@@ -687,6 +694,7 @@ def write_assertion(
                 for s in spans
             ],
         )
+        _sync_assertion_document(conn, assertion_id)
     return assertion_id
 
 
@@ -719,6 +727,7 @@ def record_verdict(
             conn.execute(
                 _TOUCH_STATUS, (STATUS_REJECTED, assertion_id, STATUS_ACTIVE)
             )
+        _sync_assertion_document(conn, assertion_id)
     return verdict_id
 
 
@@ -770,6 +779,7 @@ def mark_stale(
                 (assertion_id, span_id, reason, expected_hash, observed_hash,
                  detected_at),
             )
+        _sync_assertion_document(conn, assertion_id)
     return True
 
 
@@ -867,6 +877,8 @@ def reinstate(
         return False
     with _atomic(conn):
         cur = conn.execute(_TOUCH_STATUS, (STATUS_ACTIVE, assertion_id, STATUS_STALE))
+        if cur.rowcount:
+            _sync_assertion_document(conn, assertion_id)
     # `rowcount == 0` means another connection moved this row between the load above
     # and the write -- most likely a rejection. The WHERE clause declined to clobber
     # it, and saying so honestly is the whole reason the FROM-state is in the SQL.

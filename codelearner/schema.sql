@@ -246,6 +246,43 @@ CREATE TABLE IF NOT EXISTS evidence_spans (
 CREATE INDEX IF NOT EXISTS idx_evidence_assertion ON evidence_spans(assertion_id);
 CREATE INDEX IF NOT EXISTS idx_evidence_path ON evidence_spans(path);
 
+-- Derived retrieval text for live assertions. This is deliberately separate from
+-- the authoritative assertion, evidence, verdict, and staleness rows: it can be
+-- deleted and rebuilt without losing anything that cannot be reproduced.
+CREATE TABLE IF NOT EXISTS assertion_documents (
+    assertion_id INTEGER PRIMARY KEY REFERENCES assertions(id) ON DELETE CASCADE,
+    text         TEXT NOT NULL,
+    text_hash    TEXT NOT NULL
+);
+
+-- External-content lexical index over the canonical assertion documents. Active
+-- pending assertions stay here so the explicit research policy can retrieve them;
+-- rejected and stale assertions have no document at all.
+CREATE VIRTUAL TABLE IF NOT EXISTS assertions_fts USING fts5(
+    text,
+    content='assertion_documents',
+    content_rowid='assertion_id',
+    tokenize='unicode61 remove_diacritics 0'
+);
+
+CREATE TRIGGER IF NOT EXISTS assertions_fts_insert
+AFTER INSERT ON assertion_documents BEGIN
+    INSERT INTO assertions_fts(rowid, text) VALUES (new.assertion_id, new.text);
+END;
+
+CREATE TRIGGER IF NOT EXISTS assertions_fts_delete
+AFTER DELETE ON assertion_documents BEGIN
+    INSERT INTO assertions_fts(assertions_fts, rowid, text)
+    VALUES ('delete', old.assertion_id, old.text);
+END;
+
+CREATE TRIGGER IF NOT EXISTS assertions_fts_update
+AFTER UPDATE ON assertion_documents BEGIN
+    INSERT INTO assertions_fts(assertions_fts, rowid, text)
+    VALUES ('delete', old.assertion_id, old.text);
+    INSERT INTO assertions_fts(rowid, text) VALUES (new.assertion_id, new.text);
+END;
+
 -- Adjudication. A judge is asked to REFUTE a claim using only the spans that claim
 -- cites -- a different question from "does this look right", and the only one with
 -- a checkable answer, because the evidence it may use is finite and written down.

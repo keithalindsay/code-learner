@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import db, gpu
-from ..assertions import boundaries, store
+from ..assertions import boundaries, search_index, store
 from ..evidence import EvidenceBundle, EvidenceError, assemble_evidence
 from ..index import Embedder, embed_chunks
 from ..ingest import index_repo, iter_python_files
@@ -741,6 +741,12 @@ def _restore_store(conn: sqlite3.Connection, repo: Path, dump: Dump) -> CarryRep
     # See `assertions.boundaries`. Run second so that a claim which is BOTH edited and
     # narrowed is logged once, as the edit, which is the more urgent of the two.
     narrowed = boundaries.expire_narrowed_citations(conn, repo)
+
+    # Derived search state is reconstructed only after both verification passes have
+    # reached their final statuses. Carry transports the four authoritative tables,
+    # never a potentially stale retrieval cache.
+    with db.transaction(conn):
+        search_index.rebuild_assertion_documents(conn)
 
     totals = _dump_totals(dump)
     return CarryReport(

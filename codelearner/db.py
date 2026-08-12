@@ -55,7 +55,10 @@ SCHEMA = SCHEMA_PATH.read_text()
 #         `codelearner index <repo> --force --carry-assertions`, which carries the
 #         tier-2 store across, re-resolves subjects by qualname, and marks the
 #         claims whose evidence moved as `stale` instead of deleting them.
-SCHEMA_VERSION = 6
+#   v7 -- derived canonical assertion documents plus an external-content FTS5
+#         index. Authoritative assertion history is still carried across rebuilds;
+#         these documents are reconstructed from the restored rows afterwards.
+SCHEMA_VERSION = 7
 
 EXPECTED_TABLES = ("files", "symbols", "edges", "chunks", "assertions")
 

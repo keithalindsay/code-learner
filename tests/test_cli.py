@@ -438,6 +438,89 @@ def test_verdicts_and_the_rejected_set_survive_a_rebuild(tmp_path, capsys):
         conn.close()
 
 
+def test_v6_carry_preserves_history_and_rebuilds_only_active_search_documents(
+    tmp_path, capsys
+):
+    """A schema upgrade carries only authority and derives search state afterwards."""
+    repo, index_path = _indexed(tmp_path, capsys)
+    supported = _admit(
+        index_path, repo, "core.frobnicate_widgets", "supported renewal"
+    )
+    pending = _admit(index_path, repo, "core._plumbing", "pending renewal")
+    rejected = _admit(index_path, repo, "core", "rejected renewal")
+    stale = _admit(index_path, repo, "core", "stale renewal")
+    conn = db.connect(index_path)
+    store.record_verdict(
+        conn, supported, "judge/v1", store.VERDICT_SUPPORTED, "supported rationale"
+    )
+    store.record_verdict(
+        conn, rejected, "judge/v1", store.VERDICT_REFUTED, "rejected rationale"
+    )
+    assert store.mark_stale(
+        conn,
+        stale,
+        store.REASON_HASH_MISMATCH,
+        expected_hash="expected",
+        observed_hash="observed",
+    ) is True
+    before_assertions = [tuple(row) for row in conn.execute(
+        "SELECT id, subject_qualname, kind, claim, status, generator, confidence, "
+        "created_at, status_changed_at FROM assertions ORDER BY id"
+    )]
+    before_spans = [tuple(row) for row in conn.execute(
+        "SELECT id, assertion_id, path, line_start, line_end, byte_start, byte_end, "
+        "content_hash FROM evidence_spans ORDER BY id"
+    )]
+    before_verdicts = [tuple(row) for row in conn.execute(
+        "SELECT id, assertion_id, judge, verdict, rationale, created_at "
+        "FROM verdicts ORDER BY id"
+    )]
+    before_staleness = [tuple(row) for row in conn.execute(
+        "SELECT id, assertion_id, span_id, reason, expected_hash, observed_hash, "
+        "detected_at FROM staleness_log ORDER BY id"
+    )]
+    # Match a real v6 file: only the four authoritative tables existed to carry;
+    # derived assertion retrieval structures were introduced by v7.
+    conn.execute("DROP TABLE assertions_fts")
+    conn.execute("DROP TABLE assertion_documents")
+    conn.execute("UPDATE meta SET value = '6' WHERE key = 'schema_version'")
+    conn.close()
+
+    assert main(
+        ["index", str(repo), "--force", "--carry-assertions"],
+        embedder_factory=fake_factory,
+    ) == 0
+    capsys.readouterr()
+
+    conn = db.connect(index_path)
+    try:
+        assert [tuple(row) for row in conn.execute(
+            "SELECT id, subject_qualname, kind, claim, status, generator, confidence, "
+            "created_at, status_changed_at FROM assertions ORDER BY id"
+        )] == before_assertions
+        assert [tuple(row) for row in conn.execute(
+            "SELECT id, assertion_id, path, line_start, line_end, byte_start, byte_end, "
+            "content_hash FROM evidence_spans ORDER BY id"
+        )] == before_spans
+        assert [tuple(row) for row in conn.execute(
+            "SELECT id, assertion_id, judge, verdict, rationale, created_at "
+            "FROM verdicts ORDER BY id"
+        )] == before_verdicts
+        assert [tuple(row) for row in conn.execute(
+            "SELECT id, assertion_id, span_id, reason, expected_hash, observed_hash, "
+            "detected_at FROM staleness_log ORDER BY id"
+        )] == before_staleness
+        assert [row[0] for row in conn.execute(
+            "SELECT assertion_id FROM assertion_documents ORDER BY assertion_id"
+        )] == [supported, pending]
+        assert [row[0] for row in conn.execute(
+            "SELECT rowid FROM assertions_fts WHERE assertions_fts MATCH 'renewal' "
+            "ORDER BY rowid"
+        )] == [supported, pending]
+    finally:
+        conn.close()
+
+
 def test_discard_assertions_is_the_only_way_to_lose_the_store(tmp_path, capsys):
     """Destruction stays possible and stays deliberate. What changed is that it now
     has to be typed out."""

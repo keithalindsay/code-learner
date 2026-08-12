@@ -15,7 +15,7 @@ import sqlite3
 import pytest
 
 from codelearner import db
-from codelearner.assertions import store
+from codelearner.assertions import search_index, store
 from codelearner.ingest import index_repo
 from codelearner.ingest.types import content_hash
 
@@ -70,6 +70,106 @@ def _admit(conn, spans, *, claim="acquire returns True when the lease is taken",
         confidence=0.9,
         **kwargs,
     )
+
+
+def _document_ids(conn) -> list[int]:
+    return [
+        int(row[0])
+        for row in conn.execute(
+            "SELECT assertion_id FROM assertion_documents ORDER BY assertion_id"
+        )
+    ]
+
+
+# --------------------------------------------------------------------------
+# derived search documents share the authoritative mutation transaction
+# --------------------------------------------------------------------------
+
+
+def test_admission_creates_an_active_pending_search_document(repo):
+    root, conn = repo
+
+    assertion_id = _admit(conn, [_acquire_span(root)])
+
+    assert _document_ids(conn) == [assertion_id]
+
+
+@pytest.mark.parametrize(
+    "verdict", [store.VERDICT_REFUTED, store.VERDICT_UNSUPPORTED]
+)
+def test_non_supporting_verdict_removes_the_search_document(repo, verdict):
+    root, conn = repo
+    assertion_id = _admit(conn, [_acquire_span(root)])
+    search_index.sync_assertion_document(conn, assertion_id)
+
+    store.record_verdict(conn, assertion_id, "judge/v1", verdict)
+
+    assert _document_ids(conn) == []
+    assert [row["verdict"] for row in store.verdicts_for(conn, assertion_id)] == [
+        verdict
+    ]
+
+
+def test_supported_verdict_retains_the_search_document(repo):
+    root, conn = repo
+    assertion_id = _admit(conn, [_acquire_span(root)])
+    search_index.sync_assertion_document(conn, assertion_id)
+
+    store.record_verdict(
+        conn, assertion_id, "judge/v1", store.VERDICT_SUPPORTED
+    )
+
+    assert _document_ids(conn) == [assertion_id]
+
+
+def test_staleness_removes_the_search_document(repo):
+    root, conn = repo
+    assertion_id = _admit(conn, [_acquire_span(root)])
+    search_index.sync_assertion_document(conn, assertion_id)
+
+    assert store.mark_stale(
+        conn, assertion_id, store.REASON_HASH_MISMATCH
+    ) is True
+
+    assert _document_ids(conn) == []
+
+
+def test_reinstatement_restores_the_search_document(repo):
+    root, conn = repo
+    assertion_id = _admit(conn, [_acquire_span(root)])
+    assert store.mark_stale(
+        conn, assertion_id, store.REASON_HASH_MISMATCH
+    ) is True
+
+    assert store.reinstate(conn, assertion_id) is True
+
+    assert _document_ids(conn) == [assertion_id]
+
+
+def test_sync_failure_rolls_back_verdict_status_and_document_together(
+    repo, monkeypatch
+):
+    root, conn = repo
+    assertion_id = _admit(conn, [_acquire_span(root)])
+    search_index.sync_assertion_document(conn, assertion_id)
+
+    def remove_then_fail(connection, changed_id):
+        search_index.remove_assertion_document(connection, changed_id)
+        raise RuntimeError("derived sync failed")
+
+    monkeypatch.setattr(search_index, "sync_assertion_document", remove_then_fail)
+
+    with pytest.raises(RuntimeError, match="derived sync failed"):
+        store.record_verdict(
+            conn, assertion_id, "judge/v1", store.VERDICT_REFUTED
+        )
+
+    row = conn.execute(
+        "SELECT status FROM assertions WHERE id = ?", (assertion_id,)
+    ).fetchone()
+    assert row["status"] == store.STATUS_ACTIVE
+    assert store.verdicts_for(conn, assertion_id) == []
+    assert _document_ids(conn) == [assertion_id]
 
 
 # --------------------------------------------------------------------------
