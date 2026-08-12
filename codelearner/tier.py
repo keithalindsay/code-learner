@@ -55,15 +55,28 @@ class _TieredHit(Protocol):
 
 
 class _RenderableHit(_TieredHit, Protocol):
-    symbol_id: int
-    qualname: str
-    kind: str
-    path: str
-    line_start: int
-    line_end: int
-    score: float
-    is_test: bool
-    via: str
+    # Read-only members, like `modality` above: every hit this renders is a frozen
+    # dataclass, and a protocol that declares a settable attribute is not satisfied
+    # by one. Declaring them mutable made `hit_json(hit)` a type error at both call
+    # sites while the runtime behaviour was correct.
+    @property
+    def symbol_id(self) -> int: ...
+    @property
+    def qualname(self) -> str: ...
+    @property
+    def kind(self) -> str: ...
+    @property
+    def path(self) -> str: ...
+    @property
+    def line_start(self) -> int: ...
+    @property
+    def line_end(self) -> int: ...
+    @property
+    def score(self) -> float: ...
+    @property
+    def is_test(self) -> bool: ...
+    @property
+    def via(self) -> str: ...
 
 
 _HitT = TypeVar("_HitT", bound=_TieredHit)
