@@ -2125,8 +2125,10 @@ get_symbol(qualname)                     -> the claim, re-verified against disk
 | 7 | MCP server + CLI | done |
 | 8 | Eval: per-modality ablation, faithfulness with a same-weights-different-model judge, git-history purpose gold, gate negative controls | done; see [Measured](#measured) |
 | 9 | Claim generation: cited drafts, `codelearner learn`, a measured generator | done |
-| 10 | Adjudication as admission control — a `judge` command and `require_verdict` | **not started** (WP17.4) |
-| 11 | Second language | deferred; the type seam is clean, the dispatch is not built |
+| 10 | Adjudication as admission control — a `judge` command and `require_verdict` | **not started** (WP17.4). Note: search already REFUSES to serve an unjudged claim; what is missing is the pipeline that gets claims judged in the first place |
+| 11 | Semantic retrieval: claims as first-class search results | done — lexical assertion retrieval, mixed fusion, all-or-nothing evidence, one candidate shape across CLI and MCP. `facts_only` and `--no-assertions` are real controls now |
+| 11b | Semantic retrieval **lift** — assertion embeddings and a five-repository semantic gold set | **not started**. Nothing yet measures whether serving claims helps; the ablation's tier-2 row is a count, not a result |
+| 12 | Second language | deferred; the type seam is clean, the dispatch is not built |
 
 Deliberately not on this list, because a roadmap is not the place to hide a defect: the
 open items are in [docs/REMEDIATION.md](docs/REMEDIATION.md), which names WP16 (surviving

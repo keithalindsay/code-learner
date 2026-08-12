@@ -142,6 +142,7 @@ query ----------------------------+-------------------------+
 | 0 | Baseline and decisions frozen | Current behavior reproducible; schemas and policies agreed |
 | 1 | Source-rich evidence responses | One search call returns bounded whole-symbol source |
 | 2 | Semantic assertions are searchable | T2 claims measurably affect search and `facts_only` |
+| 2.5 | Semantic retrieval is *measured* | Dense assertion retrieval and a five-repository gold set decide whether it helps |
 | 3 | Adjudication is production policy | Unjudged claims can be withheld by default |
 | 4 | Query-aware graph retrieval | Impact and relationship intent produce appropriate traversals |
 | 5 | Incremental freshness lifecycle | Edits repair facts and expire/regenerate claims safely |
@@ -329,6 +330,23 @@ graph provenance, hashes, and a truthful omission report under a hard ceiling.
 
 ## 6. Phase 2 — make semantic claims searchable
 
+**Status (2026-08-12): implemented on `codex/production-phase-2`, except WP2.4, which
+moved to Phase 2.5.** Lexical retrieval over assertion documents, a centralised serving
+policy, mixed rank fusion with bidirectional promotion, all-or-nothing assertion
+evidence, and identical CLI and MCP candidate semantics are in. The production default
+serves a claim only when it is `active`, carries at least one `supported` verdict, has
+no `unsupported` or `refuted` verdict, and re-verifies every cited byte range on the
+serving call. Pending claims are reachable only through `RESEARCH_PENDING_POLICY`, named
+at the library boundary and exposed by neither surface; rejected and stale claims are
+servable under no policy at all.
+
+**What is NOT done, and must not be reported as done:** nothing here measures whether
+semantic retrieval improves anything. There is no assertion embedding, no semantic gold
+set, and no comparison against a source-only control on real repositories. The ablation
+carries a tier-2 row that reports a COUNT of claims returned, not a lift, and its
+metrics are not comparable with the source rows beside it. Productization criteria are
+not satisfied by this phase.
+
 ### Objective
 
 Turn the assertion store into an actual RAG modality.
@@ -397,9 +415,16 @@ Required behaviors:
 Add score explanations suitable for debugging but do not expose every internal float by
 default.
 
-### WP2.4 — Semantic retrieval gold set
+### WP2.4 — Semantic retrieval gold set — DEFERRED TO PHASE 2.5
 
 **Owner:** evaluation agent
+
+Deferred deliberately rather than dropped. Building the answer key in the same phase as
+the retrieval it grades invites the key to be shaped by what the retriever happens to
+return; and until the serving policy and the candidate substrate stopped moving, any
+number produced here would have measured a moving target. Phase 2 therefore exits on
+CORRECTNESS -- the right claims are servable and the wrong ones are not -- and Phase 2.5
+exits on EVIDENCE that the modality is worth its cost.
 
 Create queries whose answer cannot be recovered reliably from names alone:
 
@@ -420,8 +445,16 @@ Each label must identify:
 Use at least five repositories and cluster uncertainty by repository. Keep product-authored
 questions separate from mined questions.
 
-**Phase exit:** semantic queries retrieve supported claims directly; `facts_only` changes the
-candidate set; stale and rejected claims never appear under the default policy.
+**Phase 2 exit (met):** semantic queries retrieve supported claims directly; `facts_only`
+changes the candidate set and refills it from source; stale, rejected and pending claims
+never appear under the default policy. Proved end to end by `tests/test_semantic_search.py`
+against a repository whose symbol names reveal nothing about the invariant asked for.
+
+**Phase 2.5 exit (not met, not started):** assertion-specific embeddings and identity
+metadata; dense assertion retrieval; mixed lexical/dense assertion ablations; a frozen
+semantic gold set over at least five repositories with hard negatives, product-authored
+and mined questions kept separate, and uncertainty clustered by repository. Only that
+measurement can say whether the semantic layer beats the source-only control.
 
 ---
 
