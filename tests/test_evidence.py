@@ -164,7 +164,7 @@ def test_assemble_evidence_reports_live_lines_after_prefix_newlines_move_symbol(
 
 
 def test_rooted_reader_rejects_symlinked_intermediate_directory(tmp_path):
-    from codelearner.evidence.assemble import _read_source_file
+    from codelearner.evidence.assemble import _read_repo_file, _ReadError
 
     root = tmp_path / "repo"
     root.mkdir()
@@ -173,8 +173,8 @@ def test_rooted_reader_rejects_symlinked_intermediate_directory(tmp_path):
     (outside / "sample.py").write_text(SOURCE)
     (root / "pkg").symlink_to(outside, target_is_directory=True)
 
-    with pytest.raises(EvidenceError) as error:
-        _read_source_file(root, Path("pkg/sample.py"), symbol_id=7)
+    with pytest.raises(_ReadError) as error:
+        _read_repo_file(root, Path("pkg/sample.py"))
     assert error.value.code == "file_not_regular"
 
 
@@ -193,8 +193,8 @@ def test_rooted_reader_bounds_the_read_even_when_fstat_size_is_small(tmp_path, m
         return os.stat_result(values)
 
     monkeypatch.setattr(assemble_module.os, "fstat", stale_fstat)
-    with pytest.raises(EvidenceError) as error:
-        assemble_module._read_source_file(root, Path("sample.py"), symbol_id=7)
+    with pytest.raises(assemble_module._ReadError) as error:
+        assemble_module._read_repo_file(root, Path("sample.py"))
     assert error.value.code == "file_too_large"
 
 
@@ -220,9 +220,7 @@ def test_rooted_reader_keeps_reading_open_file_when_path_is_replaced(tmp_path, m
 
     monkeypatch.setattr(assemble_module.os, "read", replace_then_read)
 
-    assert assemble_module._read_source_file(
-        root, Path("sample.py"), symbol_id=7
-    ) == b"original"
+    assert assemble_module._read_repo_file(root, Path("sample.py")) == b"original"
     assert replaced is True
 
 
