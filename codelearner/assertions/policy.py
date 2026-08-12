@@ -56,6 +56,8 @@ def evaluate_metadata(
     """Decide eligibility from loaded metadata without touching SQL or the filesystem."""
     if assertion.status != store.STATUS_ACTIVE:
         return PolicyDecision(False, "status")
+    if policy.max_tier < TIER_INFERRED:
+        return PolicyDecision(False, "tier")
     if any(verdict.verdict in _VETO_VERDICTS for verdict in verdicts):
         return PolicyDecision(False, "vetoed")
 

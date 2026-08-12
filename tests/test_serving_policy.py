@@ -8,6 +8,7 @@ from codelearner.assertions.policy import (
     evaluate_metadata,
 )
 from codelearner.assertions.store import Assertion, EvidenceSpan
+from codelearner.ingest.types import TIER_FACT, TIER_INFERRED, TIER_RESOLVED
 from codelearner.retrieve.types import VerdictSummary
 
 
@@ -64,6 +65,26 @@ def test_policy_returns_only_accepted_supporting_verdicts():
     decision = evaluate_metadata(_assertion(), (support,), PRODUCTION_POLICY)
 
     assert decision.accepted == (support,)
+
+
+@pytest.mark.parametrize(
+    ("max_tier", "eligible", "reason"),
+    [
+        (TIER_FACT, False, "tier"),
+        (TIER_RESOLVED, False, "tier"),
+        (TIER_INFERRED, True, "eligible"),
+    ],
+)
+def test_policy_enforces_max_tier_for_assertions(max_tier, eligible, reason):
+    """A policy below T2 must reject assertion candidates even when supported."""
+    support = VerdictSummary("supporting-judge", "supported", "Matches the source.")
+    decision = evaluate_metadata(
+        _assertion(),
+        (support,),
+        ServingPolicy(max_tier=max_tier),
+    )
+
+    assert (decision.eligible, decision.reason) == (eligible, reason)
 
 
 @pytest.mark.parametrize("max_tier", (-1, 3))

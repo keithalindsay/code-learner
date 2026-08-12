@@ -142,3 +142,66 @@ $ /home/keith/projects/code-learner/.venv/bin/python -m pytest -q | tee .superpo
   `Hit` shape through structural typing, so current callers stay source-compatible.
 - The recoverable full-suite output is copied into this report, so the evidence
   stays with the task artifact without adding a transient log file to the commit.
+
+## Review fix round 1 (August 12, 2026)
+
+### Issue
+
+- `ServingPolicy.max_tier` was validated on construction but not enforced during
+  `evaluate_metadata(...)`, so a supported active assertion could still be served
+  under `max_tier=0` or `max_tier=1` even though assertions are tier 2.
+
+### RED evidence
+
+```text
+$ /home/keith/projects/code-learner/.venv/bin/python -m pytest tests/test_serving_policy.py -q
+........FF....                                                           [100%]
+=================================== FAILURES ===================================
+__________ test_policy_enforces_max_tier_for_assertions[0-False-tier] __________
+E       AssertionError: assert (True, 'eligible') == (False, 'tier')
+__________ test_policy_enforces_max_tier_for_assertions[1-False-tier] __________
+E       AssertionError: assert (True, 'eligible') == (False, 'tier')
+```
+
+### Fix
+
+- Added a behavior-first regression test covering `max_tier` 0, 1, and 2 for an
+  active supported assertion.
+- Added the minimal tier gate in `evaluate_metadata(...)`: after the existing
+  active-status check, assertion metadata now returns `PolicyDecision(False, "tier")`
+  whenever `policy.max_tier < TIER_INFERRED`.
+
+### GREEN evidence
+
+```text
+$ /home/keith/projects/code-learner/.venv/bin/python -m pytest tests/test_serving_policy.py -q
+..............                                                           [100%]
+```
+
+```text
+$ /home/keith/projects/code-learner/.venv/bin/python -m pytest tests/test_retrieval_types.py tests/test_retrieve.py -q
+.......................................                                  [100%]
+```
+
+```text
+$ /home/keith/projects/code-learner/.venv/bin/python -m pytest tests/test_generate_purpose.py::test_the_package_import_graph_is_a_dag -q
+.                                                                        [100%]
+```
+
+```text
+$ /home/keith/projects/code-learner/.venv/bin/ruff check codelearner/assertions/policy.py tests/test_serving_policy.py codelearner/retrieve/types.py codelearner/tier.py tests/test_retrieval_types.py tests/test_retrieve.py
+All checks passed!
+
+$ /home/keith/projects/code-learner/.venv/bin/mypy --ignore-missing-imports codelearner/assertions/policy.py codelearner/retrieve/types.py codelearner/tier.py
+Success: no issues found in 3 source files
+
+$ git diff --check
+```
+
+### Self-review
+
+- The new check is intentionally narrow: it preserves the existing precedence of
+  `status` over all other policy decisions and only blocks tier-2 assertions when
+  the caller sets a lower `max_tier`.
+- `max_tier=2` retains the previously shipped eligible behavior for supported
+  active assertions, which the new regression test now pins explicitly.
