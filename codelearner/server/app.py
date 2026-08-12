@@ -28,7 +28,7 @@ import sqlite3
 from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -38,13 +38,19 @@ from pydantic import BaseModel, Field
 
 from .. import db
 from ..assertions import store
-from ..retrieve import search, stored_embed_model
+from ..assertions.policy import PRODUCTION_POLICY
+from ..ingest.types import TIER_RESOLVED
+from ..retrieve import stored_embed_model
+from ..retrieve.assertions import AssertionSearchUnavailable
+from ..retrieve.mixed import search_candidates
+from ..retrieve.serialize import candidate_json
+from ..retrieve.types import SourceCandidate
 
-# From the leaf `codelearner.tier`, not from `..cli.render`. The tier model is the
-# rule both surfaces answer to; it is not the CLI's, and an MCP tool should not have
-# to import the thing a person types in order to say what tier a result rests on.
-from ..tier import facts_only as facts_only_filter
-from ..tier import hit_json
+# From the leaf packages, not from `..cli.render`. The tier model and the candidate
+# shape are the rules both surfaces answer to; they are not the CLI's, and an MCP
+# tool should not have to import the thing a person types in order to say what tier
+# a result rests on. Tier filtering itself now happens inside retrieval, before the
+# page is cut, so this module no longer post-filters a finished list.
 
 # Deferred to first use, for the same reason `_default_embedder` defers the model
 # loader: an MCP client launches this server as a subprocess and decides whether its
@@ -173,6 +179,10 @@ _STORE_REFUSALS = (
 #   index_unreadable      the file is not a code-learner index, or will not open
 #   index_unbound         the index has no repo root, so citations cannot be re-read
 #   schema_mismatch       the index was built by different code; it must be rebuilt
+#   incompatible_index    the index predates semantic retrieval and has no assertion
+#                         search structures. Refused rather than answered with silence,
+#                         because "no claims match" and "this index cannot hold claims"
+#                         are different answers and only one of them is about the query
 #
 # A BUG IN THIS FILE:
 #   bad_request           `_guard` caught a ValueError this module should have named
@@ -192,6 +202,7 @@ ERROR_CODES = frozenset(
         "file_missing",
         "file_too_large",
         "hash_mismatch",
+        "incompatible_index",
         "index_replaced",
         "index_unbound",
         "index_unreadable",
@@ -956,35 +967,80 @@ def _search_body(
     facts_only: bool,
     include_source: bool,
     evidence_budget: int,
+    include_assertions: bool = True,
+    debug_scores: bool = False,
 ) -> dict[str, Any]:
     k = max(1, min(int(k), MAX_K))
     embedder, notes = source.embedder(conn)
-    result = search(conn, query, k=k, embedder=embedder, use_dense=embedder is not None)
-    hits = facts_only_filter(result.hits) if facts_only else list(result.hits)
-    hashes = _symbol_hashes(conn, [h.symbol_id for h in hits])
+
+    # Serving a claim means re-reading the bytes it cites, so semantic retrieval
+    # needs the repository and not only the index. Without one the server answers
+    # from source alone and says so, rather than serving unverified claims.
+    repo_root: Path | None = None
+    try:
+        repo_root = source.repo_root(conn)
+    except ToolError as exc:
+        if include_source:
+            raise
+        if include_assertions:
+            include_assertions = False
+            notes = [*notes, exc.message]
+
+    policy = PRODUCTION_POLICY
+    if facts_only:
+        # Applied before fusion so the vacated slots refill with source. Filtering
+        # the finished page would hand a caller who asked for facts a short one.
+        policy = replace(policy, max_tier=TIER_RESOLVED)
+    try:
+        result = search_candidates(
+            conn,
+            repo_root or Path("."),
+            query,
+            k=k,
+            policy=policy,
+            embedder=embedder,
+            use_dense=embedder is not None,
+            use_assertions=include_assertions and repo_root is not None,
+            debug=debug_scores,
+        )
+    except AssertionSearchUnavailable as exc:
+        raise ToolError("incompatible_index", str(exc)) from exc
+    candidates = list(result.candidates)
+    hashes = _symbol_hashes(
+        conn,
+        [c.symbol_id for c in candidates if isinstance(c, SourceCandidate)],
+    )
     payload = {
         "ok": True,
         "query": query,
         "k": k,
         "facts_only": facts_only,
-        "count": len(hits),
+        "include_assertions": include_assertions,
+        "count": len(candidates),
         "notes": notes,
-        # `hit_json` is the CLI's shape, reused verbatim so the two surfaces cannot
-        # disagree about a tier. `content_hash` is the one addition: an agent that
-        # wants to cite this hit needs it, and a human reading a terminal does not.
+        # `candidate_json` is the CLI's shape, reused verbatim so the two surfaces
+        # cannot disagree about a tier or about what a claim is. `content_hash` is
+        # the one addition, and only on source: an agent that wants to cite a symbol
+        # needs it, and a human reading a terminal does not. A claim already carries
+        # the hash of every range it cites.
         "hits": [
-            dict(hit_json(hit, rank), content_hash=hashes.get(hit.symbol_id))
-            for rank, hit in enumerate(hits, start=1)
+            dict(
+                candidate_json(candidate, rank, debug=debug_scores),
+                content_hash=hashes.get(candidate.symbol_id),
+            )
+            if isinstance(candidate, SourceCandidate)
+            else candidate_json(candidate, rank, debug=debug_scores)
+            for rank, candidate in enumerate(candidates, start=1)
         ],
     }
     if include_source:
-        from ..evidence import EvidenceError, assemble_evidence
+        from ..evidence import EvidenceError, assemble_candidate_evidence
 
         try:
-            evidence = assemble_evidence(
+            evidence = assemble_candidate_evidence(
                 conn,
                 source.repo_root(conn),
-                hits,
+                candidates,
                 budget_bytes=evidence_budget,
             )
         except EvidenceError as exc:
@@ -1474,6 +1530,8 @@ def build_server(
         facts_only: bool = False,
         include_source: bool = False,
         evidence_budget: int = 16_384,
+        include_assertions: bool = True,
+        debug_scores: bool = False,
     ) -> dict[str, Any]:
         """Find the symbols in this repository that bear on a question.
 
@@ -1508,18 +1566,29 @@ def build_server(
         directly is both better and current; index_stats says what the index covers.
         `k` is clamped to 100.
 
-        `facts_only` drops anything above tier 1, and today it drops nothing: no
-        modality in this server retrieves at tier 2, so every hit is already a parsed
-        fact (T0) or a resolved name (T1), and passing it changes no result you will
-        see. It is wired at the seam a tier-2 modality would arrive through, so it
-        starts meaning something the day one exists, and it fails closed until then --
-        a hit arriving under a modality this server does not recognise is treated as
-        an inference and dropped.
+        Results are tagged. `candidate_type` is `source` for a symbol and
+        `assertion` for a stored semantic claim, and the two are different kinds of
+        thing: a claim is something a generator wrote and a judge read, and it is
+        served ONLY when it is active, at least one judge recorded `supported`, no
+        judge recorded `unsupported` or `refuted`, and every range it cites still
+        hashes to the bytes it was written against -- re-checked on this call, not
+        remembered. Pending, rejected and stale claims are never returned here at
+        any setting; a claim carries its verdicts, its freshness and the citations
+        you can go read yourself, so you never have to take it on trust.
 
-        It is NOT what keeps stored inferences out of your context, because none
-        arrive here. The tier-2 claims this index holds hang off symbols, so the flag
-        that does that work is get_symbol's `facts_only`, which is the same promise on
-        the surface where tier 2 actually appears.
+        `facts_only` drops everything above tier 1 -- so every claim -- BEFORE the
+        page is cut, and the freed slots refill with source. It now changes results
+        on an index holding claims. `include_assertions=false` is the ablation: the
+        same query answered from source alone, which is how you find out what the
+        semantic layer is worth. `debug_scores=true` adds the per-modality rank
+        contributions behind each fused score.
+
+        `include_source=true` returns cited bytes for a claim, its subject symbol,
+        and complete bodies for source hits. A claim whose citations cannot be
+        re-read exactly is withheld whole rather than shown with a partial basis.
+
+        get_symbol remains the surface for every claim attached to one symbol,
+        including the ones this tool declines to serve.
         """
         return await source.run_sync(
             _guard,
@@ -1530,6 +1599,8 @@ def build_server(
             facts_only=facts_only,
             include_source=include_source,
             evidence_budget=evidence_budget,
+            include_assertions=include_assertions,
+            debug_scores=debug_scores,
         )
 
     @server.tool()

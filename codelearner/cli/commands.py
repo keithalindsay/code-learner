@@ -31,11 +31,20 @@ from typing import Any
 
 from .. import db, gpu
 from ..assertions import boundaries, search_index, store
-from ..evidence import EvidenceBundle, EvidenceError, assemble_evidence
+from ..assertions.policy import PRODUCTION_POLICY
+from ..evidence import (
+    CandidateEvidenceBundle,
+    EvidenceError,
+    assemble_candidate_evidence,
+)
 from ..index import Embedder, embed_chunks
 from ..ingest import index_repo, iter_python_files
-from ..retrieve import load_reranker, search, stored_embed_model
-from .render import count_line, facts_only, format_hit, hit_json
+from ..ingest.types import TIER_RESOLVED
+from ..retrieve import load_reranker, stored_embed_model
+from ..retrieve.assertions import AssertionSearchUnavailable
+from ..retrieve.mixed import search_candidates
+from ..retrieve.serialize import candidate_json
+from .render import count_line, format_candidate
 
 # Kept in step with `indexer.index_repo`'s own default. One file per repo is what
 # makes cross-repo contamination structurally impossible, so the CLI must not
@@ -1019,20 +1028,55 @@ def cmd_index(args: Any, factory: EmbedderFactory) -> int:
 # search
 # ---------------------------------------------------------------------------
 
-def _print_evidence(bundle: EvidenceBundle) -> None:
-    """Render opt-in current source after the ranked results."""
+def _print_section(section: Any) -> None:
+    print(
+        f"--- {section.qualname}  {section.path}:{section.line_start}-{section.line_end}  "
+        f"sha256:{section.content_hash} ---"
+    )
+    print(section.source)
+
+
+def _print_evidence(bundle: CandidateEvidenceBundle) -> None:
+    """Render opt-in current source after the ranked results.
+
+    A semantic result prints its cited bytes first and its subject second, because
+    the citation is the part that was checked. A citation already contained in a
+    wider one prints as a reference rather than a second copy of the same lines.
+    """
     print()
     print(
         "source evidence "
         f"({bundle.used_bytes}/{bundle.budget_bytes} bytes; "
-        f"{bundle.sections_omitted} section(s) omitted)"
+        f"{len(bundle.omitted)} candidate(s) omitted)"
     )
-    for section in bundle.sections:
+    for result in bundle.results:
+        if result.section is not None:
+            _print_section(result.section)
+            continue
+        assertion = result.assertion
+        if assertion is None:
+            continue
         print(
-            f"--- {section.qualname}  {section.path}:{section.line_start}-{section.line_end}  "
-            f"sha256:{section.content_hash} ---"
+            f"--- claim {assertion.assertion_id} ({assertion.kind}) about "
+            f"{assertion.subject_qualname} ---"
         )
-        print(section.source)
+        print(f"        {assertion.claim}")
+        for citation in assertion.citations:
+            if citation.source is None:
+                print(
+                    f"--- cited {citation.path}:{citation.line_start}-"
+                    f"{citation.line_end} (shown above) ---"
+                )
+                continue
+            print(
+                f"--- cited {citation.path}:{citation.line_start}-{citation.line_end}  "
+                f"sha256:{citation.content_hash} ---"
+            )
+            print(citation.source)
+        if assertion.subject is not None:
+            _print_section(assertion.subject)
+    for omitted in bundle.omitted:
+        print(f"--- omitted {omitted.key}: {omitted.reason} ---")
 
 
 def cmd_search(args: Any, factory: EmbedderFactory) -> int:
@@ -1093,37 +1137,68 @@ def cmd_search(args: Any, factory: EmbedderFactory) -> int:
                 "weights, or not enough memory). Returning the fused order."
             )
 
-    result = search(
-        conn,
-        args.query,
-        k=args.k,
-        embedder=embedder,
-        use_lexical=use_lexical,
-        use_dense=use_dense,
-        use_graph=use_graph,
-        reranker=reranker,
-    )
-    hits = facts_only(result.hits) if args.facts_only else list(result.hits)
-    evidence: EvidenceBundle | None = None
-    if args.include_source:
-        stored_root = db.stored_repo_root(conn)
-        if stored_root is None:
+    use_assertions = not getattr(args, "no_assertions", False)
+    # Serving a claim means re-reading the bytes it cites, so semantic retrieval
+    # needs the repository itself and not just the index. An index that is not
+    # bound to one keeps answering from source alone rather than failing.
+    evidence_root: Path | None = None
+    stored_root = db.stored_repo_root(conn)
+    if stored_root is not None:
+        evidence_root = Path(stored_root).expanduser().resolve()
+    if (use_assertions or args.include_source) and evidence_root is None:
+        if args.include_source:
             raise CliError(
                 f"the index at {index_path} is not bound to a repository. Re-index "
                 "it before requesting source evidence."
             )
-        evidence_root = Path(stored_root).expanduser().resolve()
-        if getattr(args, "repo_explicit", False) and repo != evidence_root:
-            raise CliError(
-                f"--repo names {repo}, but the index at {index_path} belongs to the "
-                f"different repository {evidence_root}. Use that repository or its "
-                "index."
-            )
+        use_assertions = False
+        notes.append(
+            f"semantic retrieval disabled: the index at {index_path} is not bound "
+            "to a repository, so cited bytes cannot be verified. Re-index it."
+        )
+    if (
+        (use_assertions or args.include_source)
+        and evidence_root is not None
+        and getattr(args, "repo_explicit", False)
+        and repo != evidence_root
+    ):
+        raise CliError(
+            f"--repo names {repo}, but the index at {index_path} belongs to the "
+            f"different repository {evidence_root}. Use that repository or its "
+            "index."
+        )
+
+    policy = PRODUCTION_POLICY
+    if args.facts_only:
+        # Before fusion, not after: filtering the finished page would leave a short
+        # result set where the caller asked for k, and a caller who wants facts
+        # should get a full page of them.
+        policy = replace(policy, max_tier=TIER_RESOLVED)
+    try:
+        result = search_candidates(
+            conn,
+            evidence_root or repo,
+            args.query,
+            k=args.k,
+            policy=policy,
+            embedder=embedder,
+            use_lexical=use_lexical,
+            use_dense=use_dense,
+            use_graph=use_graph,
+            use_assertions=use_assertions,
+            reranker=reranker,
+            debug=args.debug_scores,
+        )
+    except AssertionSearchUnavailable as exc:
+        raise CliError(str(exc)) from exc
+    candidates = list(result.candidates)
+    evidence: CandidateEvidenceBundle | None = None
+    if args.include_source and evidence_root is not None:
         try:
-            evidence = assemble_evidence(
+            evidence = assemble_candidate_evidence(
                 conn,
                 evidence_root,
-                hits,
+                candidates,
                 budget_bytes=args.evidence_budget,
             )
         except EvidenceError as exc:
@@ -1144,13 +1219,17 @@ def cmd_search(args: Any, factory: EmbedderFactory) -> int:
                 "lexical": use_lexical,
                 "dense": use_dense,
                 "graph": use_graph,
+                "assertions": use_assertions,
             },
-            "count": len(hits),
+            "count": len(candidates),
             # The machine-readable half of the stderr note. A consumer that
             # never sees stderr would otherwise be the one surface that
             # cannot tell it is being handed line numbers that have moved.
             "drift": drift.as_json(),
-            "hits": [hit_json(hit, i) for i, hit in enumerate(hits, start=1)],
+            "hits": [
+                candidate_json(candidate, rank, debug=args.debug_scores)
+                for rank, candidate in enumerate(candidates, start=1)
+            ],
         }
         if evidence is not None:
             payload["evidence"] = evidence.as_json()
@@ -1159,15 +1238,23 @@ def cmd_search(args: Any, factory: EmbedderFactory) -> int:
 
     enabled = [
         name
-        for name, on in (("lexical", use_lexical), ("dense", use_dense), ("graph", use_graph))
+        for name, on in (
+            ("lexical", use_lexical),
+            ("dense", use_dense),
+            ("graph", use_graph),
+            ("assertions", use_assertions),
+        )
         if on
     ]
-    if not hits:
+    if not candidates:
         print(f"no results for {args.query!r}  [{'+'.join(enabled)}]")
     else:
-        print(f"{len(hits)} result(s) for {args.query!r}  [{'+'.join(enabled)}, k={args.k}]")
-        for rank, hit in enumerate(hits, start=1):
-            print(format_hit(hit, rank))
+        print(
+            f"{len(candidates)} result(s) for {args.query!r}  "
+            f"[{'+'.join(enabled)}, k={args.k}]"
+        )
+        for rank, candidate in enumerate(candidates, start=1):
+            print(format_candidate(candidate, rank))
     if evidence is not None:
         _print_evidence(evidence)
     return 0

@@ -16,6 +16,7 @@ working; new callers should import from `codelearner.tier`.
 from __future__ import annotations
 
 from ..retrieve import Hit
+from ..retrieve.types import Candidate, SourceCandidate
 from ..tier import MODALITY_TIER, TIER_LABELS, facts_only, hit_json, tier_of
 
 __all__ = [
@@ -25,13 +26,14 @@ __all__ = [
     "TIER_LABELS",
     "count_line",
     "facts_only",
+    "format_candidate",
     "format_hit",
     "hit_json",
     "tier_of",
 ]
 
 
-def format_hit(hit: Hit, rank: int) -> str:
+def format_hit(hit: Hit | SourceCandidate, rank: int) -> str:
     """One hit as two or three indented lines.
 
     Location is `path:start-end` rather than a bare path because the answer to
@@ -49,6 +51,39 @@ def format_hit(hit: Hit, rank: int) -> str:
         # that cannot say why it returned something is hard to trust and harder to
         # improve, so it is shown rather than kept for the debugger.
         lines.append(f"        via {hit.via}")
+    return "\n".join(lines)
+
+
+def format_candidate(candidate: Candidate, rank: int) -> str:
+    """One ranked candidate, with a claim never rendered as if it were a symbol.
+
+    The word `semantic` is on the first line of every tier-2 result on purpose. A
+    reader scanning a result list should not have to notice a tier code to tell a
+    claim somebody made from a line of code that is actually there, and the
+    supporting verdict and freshness are printed with it because a claim without
+    them is not something this tool is willing to stand behind.
+    """
+    if isinstance(candidate, SourceCandidate):
+        return format_hit(candidate, rank)
+
+    verdicts = ", ".join(
+        f"{verdict.verdict} by {verdict.judge}" for verdict in candidate.verdicts
+    ) or "no supporting verdict"
+    freshness = "evidence verified" if candidate.freshness.verified else "unverified"
+    citations = ", ".join(span.citation for span in candidate.spans)
+    lines = [
+        f"{rank:>3}  {TIER_LABELS[candidate.tier]}  semantic  "
+        f"{candidate.subject_qualname}  ({candidate.kind})",
+        f"        {candidate.claim}",
+        f"        {verdicts}  |  {freshness}  |  score {candidate.score:.4f}  "
+        f"[{candidate.modality}]",
+    ]
+    if citations:
+        lines.append(f"        cites {citations}")
+    if candidate.conflict:
+        # Two eligible claims of the same kind about the same symbol disagree.
+        # Retrieval does not pick a winner, so the reader is told there is one.
+        lines.append("        conflicting claim of this kind about this subject")
     return "\n".join(lines)
 
 

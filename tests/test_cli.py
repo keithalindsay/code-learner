@@ -19,6 +19,7 @@ import sys
 import tomllib
 import urllib.error
 import urllib.request
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -757,11 +758,13 @@ def test_search_json_is_one_parseable_document_with_a_stable_hit_shape(tmp_path,
     assert payload["query"] == QUERY
     assert payload["index"] == str(index_path)
     assert payload["count"] == len(payload["hits"])
-    assert set(payload["modalities"]) == {"lexical", "dense", "graph"}
+    assert set(payload["modalities"]) == {"lexical", "dense", "graph", "assertions"}
     assert set(payload["hits"][0]) == {
-        "rank", "tier", "tier_n", "symbol_id", "qualname", "kind", "path",
+        "rank", "tier", "tier_n", "candidate_type", "candidate_key",
+        "symbol_id", "qualname", "kind", "path",
         "line_start", "line_end", "score", "modality", "is_test", "via",
     }
+    assert payload["hits"][0]["candidate_type"] == "source"
     assert payload["hits"][0]["rank"] == 1
     assert payload["hits"][0]["tier"] == "T0"
     assert "evidence" not in payload
@@ -790,22 +793,21 @@ def test_search_json_adds_the_mcp_evidence_shape_only_when_source_is_requested(t
         "budget_bytes",
         "used_bytes",
         "truncated",
-        "sections_omitted",
-        "omitted_symbol_ids",
-        "sections",
+        "results",
+        "omitted",
     }
     assert evidence["budget_bytes"] == 4096
     assert any(
-        section["source"]
+        result["section"]["source"]
         == (
             "1 | def frobnicate_widgets():\n"
             "2 |     \"\"\"Frobnicate every widget on the tray.\"\"\"\n"
             "3 |     return _plumbing()"
         )
-        for section in evidence["sections"]
+        for result in evidence["results"]
     )
-    assert {section["symbol_id"] for section in evidence["sections"]} <= {
-        hit["symbol_id"] for hit in payload["hits"]
+    assert {result["candidate_key"] for result in evidence["results"]} <= {
+        hit["candidate_key"] for hit in payload["hits"]
     }
 
 
@@ -831,9 +833,12 @@ def test_search_json_zero_source_budget_records_every_hit_as_omitted(tmp_path, c
     assert evidence["budget_bytes"] == 0
     assert evidence["used_bytes"] == 0
     assert evidence["truncated"] is True
-    assert evidence["sections"] == []
-    assert evidence["sections_omitted"] == payload["count"]
-    assert evidence["omitted_symbol_ids"] == [hit["symbol_id"] for hit in payload["hits"]]
+    assert evidence["results"] == []
+    assert len(evidence["omitted"]) == payload["count"]
+    assert [entry["candidate_key"] for entry in evidence["omitted"]] == [
+        hit["candidate_key"] for hit in payload["hits"]
+    ]
+    assert {entry["reason"] for entry in evidence["omitted"]} == {"budget"}
 
 
 def test_search_source_human_output_follows_ranked_hits_with_numbered_sections(tmp_path, capsys):
@@ -855,7 +860,7 @@ def test_search_source_human_output_follows_ranked_hits_with_numbered_sections(t
     captured = capsys.readouterr()
 
     assert "source evidence (" in captured.out
-    assert "/4096 bytes; 0 section(s) omitted)" in captured.out
+    assert "/4096 bytes; 0 candidate(s) omitted)" in captured.out
     assert "--- core.frobnicate_widgets  core.py:1-3  sha256:" in captured.out
     assert "1 | def frobnicate_widgets():" in captured.out
     assert "1 | def frobnicate_widgets():" not in captured.err
@@ -1833,3 +1838,316 @@ def test_gpu_json_carries_the_usage_verdict_for_a_script(capsys, monkeypatch):
     assert payload["safe_to_free"] is False
     assert payload["usage_sampled"] is True
     assert payload["models"][0]["usage"] == "in-use"
+
+
+# ---------------------------------------------------------------------------
+# candidate serialization (source and semantic share one shape)
+# ---------------------------------------------------------------------------
+
+def _source_candidate(**overrides):
+    from codelearner.retrieve.types import ScoreContribution, SourceCandidate
+
+    candidate = SourceCandidate.from_hit(
+        Hit(
+            symbol_id=7,
+            qualname="leases.acquire",
+            kind="function",
+            path="leases.py",
+            line_start=1,
+            line_end=3,
+            score=0.123456789,
+            modality="lexical",
+            header="def acquire():",
+        )
+    )
+    contributions = (ScoreContribution("source_lexical", 1, 1.0, 0.0166),)
+    return replace(candidate, contributions=contributions, **overrides)
+
+
+def _assertion_candidate(**overrides):
+    from codelearner.assertions.store import EvidenceSpan
+    from codelearner.retrieve.types import (
+        AssertionCandidate,
+        Freshness,
+        ScoreContribution,
+        VerdictSummary,
+    )
+
+    candidate = AssertionCandidate(
+        assertion_id=7,
+        subject_symbol_id=7,
+        subject_qualname="leases.acquire",
+        kind="purpose",
+        claim="Renews ownership during long work.",
+        generator="test/v1",
+        status="active",
+        verdicts=(VerdictSummary("judge/v1", "supported", "cited bytes say so"),),
+        freshness=Freshness(verified=True, method="hash"),
+        spans=(
+            EvidenceSpan(
+                path="leases.py",
+                line_start=2,
+                line_end=2,
+                byte_start=15,
+                byte_end=48,
+                content_hash="a" * 64,
+                id=3,
+            ),
+        ),
+        score=0.5,
+        modality="assertion_lexical",
+        conflict=False,
+        contributions=(ScoreContribution("assertion_lexical", 1, 1.0, 0.0166),),
+    )
+    return replace(candidate, **overrides)
+
+
+def test_source_candidate_json_keeps_the_published_hit_keys():
+    from codelearner.retrieve.serialize import candidate_json
+
+    payload = candidate_json(_source_candidate(), 1)
+
+    assert set(payload) == {
+        "rank", "tier", "tier_n", "candidate_type", "candidate_key",
+        "symbol_id", "qualname", "kind", "path", "line_start", "line_end",
+        "score", "modality", "is_test", "via",
+    }
+    assert (payload["candidate_type"], payload["candidate_key"]) == ("source", "source:7")
+    assert payload["tier"] == "T0"
+    assert payload["score"] == 0.123457
+
+
+def test_assertion_candidate_json_carries_claim_verdict_and_citations():
+    from codelearner.retrieve.serialize import candidate_json
+
+    payload = candidate_json(_assertion_candidate(), 2)
+
+    assert payload["candidate_type"] == "assertion"
+    assert payload["candidate_key"] == "assertion:7"
+    assert (payload["tier"], payload["tier_n"]) == ("T2", 2)
+    assert payload["assertion_id"] == 7
+    assert payload["claim"] == "Renews ownership during long work."
+    assert payload["assertion_kind"] == "purpose"
+    assert payload["subject_qualname"] == "leases.acquire"
+    assert payload["verdicts"] == [
+        {"judge": "judge/v1", "verdict": "supported", "rationale": "cited bytes say so"}
+    ]
+    assert payload["freshness"] == {"verified": True, "method": "hash"}
+    assert payload["citations"] == [
+        {
+            "path": "leases.py",
+            "cited_line_start": 2,
+            "cited_line_end": 2,
+            "byte_start": 15,
+            "byte_end": 48,
+            "content_hash": "a" * 64,
+        }
+    ]
+
+
+def test_candidate_json_hides_score_contributions_until_debug_is_requested():
+    from codelearner.retrieve.serialize import candidate_json
+
+    assert "contributions" not in candidate_json(_source_candidate(), 1)
+    assert "contributions" not in candidate_json(_assertion_candidate(), 1)
+    debugged = candidate_json(_assertion_candidate(), 1, debug=True)
+    assert debugged["contributions"] == [
+        {"modality": "assertion_lexical", "rank": 1, "weight": 1.0, "value": 0.0166}
+    ]
+
+
+def test_candidate_json_never_emits_a_host_absolute_path():
+    from codelearner.retrieve.serialize import candidate_json
+
+    payload = json.dumps(
+        [candidate_json(_source_candidate(), 1), candidate_json(_assertion_candidate(), 2)]
+    )
+    assert "/home/" not in payload
+    assert str(PROJECT_ROOT) not in payload
+
+
+# ---------------------------------------------------------------------------
+# semantic search: serving supported claims through the CLI
+# ---------------------------------------------------------------------------
+
+SEMANTIC_QUERY = "lease ownership renewal"
+
+
+def _judge(index_path: Path, assertion_id: int, verdict: str) -> None:
+    conn = db.connect(index_path)
+    try:
+        store.record_verdict(conn, assertion_id, "judge/v1", verdict, "read the spans")
+    finally:
+        conn.close()
+
+
+def _semantic_repo(tmp_path, capsys, *, verdict: str | None = store.VERDICT_SUPPORTED):
+    """An index whose only route to the claim is the claim: names reveal nothing."""
+    repo, index_path = _indexed(tmp_path, capsys)
+    assertion_id = _admit(
+        index_path,
+        repo,
+        "core._plumbing",
+        "Renews lease ownership while long work is still running.",
+    )
+    if verdict is not None:
+        _judge(index_path, assertion_id, verdict)
+    return repo, index_path, assertion_id
+
+
+def test_search_serves_a_supported_claim_with_its_subject(tmp_path, capsys):
+    repo, _, assertion_id = _semantic_repo(tmp_path, capsys)
+
+    payload = _search_json(
+        capsys, ["search", SEMANTIC_QUERY, "--repo", str(repo), "--json"]
+    )
+
+    claim = next(
+        hit for hit in payload["hits"] if hit["candidate_type"] == "assertion"
+    )
+    assert claim["candidate_key"] == f"assertion:{assertion_id}"
+    assert claim["tier"] == "T2"
+    assert claim["verdicts"][0]["verdict"] == "supported"
+    assert claim["freshness"]["verified"] is True
+    assert "core._plumbing" in [
+        hit.get("qualname") for hit in payload["hits"] if hit["candidate_type"] == "source"
+    ]
+
+
+@pytest.mark.parametrize("verdict", [None, store.VERDICT_UNSUPPORTED, store.VERDICT_REFUTED])
+def test_search_never_serves_a_claim_no_judge_supported(tmp_path, capsys, verdict):
+    repo, _, _ = _semantic_repo(tmp_path, capsys, verdict=verdict)
+
+    payload = _search_json(
+        capsys, ["search", SEMANTIC_QUERY, "--repo", str(repo), "--json"]
+    )
+
+    assert [h for h in payload["hits"] if h["candidate_type"] == "assertion"] == []
+
+
+@pytest.mark.parametrize("status", [store.STATUS_REJECTED, store.STATUS_STALE])
+def test_search_never_serves_a_rejected_or_stale_claim(tmp_path, capsys, status):
+    repo, index_path, assertion_id = _semantic_repo(tmp_path, capsys)
+    conn = db.connect(index_path)
+    try:
+        if status == store.STATUS_STALE:
+            store.mark_stale(conn, assertion_id, store.REASON_HASH_MISMATCH)
+        else:
+            store.record_verdict(
+                conn, assertion_id, "judge/v2", store.VERDICT_REFUTED, "no"
+            )
+    finally:
+        conn.close()
+
+    payload = _search_json(
+        capsys, ["search", SEMANTIC_QUERY, "--repo", str(repo), "--json"]
+    )
+
+    assert [h for h in payload["hits"] if h["candidate_type"] == "assertion"] == []
+
+
+def test_human_search_labels_a_claim_as_a_semantic_assertion(tmp_path, capsys):
+    repo, _, _ = _semantic_repo(tmp_path, capsys)
+
+    assert main(["search", SEMANTIC_QUERY, "--repo", str(repo)], embedder_factory=fake_factory) == 0
+
+    out = capsys.readouterr().out
+    assert "T2  semantic" in out
+    assert "Renews lease ownership while long work is still running." in out
+    assert "supported" in out
+    assert "verified" in out
+
+
+def test_search_source_includes_cited_bytes_for_a_semantic_result(tmp_path, capsys):
+    repo, _, assertion_id = _semantic_repo(tmp_path, capsys)
+
+    payload = _search_json(
+        capsys,
+        ["search", SEMANTIC_QUERY, "--repo", str(repo), "--include-source", "--json"],
+    )
+
+    served = next(
+        result
+        for result in payload["evidence"]["results"]
+        if result["candidate_key"] == f"assertion:{assertion_id}"
+    )
+    assert served["assertion"]["citations"][0]["source"].startswith("6 | def _plumbing():")
+    assert served["assertion"]["claim"].startswith("Renews lease ownership")
+
+
+def test_facts_only_removes_claims_and_refills_the_page_with_source(tmp_path, capsys):
+    """The claim must lose its slot to source, not leave a hole in the page."""
+    repo, _, _ = _semantic_repo(tmp_path, capsys)
+    mixed = "widgets ownership"
+    everything = _search_json(
+        capsys, ["search", mixed, "--repo", str(repo), "-k", "2", "--json"]
+    )
+    assert any(h["candidate_type"] == "assertion" for h in everything["hits"])
+
+    facts = _search_json(
+        capsys,
+        ["search", mixed, "--repo", str(repo), "-k", "2", "--facts-only", "--json"],
+    )
+
+    assert all(h["candidate_type"] == "source" for h in facts["hits"])
+    assert all(h["tier_n"] <= 1 for h in facts["hits"])
+    assert facts["count"] == 2
+
+
+def test_no_assertions_is_an_explicit_ablation(tmp_path, capsys):
+    repo, _, _ = _semantic_repo(tmp_path, capsys)
+
+    payload = _search_json(
+        capsys,
+        ["search", SEMANTIC_QUERY, "--repo", str(repo), "--no-assertions", "--json"],
+    )
+
+    assert payload["modalities"]["assertions"] is False
+    assert all(h["candidate_type"] == "source" for h in payload["hits"])
+
+
+def test_debug_scores_exposes_per_modality_contributions(tmp_path, capsys):
+    repo, _, _ = _semantic_repo(tmp_path, capsys)
+
+    quiet = _search_json(
+        capsys, ["search", SEMANTIC_QUERY, "--repo", str(repo), "--json"]
+    )
+    loud = _search_json(
+        capsys,
+        ["search", SEMANTIC_QUERY, "--repo", str(repo), "--debug-scores", "--json"],
+    )
+
+    assert all("contributions" not in hit for hit in quiet["hits"])
+    assert all(hit["contributions"] for hit in loud["hits"])
+
+
+def test_search_on_a_pre_v7_index_says_what_to_rebuild(tmp_path, capsys):
+    repo, index_path = _indexed(tmp_path, capsys)
+    conn = db.connect(index_path)
+    try:
+        conn.execute("DROP TABLE assertions_fts")
+        conn.execute("DROP TABLE assertion_documents")
+        conn.commit()
+    finally:
+        conn.close()
+
+    code = main(["search", SEMANTIC_QUERY, "--repo", str(repo)], embedder_factory=fake_factory)
+
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "rebuild" in captured.err
+    assert "Traceback" not in captured.err
+
+
+def test_semantic_search_refuses_an_index_bound_to_another_repository(tmp_path, capsys):
+    repo, index_path = _semantic_repo(tmp_path, capsys)[:2]
+    other = _mkrepo(tmp_path / "other")
+
+    code = main(
+        ["search", SEMANTIC_QUERY, "--repo", str(other), "--index-path", str(index_path)],
+        embedder_factory=fake_factory,
+    )
+
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "belongs to the different repository" in captured.err
