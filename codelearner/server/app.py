@@ -56,19 +56,20 @@ from ..retrieve.types import SourceCandidate
 # loader: an MCP client launches this server as a subprocess and decides whether its
 # tools are offered at all from how fast the handshake comes back, so every import on
 # the path between `exec` and the `initialize` reply is charged against the tools ever
-# being called. `..cli.commands`, `..onboard`, `..ingest.types` and `..index` are each
+# being called. `..indexinfo`, `..onboard`, `..ingest.types` and `..index` are each
 # reached only from inside a tool body or an error path, so none of them belongs in
 # the startup cost.
 #
 # Measured, because the sizes are not what they look like (min of 40 cold starts,
 # this machine): `import mcp` is 562 ms of a 625 ms start -- 90% of it, and not
 # reducible from this repository. Everything `codelearner` itself adds is 44 ms, of
-# which 25 ms is `..cli.commands`, and that one is still paid at startup on the real
-# entry point because `main()` needs `resolve_index_path` before it can build
-# anything. Deferring it here buys the SERVER about 3 ms today. It is done anyway
-# because it is where the cost belongs, and because the 25 ms is recoverable the day
-# `resolve_index_path` and `INDEX_RELPATH` move out of `cli/` into a leaf: after that
-# the only thing between `exec` and `initialize` is the SDK.
+# which 25 ms used to be `..cli.commands` -- still paid at startup on the CLI entry
+# point, because `main()` needs `resolve_index_path` before it can build anything, but
+# a needless cost here since most tool calls never touch it. `resolve_index_path` and
+# `INDEX_RELPATH` now live in `..indexinfo` (WP17.2), a leaf with no `cli` import and
+# no argparse construction behind it, so the 25 ms this deferral used to buy no longer
+# applies to it -- it is kept anyway, on the same principle: nothing on the path
+# between `exec` and `initialize` is imported before a tool body actually asks for it.
 if TYPE_CHECKING:
     from mcp.server.context import CallNext, ServerRequestContext
 
@@ -595,7 +596,7 @@ def _guard(source: IndexSource, fn: Any, /, **kwargs: Any) -> dict[str, Any]:
     except ToolError as exc:
         return exc.payload()
     except (db.SchemaVersionError, db.RepoRootMismatchError) as exc:
-        from ..cli.commands import REBUILD_ADVICE
+        from ..indexinfo import REBUILD_ADVICE
 
         return ToolError(
             "schema_mismatch",
@@ -1373,7 +1374,7 @@ def _submit_body(
 
 
 def _stats_body(conn: sqlite3.Connection, source: IndexSource) -> dict[str, Any]:
-    from ..cli.commands import _classify_unresolved, _embedding_info, _scalar
+    from ..indexinfo import _classify_unresolved, _embedding_info, _scalar
 
     counts = {
         "files": _scalar(conn, "SELECT count(*) FROM files"),
@@ -1767,13 +1768,14 @@ def __getattr__(name: str) -> Any:
     """`resolve_index_path`, kept as a name here without its import cost.
 
     It has always been re-exported from this module and is in `__all__`, so removing
-    it would break an importer for no gain; but it lives in `..cli.commands`, and
-    reaching it drags the whole `codelearner.cli` package -- 25 ms of argparse
-    construction -- into a server that only ever needed a path join. PEP 562 keeps the
-    name and moves the cost to whoever actually asks for it.
+    it would break an importer for no gain. It lives in `..indexinfo` now (WP17.2) --
+    a leaf with no `cli` import behind it, so this no longer saves the 25 ms of
+    argparse construction it once did. PEP 562 is kept anyway, on the same principle
+    as the other two deferred imports above: nothing on this path is paid until
+    something actually asks for it.
     """
     if name == "resolve_index_path":
-        from ..cli.commands import resolve_index_path
+        from ..indexinfo import resolve_index_path
 
         return resolve_index_path
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
@@ -1793,7 +1795,8 @@ __all__ = [
     "ToolError",
     "build_server",
     # Served by this module's `__getattr__`, which ruff's static pass cannot see.
-    # Listed here because it is the public surface; imported there because reaching it
-    # costs the whole `codelearner.cli` package.
+    # Listed here because it is the public surface; imported there rather than at
+    # module level to keep the deferred-import discipline consistent with the two
+    # other `..indexinfo` imports above.
     "resolve_index_path",  # noqa: F822
 ]

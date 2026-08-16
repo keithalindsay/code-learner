@@ -49,6 +49,21 @@ from ..evidence import (
 )
 from ..generate.llm import model_family
 from ..index import Embedder, embed_chunks
+
+# `INDEX_RELPATH`, `resolve_index_path`, `REBUILD_ADVICE` and the `stats` table-count
+# helpers below were written here and moved to the leaf `codelearner.indexinfo` so
+# that `server/app.py` could depend on them without importing upward into this
+# module. Re-exported for backward compatibility only -- nothing in this module uses
+# them past this point. `as name` (rather than a bare import) is the explicit-reexport
+# idiom ruff and mypy both recognise, so these do not read as dead imports: they are
+# the public names this module used to define and now borrows from the leaf.
+from ..indexinfo import INDEX_RELPATH as INDEX_RELPATH
+from ..indexinfo import REBUILD_ADVICE as REBUILD_ADVICE
+from ..indexinfo import _classify_unresolved as _classify_unresolved
+from ..indexinfo import _embedding_info as _embedding_info
+from ..indexinfo import _meta as _meta
+from ..indexinfo import _scalar as _scalar
+from ..indexinfo import resolve_index_path as resolve_index_path
 from ..ingest import index_repo, iter_python_files
 from ..ingest.types import TIER_RESOLVED
 from ..retrieve import load_reranker, stored_embed_model
@@ -57,23 +72,11 @@ from ..retrieve.mixed import search_candidates
 from ..retrieve.serialize import candidate_json
 from .render import count_line, format_candidate
 
-# Kept in step with `indexer.index_repo`'s own default. One file per repo is what
-# makes cross-repo contamination structurally impossible, so the CLI must not
-# invent a second convention for where that file lives.
-INDEX_RELPATH = Path(".codelearner") / "index.db"
-
 EmbedderFactory = Callable[[str], Embedder]
 
 
 class CliError(RuntimeError):
     """A condition with a known remedy. Printed as one line, never as a traceback."""
-
-
-def resolve_index_path(repo: Path, index_path: Path | None) -> Path:
-    """Where this invocation's index lives: explicit if given, else the default."""
-    if index_path is not None:
-        return index_path.expanduser()
-    return repo / INDEX_RELPATH
 
 
 # ---------------------------------------------------------------------------
@@ -431,13 +434,6 @@ CARRY_SUFFIX = ".carry"
 # Bumped if the column lists below change, so a carry file written by older code is
 # refused loudly instead of being read into the wrong columns.
 CARRY_FORMAT = 1
-
-REBUILD_ADVICE = (
-    "Since --carry-assertions that no longer costs the assertions: rebuild with "
-    "`codelearner index <repo> --force --carry-assertions` and the tier-2 store "
-    "(assertions, verdicts, staleness log) is carried across; only the embeddings "
-    "have to be re-derived."
-)
 
 # The four tables and every column of each, in insert order. Written out rather than
 # read from `PRAGMA table_info`, because a carry file has to be a statement about
@@ -1274,54 +1270,6 @@ def cmd_search(args: Any, factory: EmbedderFactory) -> int:
 # ---------------------------------------------------------------------------
 # stats
 # ---------------------------------------------------------------------------
-
-def _scalar(conn: sqlite3.Connection, sql: str) -> int:
-    row = conn.execute(sql).fetchone()
-    return 0 if row is None else int(row[0])
-
-
-def _meta(conn: sqlite3.Connection, key: str) -> str | None:
-    row = conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
-    return None if row is None else str(row["value"])
-
-
-def _classify_unresolved(conn: sqlite3.Connection) -> tuple[int, int]:
-    """Split unresolved edges into (external, ambiguous), mirroring `resolve_all`.
-
-    Recomputed from the stored graph rather than remembered from index time, so
-    `stats` tells the truth about the file in front of it even if the resolver was
-    re-run since. External means "no symbol in this repo even shares the basename",
-    which is the only honest way to say that a call to `json.dumps` is not a
-    resolution failure.
-    """
-    names = {row["name"] for row in conn.execute("SELECT DISTINCT name FROM symbols")}
-    external = ambiguous = 0
-    for row in conn.execute("SELECT dst_name FROM edges WHERE dst_symbol_id IS NULL"):
-        base = str(row["dst_name"]).rsplit(".", 1)[-1]
-        if base in names:
-            ambiguous += 1
-        else:
-            external += 1
-    return external, ambiguous
-
-
-def _embedding_info(conn: sqlite3.Connection) -> dict[str, Any]:
-    """What vectors this index holds, if any, and from which model."""
-    model = stored_embed_model(conn)
-    dim = _meta(conn, "embed_dim")
-    try:
-        vectors = _scalar(conn, "SELECT count(*) FROM vec_chunks")
-    except sqlite3.OperationalError:
-        # No vec table, or sqlite-vec is not loadable on this handle. Either way
-        # there is nothing to report and nothing to fail about.
-        vectors = 0
-    return {
-        "present": bool(model and vectors),
-        "model": model,
-        "dim": int(dim) if dim is not None else None,
-        "vectors": vectors,
-    }
-
 
 def _print_freshness(drift: DriftReport) -> None:
     """The one place the clean case is printed as well as the dirty one.
