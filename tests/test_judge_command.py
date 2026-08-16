@@ -219,3 +219,46 @@ def test_judge_unavailable_is_a_clean_error_not_a_traceback(indexed, monkeypatch
     assert "Traceback" not in captured.err
     assert captured.err.startswith("codelearner: ")
     assert "could not reach the judge" in captured.err
+
+
+class _EvidenceCapturingJudge:
+    """Records the evidence text handed to it, so a test can assert the judge saw the
+    real cited bytes rather than an unreadable-span placeholder."""
+
+    name = "capture/judge-x"
+
+    def __init__(self):
+        self.seen: list[str] = []
+
+    def judge(self, *, claim, evidence, subject):
+        from codelearner.adjudicate import CAUSE_JUDGED, LABEL_SUPPORTED, Judgement
+
+        self.seen.append(evidence)
+        return Judgement(label=LABEL_SUPPORTED, reasoning="ok", judge=self.name,
+                         cause=CAUSE_JUDGED)
+
+
+def test_judge_reads_evidence_against_the_bound_root_not_args_repo(indexed, monkeypatch, tmp_path):
+    """`cmd_judge` must read cited evidence from the tree the index is BOUND to, not
+    from `args.repo` (which defaults to the cwd). Judging an index from any other
+    directory used to make every span unreadable -- `render_evidence` returns a
+    'could not read this span: not a regular file' placeholder -- and the judge, shown
+    no code, refuted every claim. Here `args.repo` points at an empty unrelated
+    directory while the index is bound to `root`; the evidence handed to the judge must
+    still be the real source."""
+    from codelearner.cli import commands
+
+    root, conn = indexed
+    _submit(root, conn)
+    cap = _EvidenceCapturingJudge()
+    monkeypatch.setattr(commands, "_build_judge", lambda args: cap)
+
+    wrong = tmp_path / "unrelated"
+    wrong.mkdir()
+    args = _judge_args(wrong, tmp_path / "i.db")  # repo=wrong dir, index=the real one
+    assert commands.cmd_judge(args, factory=None) == 0
+
+    assert cap.seen, "the judge was never called"
+    joined = "\n".join(cap.seen)
+    assert "could not read this span" not in joined
+    assert "clamp" in joined  # the real cited source reached the judge

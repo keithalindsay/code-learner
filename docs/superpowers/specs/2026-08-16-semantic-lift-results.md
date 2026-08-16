@@ -34,12 +34,14 @@ Paired bootstrap CIs, 95%.
 
 - **Recovered: 4** queries (source missed/buried → assertions top-5). 3 are claim-driven — a
   served, judged claim promoted its subject into the top-5 where source search could not.
-- **Displaced: 8** queries (source top-5 → worse under assertions-on). **6 of the 8 had zero
-  claims served for the query** — so the displacement is not claims out-competing good source
-  results. It is the assertions-on code path widening the source candidate pool (`k ×
-  CANDIDATE_MULTIPLIER`) and re-fusing (RRF), which reorders source results independent of any
-  claim.
-- Unchanged: 50.
+- **Displaced: 9** queries (source top-5 → worse under assertions-on). Not the claims about a
+  query's own subject out-competing it: it is **low-precision lexical claim retrieval**. Every
+  displaced query has **16–35 eligible claims in its fusion pool** (out of only 35 servable
+  claims total). Natural-language claims about one codebase share vocabulary (here: trading,
+  risk, pricing, orderbooks), so BM25 over claim text marks nearly every claim "eligible" for
+  nearly every query, and those ~30 irrelevant claims each cast an RRF vote that pushes the
+  correct source hit down.
+- Unchanged: 49.
 
 ## Honest conclusion
 
@@ -47,15 +49,31 @@ Paired bootstrap CIs, 95%.
    end to end on real code, and it produces a **statistically-significant recovery** on the
    questions source-only search fails (failure-subset hit@5 lift, CI entirely above zero).
    This is the first measurement that shows the tier-2 layer *helping*, not just running.
-2. **The effect is small**, for two visible reasons: (a) this is the **lexical** assertion
-   layer, so a claim only surfaces when the query words lexically overlap the claim text —
-   thin reach for questions phrased in newcomer's words; (b) only 35 of 62 target subjects
-   ended with a servable claim. Both are exactly what the **deferred dense-assertion work
-   (full 11b)** would address. This measurement is the evidence that that investment is
-   justified — and bounded.
-3. **The full-set neutrality is confounded by a fusion artifact**, not the claims. The
-   displacement occurs with no claim served, so it is a separable re-ranking issue in the
-   assertions-on path, fixable independently of the semantic layer's value.
+2. **The effect is small**, and the reason is the same as the reason the full set is
+   net-neutral: **the lexical assertion layer has poor precision.** Claims are
+   natural-language sentences, and a codebase's claims share vocabulary, so BM25 cannot tell
+   the one relevant claim from thirty irrelevant ones — 16–35 of 35 claims come back
+   "eligible" for nearly every query. The right claim's promotion is drowned by the noise of
+   the wrong ones. This is exactly what the **deferred dense-assertion work (full 11b)** is
+   for: semantic matching would rank the relevant claim high and suppress the rest. This
+   measurement is the concrete, bounded evidence that that investment is justified — and that
+   the lexical layer alone is not enough.
+3. **The full-set neutrality is real, not an artifact.** It is the precision problem above:
+   good recoveries on a few queries, offset by low-relevance claims displacing good source
+   hits on others. It is a property of *lexical* claim retrieval, and the fix is better
+   claim-query matching (dense), not a fusion tweak.
+
+## Two hardening fixes applied on this branch
+
+- **`cmd_judge` evidence-root bug — fixed.** It now reads cited evidence against the index's
+  bound root (via `store._repo_root`), not `args.repo` (cwd). Regression test
+  `test_judge_reads_evidence_against_the_bound_root_not_args_repo` reproduces the all-refuted
+  failure and pins the fix.
+- **Assertions-on no-op invariant — added.** `search_candidates` now short-circuits to the
+  tuned source ordering when *no* claim is eligible, so enabling the layer cannot reorder a
+  query it has nothing to say about. Correct behaviour, and it removes the pure-artifact case
+  — but note it does **not** move the numbers above, because on this workload every query has
+  many eligible claims (the precision problem is the real cause, not zero-claim queries).
 
 ## Not claimed
 

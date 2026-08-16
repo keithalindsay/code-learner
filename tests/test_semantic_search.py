@@ -241,3 +241,20 @@ def test_a_policy_cannot_be_built_that_serves_rejected_or_stale_claims():
             decision = _decision(status, policy)
             assert decision.eligible is False
             assert decision.reason == "status"
+
+
+def test_enabling_assertions_is_a_noop_when_no_claim_is_eligible(indexed):
+    """With no admitted claim, turning assertions ON must not change the result at all.
+
+    The assertions-on path re-fuses the source modalities through `mixed_rank_fusion`.
+    Run unconditionally, that reorders source results away from the tuned, reranked
+    ordering `search` produced -- even for a query the semantic layer has nothing to say
+    about -- displacing top results for no reason (measured on a real repo: source hits
+    that were top-5 dropping out when assertions were enabled but none served). Enabling
+    the layer must be a genuine no-op exactly when there are no assertions to enable."""
+    root, conn = indexed  # no `_admit`: the store holds no claims
+    q = "table value clamps"
+    on = search_candidates(conn, root, q, k=5, use_assertions=True)
+    off = search_candidates(conn, root, q, k=5, use_assertions=False)
+    assert on.candidates, "expected some source candidates"
+    assert [c.qualname for c in on.candidates] == [c.qualname for c in off.candidates]
