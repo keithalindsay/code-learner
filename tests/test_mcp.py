@@ -853,6 +853,41 @@ def test_search_without_source_options_keeps_the_compact_response_contract(serve
     assert "evidence" not in payload
 
 
+# ---------------------------------------------------------------------------
+# dense, faked
+# ---------------------------------------------------------------------------
+
+def test_search_code_disables_dense_when_the_loaded_model_does_not_match_the_index(tmp_path):
+    """WP16 pin, at the MCP tool surface.
+
+    Vectors from two models are not comparable -- `IndexSource.embedder` already
+    refuses to hand one back when the loaded model's name disagrees with the one
+    the index was embedded with (`codelearner/server/app.py`). This mirrors the
+    CLI-layer assertion at `tests/test_cli.py::test_dense_is_disabled_when_the_model_does_not_match_the_vectors`
+    at the MCP tool surface: the response must carry the "not comparable" note
+    and still answer from lexical, degrading rather than crashing or silently
+    returning meaningless vectors.
+    """
+    pytest.importorskip("sqlite_vec", reason="dense retrieval requires sqlite-vec")
+    from codelearner.index import embed_chunks
+
+    repo = _mkrepo(tmp_path / "repo")
+    index_path = tmp_path / "index.db"
+    conn, _ = index_repo(repo, index_path=index_path)
+    embed_chunks(conn, FakeEmbedder("fake/v1"))
+    conn.close()
+
+    server = build_server(
+        index_path, embedder_factory=lambda _name: FakeEmbedder("some-other-model/v9")
+    )
+    payload = call(server, "search_code", query=QUERY)
+
+    assert payload["ok"] is True
+    assert any("not comparable" in note for note in payload["notes"])
+    assert payload["hits"]
+    assert all("dense" not in hit.get("modality", "") for hit in payload["hits"])
+
+
 def test_index_source_serializes_work_off_the_event_loop(tmp_path):
     source = server_app.IndexSource(path=tmp_path / "unused.db")
     active = 0
