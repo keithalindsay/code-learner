@@ -46,6 +46,7 @@ from ..evidence import (
     EvidenceError,
     assemble_candidate_evidence,
 )
+from ..generate.llm import model_family
 from ..index import Embedder, embed_chunks
 from ..ingest import index_repo, iter_python_files
 from ..ingest.types import TIER_RESOLVED
@@ -1676,9 +1677,21 @@ def cmd_judge(args: Any, factory: EmbedderFactory) -> int:
     `ServingPolicy`'s question, not this command's, and what counts as "adjudicated
     at all" is `adjudicate_assertion`'s.
 
-    Independence checking (rejecting a judge from the same model family as the
-    claim's generator) and `--dry-run`/`--json` output are later work; this is the
-    core loop they will sit on top of.
+    **Independence checking.** A judge from the same model family as the claim's
+    generator is not a second opinion -- it is the same set of preferences and the
+    same blind spots, asked to grade itself. See `generate.llm.model_family` for
+    why the comparison is by family and not by exact tag: `qwen3-coder:7b`
+    generating and `qwen3.5:9b` judging share one lineage, and a verdict from that
+    pairing is meaningless in the same way a `claude-opus` grading a `claude-haiku`
+    transcript would be. So by default such a candidate is skipped -- no verdict
+    recorded, the claim stays unjudged -- and counted separately as
+    `skipped_same_family` so the run's summary says why the number of judged claims
+    came in under the number of candidates. `--allow-same-family` overrides this for
+    the caller who has decided, for this run, that the risk is acceptable (a
+    same-family judge is the only one available, say).
+
+    `--dry-run`/`--json` output are later work; this is the core loop they will sit
+    on top of.
     """
     repo = args.repo.expanduser().resolve()
     index_path = resolve_index_path(repo, args.index_path)
@@ -1692,7 +1705,15 @@ def cmd_judge(args: Any, factory: EmbedderFactory) -> int:
     # about a run -- the first is a generator problem, the second is a judge call --
     # even though both land on the same store verdict. See `adjudicate.CAUSE_*`.
     tally = {"supported": 0, "refuted": 0, "uncertain": 0, "no_evidence": 0}
+    skipped_same_family = 0
     for assertion in candidates:
+        if (
+            not args.allow_same_family
+            and assertion.generator is not None
+            and model_family(judge.name) == model_family(assertion.generator)
+        ):
+            skipped_same_family += 1
+            continue
         adjudication = adjudicate_assertion(conn, judge, assertion, repo, record=True)
         judgement = adjudication.judgement
         if judgement.cause == CAUSE_NO_EVIDENCE:
@@ -1707,6 +1728,7 @@ def cmd_judge(args: Any, factory: EmbedderFactory) -> int:
     print(f"judged {len(candidates)} claim(s) with {judge.name}")
     for label in ("supported", "refuted", "uncertain", "no_evidence"):
         print(count_line(label, tally[label], width=12))
+    print(count_line("skipped_same_family", skipped_same_family, width=12))
 
     # Closed, not left to the collector -- and for the exact reason `cmd_index`
     # closes explicitly (see its comment above `return 0`): the writes above must be

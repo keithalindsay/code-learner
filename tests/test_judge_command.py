@@ -123,3 +123,32 @@ def test_judge_makes_a_submitted_claim_servable(indexed, monkeypatch, tmp_path):
     finally:
         after_conn.close()
     assert [c for c in after.candidates if isinstance(c, AssertionCandidate)]
+
+
+def test_same_family_judge_is_skipped_by_default(indexed, monkeypatch, tmp_path):
+    from codelearner.adjudicate import LABEL_SUPPORTED
+    from codelearner.cli import commands
+
+    root, conn = indexed
+    # generator family "qwen"; judge name "qwen3.5:9b" -> family "qwen" -> match.
+    _submit(root, conn, generator="qwen3-coder:7b")
+    monkeypatch.setattr(commands, "_build_judge", lambda args: _FakeJudge(LABEL_SUPPORTED))
+    monkeypatch.setattr(_FakeJudge, "name", "qwen3.5:9b")
+
+    args = _judge_args(root, tmp_path / "i.db")
+    commands.cmd_judge(args, factory=None)
+    assert conn.execute("SELECT count(*) c FROM verdicts").fetchone()["c"] == 0
+
+
+def test_allow_same_family_records_the_verdict(indexed, monkeypatch, tmp_path):
+    from codelearner.adjudicate import LABEL_SUPPORTED
+    from codelearner.cli import commands
+
+    root, conn = indexed
+    _submit(root, conn, generator="qwen3-coder:7b")
+    monkeypatch.setattr(commands, "_build_judge", lambda args: _FakeJudge(LABEL_SUPPORTED))
+    monkeypatch.setattr(_FakeJudge, "name", "qwen3.5:9b")
+
+    args = _judge_args(root, tmp_path / "i.db", allow_same_family=True)
+    commands.cmd_judge(args, factory=None)
+    assert conn.execute("SELECT count(*) c FROM verdicts").fetchone()["c"] == 1
