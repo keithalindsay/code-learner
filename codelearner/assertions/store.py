@@ -1250,3 +1250,28 @@ def staleness_events(
             (assertion_id,),
         )
     )
+
+
+def unjudged_assertions(
+    conn: sqlite3.Connection,
+    *,
+    limit: int | None = None,
+    subject: str | None = None,
+) -> list[Assertion]:
+    """Active claims with no accepted verdict yet -- what serving withholds for lack
+    of judgement. Read-only; oldest first so a limited run is deterministic."""
+    sql = (
+        "SELECT a.id FROM assertions a WHERE a.status = ? "
+        "AND NOT EXISTS (SELECT 1 FROM verdicts v WHERE v.assertion_id = a.id "
+        "AND v.verdict = ?)"
+    )
+    params: list[object] = [STATUS_ACTIVE, VERDICT_SUPPORTED]
+    if subject is not None:
+        sql += " AND a.subject_qualname = ?"
+        params.append(subject)
+    sql += " ORDER BY a.created_at, a.id"
+    if limit is not None:
+        sql += " LIMIT ?"
+        params.append(limit)
+    ids = [int(row["id"]) for row in conn.execute(sql, params)]
+    return load_assertions_by_ids(conn, ids)

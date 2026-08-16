@@ -853,6 +853,41 @@ def test_search_without_source_options_keeps_the_compact_response_contract(serve
     assert "evidence" not in payload
 
 
+# ---------------------------------------------------------------------------
+# dense, faked
+# ---------------------------------------------------------------------------
+
+def test_search_code_disables_dense_when_the_loaded_model_does_not_match_the_index(tmp_path):
+    """WP16 pin, at the MCP tool surface.
+
+    Vectors from two models are not comparable -- `IndexSource.embedder` already
+    refuses to hand one back when the loaded model's name disagrees with the one
+    the index was embedded with (`codelearner/server/app.py`). This mirrors the
+    CLI-layer assertion at `tests/test_cli.py::test_dense_is_disabled_when_the_model_does_not_match_the_vectors`
+    at the MCP tool surface: the response must carry the "not comparable" note
+    and still answer from lexical, degrading rather than crashing or silently
+    returning meaningless vectors.
+    """
+    pytest.importorskip("sqlite_vec", reason="dense retrieval requires sqlite-vec")
+    from codelearner.index import embed_chunks
+
+    repo = _mkrepo(tmp_path / "repo")
+    index_path = tmp_path / "index.db"
+    conn, _ = index_repo(repo, index_path=index_path)
+    embed_chunks(conn, FakeEmbedder("fake/v1"))
+    conn.close()
+
+    server = build_server(
+        index_path, embedder_factory=lambda _name: FakeEmbedder("some-other-model/v9")
+    )
+    payload = call(server, "search_code", query=QUERY)
+
+    assert payload["ok"] is True
+    assert any("not comparable" in note for note in payload["notes"])
+    assert payload["hits"]
+    assert all("dense" not in hit.get("modality", "") for hit in payload["hits"])
+
+
 def test_index_source_serializes_work_off_the_event_loop(tmp_path):
     source = server_app.IndexSource(path=tmp_path / "unused.db")
     active = 0
@@ -881,6 +916,66 @@ def test_index_source_serializes_work_off_the_event_loop(tmp_path):
     assert max_active == 1
     assert set(worker_threads) != {threading.get_ident()}
     source.close()
+
+
+def test_index_source_executor_stays_single_threaded(tmp_path):
+    """WP17.7 pin, part 1: the pool width itself.
+
+    The shared-connection concurrency bug that motivated `run_sync`'s single
+    owning worker (see its docstring) is closed by `ThreadPoolExecutor(max_workers=1)`
+    in `IndexSource.run_sync`. A future change back to a pool of more than one
+    worker would reopen it silently unless something asserts the width directly.
+    """
+    source = server_app.IndexSource(path=tmp_path / "unused.db")
+
+    asyncio.run(source.run_sync(lambda: None))
+
+    assert source._executor is not None
+    assert source._executor._max_workers == 1
+    source.close()
+
+
+def test_index_source_run_sync_calls_never_overlap(tmp_path):
+    """WP17.7 pin, part 2: the behavioral guarantee, not just the pool width.
+
+    Extends `test_index_source_serializes_work_off_the_event_loop` with explicit
+    entry/exit recording so a regression that widened the pool -- or any other
+    change that let two `run_sync` bodies run at once -- shows up as an observed
+    overlap, not just a wider `_max_workers`.
+    """
+    source = server_app.IndexSource(path=tmp_path / "unused.db")
+    events: list[tuple[str, int]] = []
+    lock = threading.Lock()
+
+    def work(value):
+        with lock:
+            events.append(("enter", value))
+        time.sleep(0.05)
+        with lock:
+            events.append(("exit", value))
+        return value
+
+    async def exercise():
+        first = asyncio.create_task(source.run_sync(work, 1))
+        second = asyncio.create_task(source.run_sync(work, 2))
+        return await asyncio.gather(first, second)
+
+    assert asyncio.run(exercise()) == [1, 2]
+    source.close()
+
+    # No overlap means every "enter" is immediately followed by that same value's
+    # "exit" before the other task's "enter" appears -- i.e. the events interleave
+    # as two complete (enter, exit) pairs, never as enter/enter before either exit.
+    open_value: int | None = None
+    for kind, value in events:
+        if kind == "enter":
+            assert open_value is None, "a second run_sync body entered before the first exited"
+            open_value = value
+        else:
+            assert open_value == value
+            open_value = None
+    assert open_value is None
+    assert len(events) == 4
 
 
 def test_search_with_source_returns_the_complete_top_symbol_as_evidence(served):

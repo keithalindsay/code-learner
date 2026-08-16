@@ -25,6 +25,7 @@ from .commands import (
     EmbedderFactory,
     cmd_gpu,
     cmd_index,
+    cmd_judge,
     cmd_learn,
     cmd_search,
     cmd_stats,
@@ -218,6 +219,43 @@ def build_parser() -> argparse.ArgumentParser:
     p_learn.add_argument("--quiet", action="store_true", help="no per-symbol progress")
     p_learn.add_argument("--json", action="store_true", help="emit JSON instead of a table")
     p_learn.set_defaults(func=cmd_learn)
+
+    p_judge = sub.add_parser(
+        "judge",
+        help="adjudicate unjudged claims so serving can use them",
+    )
+    p_judge.add_argument("repo", type=Path, nargs="?", default=Path("."))
+    # `dest="index_path"` on purpose, matching every other command's internal name
+    # for this value (`resolve_index_path` and `open_index` both take `index_path`)
+    # even though the flag here is spelled `--index` rather than `--index-path`.
+    p_judge.add_argument(
+        "--index",
+        type=Path,
+        default=None,
+        dest="index_path",
+        help="index file to use (default: <repo>/.codelearner/index.db)",
+    )
+    p_judge.add_argument(
+        "--limit", type=_positive_int, default=None, help="judge at most this many claims"
+    )
+    p_judge.add_argument("--model", default=None, help="ollama judge model tag")
+    p_judge.add_argument(
+        "--subject", default=None, help="only judge claims about this qualname"
+    )
+    p_judge.add_argument(
+        "--allow-same-family",
+        action="store_true",
+        help="judge a claim even when the judge and its generator share a model "
+        "family (by default such claims are skipped, not judged, and counted as "
+        "skipped_same_family)",
+    )
+    p_judge.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="call the judge and report verdicts without writing them to the store",
+    )
+    p_judge.add_argument("--json", action="store_true", dest="json", help="emit JSON instead of a table")
+    p_judge.set_defaults(func=cmd_judge)
 
     # No --repo and no --index-path, and that absence is the design. "What is holding
     # my card" is asked from wherever the terminal happens to be, often before an

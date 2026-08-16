@@ -460,6 +460,22 @@ measurement can say whether the semantic layer beats the source-only control.
 
 ## 7. Phase 3 — adjudication as admission control
 
+**Status (2026-08-16): WP3.1 and WP3.2 shipped on `codex/production-wp17-4-adjudication`
+(WP17.4).** `codelearner judge` drives the independent-judge machinery — extracted to
+the leaf module `codelearner/adjudicate.py`, behind a `Judge` protocol `OllamaJudge`
+implements — and records verdicts through `store.record_verdict`. It judges all active
+unjudged claims or a `--subject`, supports `--dry-run` (calls the judge, tallies what a
+real run would, writes nothing) and `--json`, and skips same-family judge/generator
+pairs by default (`--allow-same-family` overrides). Serving already refused an unjudged
+claim — `ServingPolicy`'s `require_verdict=True` is the production default — so this
+command is what closes the loop: `search` (withholds) → `submit_assertion` → `codelearner
+judge` → `search` (now serves). **Deliberately CLI-only.** No MCP judge tool exists or is
+planned here: an agent must not be able to judge its own claims, so judging stays a
+human-run, out-of-band step, independent of the generating agent by construction rather
+than by policy. **Not done:** WP3.3's richer admission-policy/history model (superseded
+judges, prompt versions, a derived servable state distinct from lifecycle) and WP3.4's
+human calibration remain as originally scoped below.
+
 ### Objective
 
 Make “adjudicated” a shipped guarantee rather than an offline measurement.
