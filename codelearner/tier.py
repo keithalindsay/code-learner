@@ -7,20 +7,18 @@ inside one of them, and `server/app.py` imported *upward* into the CLI to reach 
 An MCP tool answering a `facts_only` request through the CLI's presentation layer is
 not a layering nit: it means the rule has a home, and the home is the wrong one.
 
-A leaf, deliberately. It imports `ingest.types` for the tier constants and
-`retrieve.lexical` for `Hit` -- `retrieve.lexical` rather than `retrieve`, because the
-package `__init__` pulls in the reranker and the dense index, and nothing about
-naming a tier should load a model.
+A leaf, deliberately. It imports `ingest.types` for the tier constants only. Its local
+protocols describe the retrieval fields it reads, so assigning a tier never makes the
+foundational tier model depend on a retrieval package.
 
 `cli/render.py` re-exports every name below, so existing imports keep working. New
 callers on either surface should import from here.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Protocol, TypeVar
 
 from .ingest.types import TIER_FACT, TIER_INFERRED, TIER_RESOLVED
-from .retrieve.lexical import Hit
 
 __all__ = [
     "MODALITY_TIER",
@@ -51,7 +49,40 @@ MODALITY_TIER = {
 }
 
 
-def tier_of(hit: Hit) -> int:
+class _TieredHit(Protocol):
+    @property
+    def modality(self) -> str: ...
+
+
+class _RenderableHit(_TieredHit, Protocol):
+    # Read-only members, like `modality` above: every hit this renders is a frozen
+    # dataclass, and a protocol that declares a settable attribute is not satisfied
+    # by one. Declaring them mutable made `hit_json(hit)` a type error at both call
+    # sites while the runtime behaviour was correct.
+    @property
+    def symbol_id(self) -> int: ...
+    @property
+    def qualname(self) -> str: ...
+    @property
+    def kind(self) -> str: ...
+    @property
+    def path(self) -> str: ...
+    @property
+    def line_start(self) -> int: ...
+    @property
+    def line_end(self) -> int: ...
+    @property
+    def score(self) -> float: ...
+    @property
+    def is_test(self) -> bool: ...
+    @property
+    def via(self) -> str: ...
+
+
+_HitT = TypeVar("_HitT", bound=_TieredHit)
+
+
+def tier_of(hit: _TieredHit) -> int:
     """The tier of the strongest evidence that reached `hit`.
 
     Fusion joins the contributing modalities with `+`, so a symbol found by text
@@ -70,7 +101,7 @@ def tier_of(hit: Hit) -> int:
     return min(MODALITY_TIER.get(part, TIER_INFERRED) for part in parts)
 
 
-def facts_only(hits: list[Hit]) -> list[Hit]:
+def facts_only(hits: list[_HitT]) -> list[_HitT]:
     """Drop anything above T1 -- parsed facts and resolved names, nothing asserted.
 
     Over RETRIEVAL results this removes nothing, and cannot: no modality in
@@ -88,7 +119,7 @@ def facts_only(hits: list[Hit]) -> list[Hit]:
     return [hit for hit in hits if tier_of(hit) <= TIER_RESOLVED]
 
 
-def hit_json(hit: Hit, rank: int) -> dict[str, Any]:
+def hit_json(hit: _RenderableHit, rank: int) -> dict[str, Any]:
     """One hit as a stable JSON object.
 
     `via` is always present, empty string when the hit was not reached by graph

@@ -32,8 +32,6 @@ pytest.importorskip("mcp", reason="the MCP server needs the optional `mcp` depen
 from codelearner import db  # noqa: E402
 from codelearner.assertions import store  # noqa: E402
 from codelearner.ingest import index_repo  # noqa: E402
-from codelearner.retrieve import Hit  # noqa: E402
-from codelearner.retrieve.search import SearchResult  # noqa: E402
 from codelearner.server import app as server_app  # noqa: E402
 from codelearner.server import build_server  # noqa: E402
 
@@ -185,6 +183,8 @@ def test_all_five_tools_are_registered_with_descriptions_and_schemas(served):
         "facts_only",
         "include_source",
         "evidence_budget",
+        "include_assertions",
+        "debug_scores",
     }
     search_schema = by_name["search_code"].input_schema
     assert search_schema["required"] == ["query"]
@@ -222,21 +222,26 @@ def test_search_code_description_distinguishes_compact_and_verified_source_modes
 # The three tests below pin the two halves of that rule which are easiest to lose
 # under pressure to be chosen more often.
 
-def test_search_code_still_says_that_facts_only_filters_nothing_today(served):
-    """The most tempting sentence to delete while making a description more
-    persuasive, and the one that must survive. `facts_only` is wired at the seam a
-    tier-2 retrieval modality would arrive through and there is no such modality yet,
-    so passing it changes no result -- an agent that reads a description implying
-    otherwise will pass it believing it has excluded inferences it never received.
+def test_search_code_says_it_serves_only_independently_supported_claims(served):
+    """The sentence that replaced "drops nothing", and the one that must survive now.
+
+    `facts_only` used to be inert and the description said so; the flag now removes
+    real results, and the same rule that made the old admission mandatory makes this
+    one mandatory. An agent choosing between this tool and get_symbol needs to know
+    what the default withholds -- pending, refuted and stale claims -- because a
+    server that returned unjudged claims under the same shape as judged ones would
+    be publishing its generator's output and calling it retrieval.
 
     A description is allowed to argue for its tool. It is not allowed to be quiet
-    about a flag that does nothing."""
+    about what the tool refuses to show."""
     _, _, server = served
     description = {t.name: t.description for t in asyncio.run(server.list_tools())}
-    search = description["search_code"]
-    assert "drops nothing" in search
-    # And the pointer to where the flag is not inert, so the caller who actually
-    # wanted tier 2 withheld is sent to the surface that does it.
+    search = " ".join(description["search_code"].split())
+    assert "supported" in search
+    assert "Pending, rejected and stale claims are never returned" in search
+    assert "drops everything above tier 1" in search
+    # And the pointer to the surface that shows the claims this one declines, so a
+    # caller who wants the whole picture is not left thinking there is none.
     assert "get_symbol" in search
     assert "withholds them" in description["get_symbol"]
 
@@ -842,7 +847,9 @@ def test_search_without_source_options_keeps_the_compact_response_contract(serve
 
     payload = call(server, "search_code", query=QUERY)
 
-    assert set(payload) == {"ok", "query", "k", "facts_only", "count", "notes", "hits"}
+    assert set(payload) == {
+        "ok", "query", "k", "facts_only", "include_assertions", "count", "notes", "hits"
+    }
     assert "evidence" not in payload
 
 
@@ -894,19 +901,18 @@ def test_search_with_source_returns_the_complete_top_symbol_as_evidence(served):
         "budget_bytes",
         "used_bytes",
         "truncated",
-        "sections_omitted",
-        "omitted_symbol_ids",
-        "sections",
+        "results",
+        "omitted",
     }
-    assert evidence["sections"][0]["source"] == (
+    assert evidence["results"][0]["section"]["source"] == (
         "1 | def frobnicate_widgets():\n"
         "2 |     \"\"\"Frobnicate every widget on the tray.\"\"\"\n"
         "3 |     return _plumbing()"
     )
-    section_ids = {section["symbol_id"] for section in evidence["sections"]}
-    hit_ids = {hit["symbol_id"] for hit in payload["hits"]}
-    assert evidence["sections"][0]["symbol_id"] == payload["hits"][0]["symbol_id"]
-    assert section_ids <= hit_ids
+    served_keys = {result["candidate_key"] for result in evidence["results"]}
+    hit_keys = {hit["candidate_key"] for hit in payload["hits"]}
+    assert evidence["results"][0]["candidate_key"] == payload["hits"][0]["candidate_key"]
+    assert served_keys <= hit_keys
 
 
 def test_search_with_source_and_zero_budget_reports_every_hit_as_omitted(served):
@@ -917,9 +923,9 @@ def test_search_with_source_and_zero_budget_reports_every_hit_as_omitted(served)
 
     assert payload["evidence"]["budget_bytes"] == 0
     assert payload["evidence"]["used_bytes"] == 0
-    assert payload["evidence"]["sections"] == []
-    assert payload["evidence"]["omitted_symbol_ids"] == [
-        hit["symbol_id"] for hit in payload["hits"]
+    assert payload["evidence"]["results"] == []
+    assert [entry["candidate_key"] for entry in payload["evidence"]["omitted"]] == [
+        hit["candidate_key"] for hit in payload["hits"]
     ]
 
 
@@ -978,46 +984,23 @@ def test_graph_reached_hits_are_tier_1_and_explain_themselves(served):
     assert plumbing["via"], "a graph hit with no account of how it was reached"
 
 
-def test_facts_only_excludes_tier_2(served, monkeypatch):
-    """The whole promise of the flag. Nothing retrieves at T2 yet, so the T2 hit is
-    injected at the retrieval seam -- which is exactly where one will arrive when the
-    inference layer starts serving. Delete the `facts_only_filter` call and this
-    fails, because the inferred hit comes straight through."""
-    _, _, server = served
-    fact = Hit(
-        symbol_id=1,
-        qualname="core.frobnicate_widgets",
-        kind="function",
-        path="core.py",
-        line_start=1,
-        line_end=3,
-        score=1.0,
-        modality="lexical",
-        header="",
-    )
-    inferred = Hit(
-        symbol_id=2,
-        qualname="core._plumbing",
-        kind="function",
-        path="core.py",
-        line_start=6,
-        line_end=8,
-        score=0.5,
-        modality="inferred",
-        header="",
-    )
-    monkeypatch.setattr(
-        server_app,
-        "search",
-        lambda *a, **kw: SearchResult(hits=[fact, inferred], per_modality={}),
-    )
+def test_facts_only_excludes_tier_2(served_with_a_claim):
+    """The whole promise of the flag, now that something actually retrieves at T2.
 
-    everything = call(server, "search_code", query=QUERY, facts_only=False)
-    assert [h["tier"] for h in everything["hits"]] == ["T0", "T2"]
+    This used to inject a fake tier-2 `Hit` at the retrieval seam because nothing
+    reached that tier. It no longer has to: the fixture stores a real claim, a real
+    judge supports it, and retrieval serves it. Filtering happens before the page is
+    cut, so the facts-only page is a FULL page of source rather than the same page
+    with a hole in it -- which is the part a post-filter got wrong."""
+    _, _, server, _ = served_with_a_claim
+    mixed = "widgets ownership"
 
-    facts = call(server, "search_code", query=QUERY, facts_only=True)
-    assert [h["tier"] for h in facts["hits"]] == ["T0"]
-    assert facts["count"] == 1
+    everything = call(server, "search_code", query=mixed, facts_only=False)
+    assert "T2" in [h["tier"] for h in everything["hits"]]
+
+    facts = call(server, "search_code", query=mixed, facts_only=True)
+    assert set(h["tier"] for h in facts["hits"]) <= {"T0", "T1"}
+    assert facts["count"] >= 1
 
 
 def _submit(server, qualname, claim, **kw):
@@ -2048,3 +2031,184 @@ def test_index_stats_counts_an_admitted_assertion_as_active(served):
         ],
     )
     assert call(server, "index_stats")["assertions_by_status"]["active"] == 1
+
+
+# ---------------------------------------------------------------------------
+# semantic search parity: one policy, two surfaces
+# ---------------------------------------------------------------------------
+
+def _search_schema(server: Any) -> dict[str, Any]:
+    tools = {tool.name: tool for tool in asyncio.run(server.list_tools())}
+    return dict(tools["search_code"].input_schema)
+
+
+SEMANTIC_CLAIM = "Renews lease ownership while long work is still running."
+SEMANTIC_QUERY = "lease ownership renewal"
+
+
+@pytest.fixture
+def served_with_a_claim(tmp_path):
+    """An index holding one supported claim about a symbol its name does not describe."""
+    from codelearner import db as _db
+    from codelearner.assertions import store as _store
+
+    repo = _mkrepo(tmp_path / "repo")
+    index_path = tmp_path / "index.db"
+    conn, _ = index_repo(repo, index_path=index_path)
+    row = conn.execute(
+        "SELECT s.id, s.byte_start, s.byte_end, f.path FROM symbols s "
+        "JOIN files f ON f.id = s.file_id WHERE s.qualname = ?",
+        ("core._plumbing",),
+    ).fetchone()
+    assertion_id = _store.write_assertion(
+        conn,
+        subject_qualname="core._plumbing",
+        subject_symbol_id=int(row["id"]),
+        kind="purpose",
+        claim=SEMANTIC_CLAIM,
+        spans=[
+            _store.span_for(repo, row["path"], row["byte_start"], row["byte_end"])
+        ],
+        generator="test/v1",
+        repo_root=repo,
+    )
+    _store.record_verdict(conn, assertion_id, "judge/v1", _store.VERDICT_SUPPORTED, "yes")
+    conn.close()
+    assert _db is not None
+    return repo, index_path, build_server(index_path, embedder_factory=FakeEmbedder), assertion_id
+
+
+def test_search_serves_a_supported_claim_as_a_tagged_candidate(served_with_a_claim):
+    _, _, server, assertion_id = served_with_a_claim
+
+    payload = call(server, "search_code", query=SEMANTIC_QUERY, k=5)
+
+    claim = next(h for h in payload["hits"] if h["candidate_type"] == "assertion")
+    assert claim["candidate_key"] == f"assertion:{assertion_id}"
+    assert claim["tier"] == "T2"
+    assert claim["claim"] == SEMANTIC_CLAIM
+    assert claim["verdicts"][0]["verdict"] == "supported"
+    assert claim["freshness"]["verified"] is True
+    assert payload["include_assertions"] is True
+
+
+def test_mcp_and_cli_return_the_same_candidate_objects(served_with_a_claim, capsys):
+    """One serializer, or the two surfaces disagree about what a claim is."""
+    from codelearner.cli import main as cli_main
+
+    repo, index_path, server, _ = served_with_a_claim
+    served = call(server, "search_code", query=SEMANTIC_QUERY, k=5)
+
+    assert cli_main(
+        [
+            "search", SEMANTIC_QUERY, "--repo", str(repo),
+            "--index-path", str(index_path), "-k", "5", "--json",
+        ],
+        embedder_factory=FakeEmbedder,
+    ) == 0
+    printed = json.loads(capsys.readouterr().out)
+
+    def _comparable(hit):
+        return {k: v for k, v in hit.items() if k != "content_hash"}
+
+    assert [_comparable(h) for h in served["hits"]] == [
+        _comparable(h) for h in printed["hits"]
+    ]
+
+
+def test_semantic_defaults_are_on_and_debug_is_off(served_with_a_claim):
+    _, _, server, _ = served_with_a_claim
+    properties = _search_schema(server)["properties"]
+
+    assert properties["include_assertions"]["default"] is True
+    assert properties["debug_scores"]["default"] is False
+    quiet = call(server, "search_code", query=SEMANTIC_QUERY)
+    assert all("contributions" not in hit for hit in quiet["hits"])
+    loud = call(server, "search_code", query=SEMANTIC_QUERY, debug_scores=True)
+    assert all(hit["contributions"] for hit in loud["hits"])
+
+
+def test_the_production_policy_cannot_be_widened_from_the_transport(served_with_a_claim):
+    """No argument admits a pending claim. Research policy is a library decision."""
+    _, _, server, _ = served_with_a_claim
+
+    assert not {"policy", "allow_pending", "max_tier"} & set(
+        _search_schema(server)["properties"]
+    )
+
+
+def test_a_pending_claim_is_never_served_over_mcp(tmp_path):
+    from codelearner.assertions import store as _store
+
+    repo = _mkrepo(tmp_path / "repo")
+    index_path = tmp_path / "index.db"
+    conn, _ = index_repo(repo, index_path=index_path)
+    row = conn.execute(
+        "SELECT s.id, s.byte_start, s.byte_end, f.path FROM symbols s "
+        "JOIN files f ON f.id = s.file_id WHERE s.qualname = ?",
+        ("core._plumbing",),
+    ).fetchone()
+    _store.write_assertion(
+        conn,
+        subject_qualname="core._plumbing",
+        subject_symbol_id=int(row["id"]),
+        kind="purpose",
+        claim=SEMANTIC_CLAIM,
+        spans=[_store.span_for(repo, row["path"], row["byte_start"], row["byte_end"])],
+        generator="test/v1",
+        repo_root=repo,
+    )
+    conn.close()
+    server = build_server(index_path, embedder_factory=FakeEmbedder)
+
+    payload = call(server, "search_code", query=SEMANTIC_QUERY, k=5)
+
+    assert [h for h in payload["hits"] if h["candidate_type"] == "assertion"] == []
+
+
+def test_facts_only_drops_the_claim_and_refills_with_source(served_with_a_claim):
+    _, _, server, _ = served_with_a_claim
+    mixed = "widgets ownership"
+
+    everything = call(server, "search_code", query=mixed, k=2)
+    facts = call(server, "search_code", query=mixed, k=2, facts_only=True)
+
+    assert any(h["candidate_type"] == "assertion" for h in everything["hits"])
+    assert all(h["candidate_type"] == "source" for h in facts["hits"])
+    assert facts["count"] == 2
+
+
+def test_include_assertions_false_is_the_source_only_control(served_with_a_claim):
+    _, _, server, _ = served_with_a_claim
+
+    payload = call(
+        server, "search_code", query=SEMANTIC_QUERY, k=5, include_assertions=False
+    )
+
+    assert payload["include_assertions"] is False
+    assert all(h["candidate_type"] == "source" for h in payload["hits"])
+
+
+def test_semantic_source_evidence_is_bounded_and_path_safe(served_with_a_claim):
+    repo, index_path, server, assertion_id = served_with_a_claim
+
+    payload = call(
+        server,
+        "search_code",
+        query=SEMANTIC_QUERY,
+        k=5,
+        include_source=True,
+        evidence_budget=4096,
+    )
+
+    evidence = payload["evidence"]
+    assert evidence["used_bytes"] <= 4096
+    served = next(
+        result
+        for result in evidence["results"]
+        if result["candidate_key"] == f"assertion:{assertion_id}"
+    )
+    assert served["assertion"]["citations"][0]["source"].startswith("6 | def _plumbing():")
+    blob = json.dumps(payload)
+    assert str(repo) not in blob
+    assert str(index_path) not in blob

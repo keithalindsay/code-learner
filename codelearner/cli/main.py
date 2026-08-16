@@ -139,6 +139,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_search.add_argument("--no-lexical", action="store_true", help="disable BM25 lexical search")
     p_search.add_argument("--no-dense", action="store_true", help="disable vector search")
     p_search.add_argument("--no-graph", action="store_true", help="disable graph expansion")
+    p_search.add_argument(
+        "--no-assertions",
+        action="store_true",
+        help="disable tier-2 semantic retrieval -- the ablation that says what "
+        "stored claims are worth against source alone",
+    )
+    p_search.add_argument(
+        "--debug-scores",
+        action="store_true",
+        help="show the per-modality rank contributions behind each fused score",
+    )
     # Opt-in, not on by default: it downloads ~3.4GB of weights on first use and
     # costs a model forward pass per candidate. Off, `search` behaves exactly as it
     # did before Phase 3b; on and unavailable, it says so and still answers.

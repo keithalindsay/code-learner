@@ -108,10 +108,25 @@ properties make it shippable:
    cited evidence. Refused claims are logged, not deleted.
 4. **Tier-labeled** — callers can demand facts only, and trust nothing inferred.
 
-Property 4 is the one to read sceptically: `facts_only` is wired through the CLI and
-the MCP `search_code` tool and today it filters nothing, because no retrieval path
-emits a tier-2 modality. That is stated here, in the MCP tool docstring, and in
-`docs/REMEDIATION.md` (WP17.3) rather than left as a flag that looks like it works.
+Property 4 used to be the one to read sceptically: `facts_only` was wired through the
+CLI and the MCP `search_code` tool and filtered nothing, because no retrieval path
+emitted a tier-2 modality (WP17.3). Phase 2 closed that. Lexical retrieval over the
+assertion store now returns claims as first-class results, `facts_only` removes them
+BEFORE the page is cut and refills the freed slots with source, and the flag changes
+what you get on any index that holds claims.
+
+What is served is deliberately narrow. A claim is returned only when it is `active`,
+at least one judge recorded `supported`, no judge recorded `unsupported` or
+`refuted`, and every range it cites still hashes to the bytes it was written against
+— re-checked on the serving call, not remembered. Pending claims are retrievable only
+through a research policy named at the library boundary (`RESEARCH_PENDING_POLICY`);
+they are never reachable from the CLI or MCP. Rejected and stale claims are not
+servable under any policy. Searchable unjudged claims would turn generation into
+publication, which is the one thing this project exists not to do.
+
+Dense assertion embeddings and the five-repository comparative evaluation are Phase
+2.5 and are NOT done: nothing here measures whether the semantic layer improves
+retrieval quality. The plumbing is honest; the lift is unmeasured.
 
 ## The tier model
 
@@ -1783,8 +1798,10 @@ always report the used bytes, budget, and omitted sections.
 | flag | effect |
 |---|---|
 | `-k N` | results to return (default 10) |
-| `--facts-only` | T0/T1 only. **Filters nothing today** — no retrieval path emits a tier-2 modality, so this is wired and inert (WP17.3) |
+| `--facts-only` | T0/T1 only — drops semantic claims before the cut and refills the page from source |
 | `--no-lexical`, `--no-dense`, `--no-graph` | turn a modality off; the switches the ablation needs |
+| `--no-assertions` | turn tier-2 retrieval off; the source-only control the semantic layer is measured against |
+| `--debug-scores` | show the per-modality rank contributions behind each fused score |
 | `--rerank` | reorder with a cross-encoder that reads the query (opt-in; downloads ~3.4GB on first use, and says so and answers anyway if it cannot load) |
 | `--include-source` | add complete, current, hash-verified source evidence for returned symbols |
 | `--evidence-budget BYTES` | byte budget for `--include-source` (default 16,384; maximum 65,536) |
@@ -2002,7 +2019,7 @@ is no longer returned as success.
 
 | tool | what it returns |
 |---|---|
-| `search_code(query, k, facts_only)` | hybrid retrieval — lexical + dense + graph, RRF-fused. Tier-labelled hits with qualname, `path` and line range, the modalities that found it, `via`, and the `content_hash` needed to cite it. `facts_only` is accepted and currently drops nothing (WP17.3). |
+| `search_code(query, k, facts_only, include_assertions, debug_scores, …)` | hybrid retrieval — lexical + dense + graph + tier-2 assertions, RRF-fused. Every result carries `candidate_type` (`source` or `assertion`) and `candidate_key`. A source result has qualname, `path`, line range, the modalities that found it, `via`, and the `content_hash` needed to cite it; an assertion result has the claim, its supporting verdicts, its freshness, and the citations behind it. `facts_only` drops claims before the cut and refills with source; `include_assertions=false` is the source-only ablation. |
 | `get_symbol(qualname)` | one symbol, its resolved callers and callees (T1, each with its resolver's confidence), its unbound call sites (T0), and any servable assertions about it. |
 | `reading_path(topic, limit)` | the onboarding tour, ordered by dependency depth so a stop's callees come before it. With a topic it is seeded from retrieval; without one, from call-graph centrality. |
 | `submit_assertion(subject_qualname, claim, evidence_spans, …)` | the inversion. Stores a tier-2 claim if and only if its citations hold. |
@@ -2108,8 +2125,10 @@ get_symbol(qualname)                     -> the claim, re-verified against disk
 | 7 | MCP server + CLI | done |
 | 8 | Eval: per-modality ablation, faithfulness with a same-weights-different-model judge, git-history purpose gold, gate negative controls | done; see [Measured](#measured) |
 | 9 | Claim generation: cited drafts, `codelearner learn`, a measured generator | done |
-| 10 | Adjudication as admission control — a `judge` command and `require_verdict` | **not started** (WP17.4) |
-| 11 | Second language | deferred; the type seam is clean, the dispatch is not built |
+| 10 | Adjudication as admission control — a `judge` command and `require_verdict` | **not started** (WP17.4). Note: search already REFUSES to serve an unjudged claim; what is missing is the pipeline that gets claims judged in the first place |
+| 11 | Semantic retrieval: claims as first-class search results | done — lexical assertion retrieval, mixed fusion, all-or-nothing evidence, one candidate shape across CLI and MCP. `facts_only` and `--no-assertions` are real controls now |
+| 11b | Semantic retrieval **lift** — assertion embeddings and a five-repository semantic gold set | **not started**. Nothing yet measures whether serving claims helps; the ablation's tier-2 row is a count, not a result |
+| 12 | Second language | deferred; the type seam is clean, the dispatch is not built |
 
 Deliberately not on this list, because a roadmap is not the place to hide a defect: the
 open items are in [docs/REMEDIATION.md](docs/REMEDIATION.md), which names WP16 (surviving

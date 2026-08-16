@@ -8,6 +8,10 @@ import pytest
 from codelearner import db
 
 
+def test_current_schema_is_v7():
+    assert db.SCHEMA_VERSION == 7
+
+
 def test_init_db_creates_the_expected_tables(tmp_path):
     conn = db.init_db(tmp_path / "i.db")
     names = {r["name"] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}

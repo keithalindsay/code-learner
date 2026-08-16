@@ -115,14 +115,19 @@ import random
 import sqlite3
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 
+from .. import db
+from ..assertions.search_index import assertion_search_structures_present
 from ..index.embed import Embedder
 from ..retrieve.dense import search_dense
 from ..retrieve.fuse import reciprocal_rank_fusion
 from ..retrieve.graph import expand
 from ..retrieve.lexical import Hit, search_lexical
+from ..retrieve.mixed import search_candidates
 from ..retrieve.rerank import Reranker
 from ..retrieve.search import search
+from ..retrieve.types import AssertionCandidate, SourceCandidate
 from .goldset import (
     GOLD_DIR,
     GoldQuery,
@@ -222,6 +227,13 @@ class Scorecard:
     results: list[QueryResult] = field(default_factory=list)
     #: Which slice of the gold set this row covers: `POOLED`, `source=...`, `repo=...`.
     scope: str = POOLED
+    #: How many tier-2 candidates the configuration returned across every query.
+    #: A COUNT, deliberately, and not a metric: this gold set labels symbols, so
+    #: there is nothing here to score a claim against. Phase 2.5's semantic gold set
+    #: is what turns this into a measurement; until then it says only that the
+    #: modality fired, which is the difference between "no claims matched" and "the
+    #: modality never ran".
+    assertions_returned: int = 0
 
     def recall_at(self, k: int) -> float:
         return _mean([r.recall_at(k) for r in self.results])
@@ -579,7 +591,7 @@ def load_gold(name: str = "swarm_sync") -> dict:
 
 def _score(
     name: str,
-    per_query: Sequence[tuple[GoldQuery, list[Hit]]],
+    per_query: Sequence[tuple[GoldQuery, Sequence[Hit | SourceCandidate]]],
     scope: str = POOLED,
 ) -> Scorecard:
     card = Scorecard(name=name, scope=scope)
@@ -706,6 +718,56 @@ def run_ablation_multi(
                 order.append(card.name)
             merged[card.name].results.extend(card.results)
     return [merged[name] for name in order]
+
+
+def _semantic_card(
+    conn: sqlite3.Connection,
+    queries: Sequence[GoldQuery],
+    embedder: Embedder | None,
+    k: int,
+) -> Scorecard | None:
+    """The tier-2 row: plumbing for Phase 2.5, and NOT a lift measurement.
+
+    Read this row for one thing only -- whether semantic retrieval ran and how many
+    claims it returned. Its metrics are NOT comparable with the rows above it, and
+    the reason is structural rather than a caveat that might be lifted by running it
+    on more data. The gold set labels SYMBOLS. A claim is not a symbol, so a claim
+    occupying a slot can only ever cost this row recall against a symbol-labelled
+    answer key, however good the claim is. Scoring it as if the two were the same
+    thing is precisely the coercion this row exists not to perform: only the source
+    candidates are scored, and the claims are counted beside them.
+
+    What would make it a measurement is Phase 2.5's semantic gold set -- questions
+    whose answer IS a claim, with hard negatives, over at least five repositories.
+    Until that exists, no number here supports a statement about whether the
+    semantic layer helps.
+    """
+    root = db.stored_repo_root(conn)
+    if root is None or not assertion_search_structures_present(conn):
+        # An index built before schema v7, or one not bound to a repository, cannot
+        # verify a citation. Skipped rather than scored as zeros, which would look
+        # like a modality that ran and found nothing.
+        return None
+    per_query: list[tuple[GoldQuery, Sequence[Hit | SourceCandidate]]] = []
+    returned = 0
+    for spec in queries:
+        result = search_candidates(
+            conn,
+            Path(root),
+            spec.query,
+            k=k,
+            embedder=embedder,
+            use_dense=embedder is not None,
+        )
+        returned += sum(
+            1 for c in result.candidates if isinstance(c, AssertionCandidate)
+        )
+        per_query.append(
+            (spec, [c for c in result.candidates if isinstance(c, SourceCandidate)])
+        )
+    card = _score("hybrid + assertions (plumbing)", per_query)
+    card.assertions_returned = returned
+    return card
 
 
 def _run_configs(
@@ -894,6 +956,12 @@ def _run_configs(
                 ],
             )
         )
+
+    # Last, and skipped entirely on an index that cannot serve claims. Its metrics
+    # are not comparable with the rows above -- see `_semantic_card`.
+    semantic = _semantic_card(conn, queries, embedder, k)
+    if semantic is not None:
+        cards.append(semantic)
     return cards
 
 

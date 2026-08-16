@@ -363,6 +363,13 @@ def _atomic(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
         yield joined
 
 
+def _sync_assertion_document(conn: sqlite3.Connection, assertion_id: int) -> None:
+    """Load the derived-index dependency only at the mutation boundary."""
+    from . import search_index
+
+    search_index.sync_assertion_document(conn, assertion_id)
+
+
 def _repo_root(conn: sqlite3.Connection, repo_root: db.StrPath | None) -> Path:
     """Resolve where the cited files live, preferring the index's own binding.
 
@@ -687,6 +694,7 @@ def write_assertion(
                 for s in spans
             ],
         )
+        _sync_assertion_document(conn, assertion_id)
     return assertion_id
 
 
@@ -719,6 +727,7 @@ def record_verdict(
             conn.execute(
                 _TOUCH_STATUS, (STATUS_REJECTED, assertion_id, STATUS_ACTIVE)
             )
+        _sync_assertion_document(conn, assertion_id)
     return verdict_id
 
 
@@ -770,6 +779,7 @@ def mark_stale(
                 (assertion_id, span_id, reason, expected_hash, observed_hash,
                  detected_at),
             )
+        _sync_assertion_document(conn, assertion_id)
     return True
 
 
@@ -867,6 +877,8 @@ def reinstate(
         return False
     with _atomic(conn):
         cur = conn.execute(_TOUCH_STATUS, (STATUS_ACTIVE, assertion_id, STATUS_STALE))
+        if cur.rowcount:
+            _sync_assertion_document(conn, assertion_id)
     # `rowcount == 0` means another connection moved this row between the load above
     # and the write -- most likely a rejection. The WHERE clause declined to clobber
     # it, and saying so honestly is the whole reason the FROM-state is in the SQL.
@@ -1037,6 +1049,69 @@ def _load_assertions(
         )
         for r in rows
     ]
+
+
+def load_assertions_by_ids(
+    conn: sqlite3.Connection, assertion_ids: Sequence[int]
+) -> list[Assertion]:
+    """Load only the supplied assertions, preserving first-occurrence input order.
+
+    The public bounded reader for retrieval paths. IDs are deduplicated before any
+    query and split into SQLite-safe chunks; missing IDs are omitted. This is
+    deliberately separate from ``assertions_with_status`` and
+    ``servable_assertions`` so a candidate window never becomes a scan of the whole
+    assertion store by accident.
+    """
+    ordered_ids = list(dict.fromkeys(assertion_ids))
+    loaded: dict[int, Assertion] = {}
+    for batch in _chunks(ordered_ids):
+        placeholders = ",".join("?" * len(batch))
+        for assertion in _load_assertions(
+            conn,
+            f"id IN ({placeholders})",  # noqa: S608 - placeholders only
+            tuple(batch),
+        ):
+            loaded[assertion.id] = assertion
+    return [loaded[assertion_id] for assertion_id in ordered_ids if assertion_id in loaded]
+
+
+def verify_assertions(
+    conn: sqlite3.Connection,
+    repo_root: db.StrPath,
+    assertion_ids: Sequence[int],
+) -> list[Assertion]:
+    """Re-hash only the supplied assertions and return those servable right now.
+
+    Terminal evidence failures use :func:`mark_stale`, preserving the authoritative
+    lifecycle transition, staleness log, derived-document removal, and transaction
+    behavior. A transient unreadability withholds the assertion for this call and
+    writes nothing. IDs are deduplicated before both database and filesystem work.
+    """
+    root = _repo_root(conn, repo_root)
+    cache: dict[str, bytes | _Unread] = {}
+    verified: list[Assertion] = []
+    for assertion in load_assertions_by_ids(conn, assertion_ids):
+        if assertion.status != STATUS_ACTIVE:
+            continue
+        if not assertion.spans:
+            mark_stale(conn, assertion.id, REASON_NO_EVIDENCE)
+            continue
+        failure = _first_failure(root, assertion.spans, cache)
+        if failure is None:
+            verified.append(assertion)
+            continue
+        reason, span, observed = failure
+        if reason == REASON_UNREADABLE:
+            continue
+        mark_stale(
+            conn,
+            assertion.id,
+            reason,
+            span_id=span.id,
+            expected_hash=span.content_hash,
+            observed_hash=observed,
+        )
+    return verified
 
 
 def servable_assertions(
