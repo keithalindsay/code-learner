@@ -30,6 +30,15 @@ from pathlib import Path
 from typing import Any
 
 from .. import db, gpu
+from ..adjudicate import (
+    CAUSE_NO_EVIDENCE,
+    DEFAULT_JUDGE_MODEL,
+    LABEL_NOT_SUPPORTED,
+    LABEL_SUPPORTED,
+    Judge,
+    OllamaJudge,
+    adjudicate_assertion,
+)
 from ..assertions import boundaries, search_index, store
 from ..assertions.policy import PRODUCTION_POLICY
 from ..evidence import (
@@ -1627,6 +1636,86 @@ def cmd_learn(args: Any, factory: EmbedderFactory) -> int:
         )
     else:
         print(report.format_report())
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# judge: adjudicate unjudged claims, closing the loop serving depends on
+# ---------------------------------------------------------------------------
+#
+# `codelearner learn` drafts claims; nothing in this tool made them servable until
+# now. `store.servable_assertions` (what `search` reads through) withholds any
+# active claim without an accepted verdict, so a claim submitted by `learn` sits
+# invisible to every query until something judges it. This is that something: the
+# CLI seam over `adjudicate.adjudicate_assertion`, run over every candidate
+# `store.unjudged_assertions` names.
+
+
+def _build_judge(args: Any) -> Judge:
+    """Construct the judge this run adjudicates with.
+
+    A module-level function and not inlined in `cmd_judge`, for the same reason
+    `build_embedder` is its own function: it is the one seam a test needs to
+    replace to keep an LLM out of the suite. Tests monkeypatch `commands._build_judge`
+    directly rather than passing a judge through `cmd_judge`'s signature, mirroring
+    how the embedder factory is threaded through the other commands -- but here the
+    thing being swapped is constructed from `args` alone, so the seam is a function
+    of `args`, not a second parameter every caller has to thread.
+    """
+    model = args.model or DEFAULT_JUDGE_MODEL
+    return OllamaJudge(model=model)
+
+
+def cmd_judge(args: Any, factory: EmbedderFactory) -> int:
+    """Adjudicate every unjudged active claim, so serving can admit what survives.
+
+    The loop is deliberately thin: load the candidates `unjudged_assertions` names,
+    build a judge, hand each candidate to `adjudicate_assertion` with `record=True`
+    so its verdict lands in the store immediately, and tally what came back. Nothing
+    here decides policy -- what counts as "supported enough to serve" is
+    `ServingPolicy`'s question, not this command's, and what counts as "adjudicated
+    at all" is `adjudicate_assertion`'s.
+
+    Independence checking (rejecting a judge from the same model family as the
+    claim's generator) and `--dry-run`/`--json` output are later work; this is the
+    core loop they will sit on top of.
+    """
+    repo = args.repo.expanduser().resolve()
+    index_path = resolve_index_path(repo, args.index_path)
+    conn, drift = open_index(index_path)
+
+    candidates = store.unjudged_assertions(conn, limit=args.limit, subject=args.subject)
+    judge = _build_judge(args)
+
+    # Four buckets, not three, because "refuted for lack of evidence" and "refuted
+    # by a judge that read the evidence and was not convinced" are different facts
+    # about a run -- the first is a generator problem, the second is a judge call --
+    # even though both land on the same store verdict. See `adjudicate.CAUSE_*`.
+    tally = {"supported": 0, "refuted": 0, "uncertain": 0, "no_evidence": 0}
+    for assertion in candidates:
+        adjudication = adjudicate_assertion(conn, judge, assertion, repo, record=True)
+        judgement = adjudication.judgement
+        if judgement.cause == CAUSE_NO_EVIDENCE:
+            tally["no_evidence"] += 1
+        elif judgement.label == LABEL_SUPPORTED:
+            tally["supported"] += 1
+        elif judgement.label == LABEL_NOT_SUPPORTED:
+            tally["refuted"] += 1
+        else:
+            tally["uncertain"] += 1
+
+    print(f"judged {len(candidates)} claim(s) with {judge.name}")
+    for label in ("supported", "refuted", "uncertain", "no_evidence"):
+        print(count_line(label, tally[label], width=12))
+
+    # Closed, not left to the collector -- and for the exact reason `cmd_index`
+    # closes explicitly (see its comment above `return 0`): the writes above must be
+    # durable and visible to the NEXT connection opened on this path, whether that
+    # is another `codelearner` invocation or `search` reading straight after. Each
+    # `record_verdict` call already commits its own transaction (`store._atomic`
+    # wraps it), so this is belt-and-suspenders against WAL checkpoint timing, not
+    # what makes the writes durable in the first place.
+    conn.close()
     return 0
 
 
