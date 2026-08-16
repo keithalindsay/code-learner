@@ -1671,9 +1671,10 @@ def cmd_judge(args: Any, factory: EmbedderFactory) -> int:
     """Adjudicate every unjudged active claim, so serving can admit what survives.
 
     The loop is deliberately thin: load the candidates `unjudged_assertions` names,
-    build a judge, hand each candidate to `adjudicate_assertion` with `record=True`
-    so its verdict lands in the store immediately, and tally what came back. Nothing
-    here decides policy -- what counts as "supported enough to serve" is
+    build a judge, hand each candidate to `adjudicate_assertion` with `record=not
+    args.dry_run` so its verdict lands in the store immediately unless this is a dry
+    run, and tally what came back. Nothing here decides policy -- what counts as
+    "supported enough to serve" is
     `ServingPolicy`'s question, not this command's, and what counts as "adjudicated
     at all" is `adjudicate_assertion`'s.
 

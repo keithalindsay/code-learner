@@ -31,8 +31,8 @@ completeness, test quality, security). This is the implementation plan derived f
 | WP22 gold set + power analysis (**added post-Wave-4**) | **done** | `3212972` |
 | WP11 withdraw or correct the numbers | **done** — see the row-by-row disposition below | this commit |
 | WP18 documentation and packaging drift | **partial** — docs done, packaging and the Python-only guard are not | this commit |
-| WP16 close the surviving mutations | **partial** — see below | |
-| WP17 architecture: one rule, one place | **not started** — all seven items open | |
+| WP16 close the surviving mutations | **partial** — the embedder-mismatch guard (item 5) is now closed and pinned; see below | `0587762` |
+| WP17 architecture: one rule, one place | **partial** — WP17.1, WP17.3, WP17.4 and WP17.6 done, WP17.7 closed and pinned; WP17.2 partial (`tier.py`/`sourceview.py`/`adjudicate.py` extracted, `indexinfo.py` not); WP17.5 still open — see below | `8305005` |
 
 Test count: 484 at audit time → 631 at `243095d` → 663 at `2f299c8` → 673 at `7df16d6`
 → 753 at `1021a14` → **844** at `3212972`. Re-run against a clean tree at `3212972`
@@ -875,13 +875,20 @@ but WP18 **did not re-run their mutations**, so they are marked `[A]`-on-my-own-
 not `[V]`. Do not promote them without the delete-the-fix check; that is the whole standing
 rule of this repo and it is exactly what an item ticked off by grep skips.
 
+**Update at `0587762`.** Item 5, the MCP embedder-mismatch guard, is now pinned:
+`tests/test_mcp.py` locks the guard already present in `IndexSource.embedder` — a loaded
+model whose name disagrees with the one an index was embedded with disables dense
+retrieval and `search_code` falls back to lexical, mirroring the existing CLI-layer
+assertion (`tests/test_cli.py:1021`). The guard itself was not changed; it predates this
+test (**GREEN on arrival**), which is why this is a regression pin rather than a fix.
+
 | # | Item | State at `3212972` |
 |---|---|---|
 | 1 | `eval/ablation.py` has zero tests | **done** (`1021a14`). `tests/test_ablation.py` exists with 71 tests; both previously-surviving mutations (`recall_at` ignoring `k`, `mrr` returning raw rank) now fail |
 | 2 | `Outcome.held` | **done** (`31e6c97`, WP6), independently mutation-verified |
 | 3 | Multi-span staleness provenance | test present (`test_stale.py:300`, one claim citing two files) — **mutation not re-run** |
 | 4 | `stale.py` size check deletable | test present (`test_stale.py:466-477`, truncate + `os.utime` back → `REASON_SPAN_TRUNCATED`) — **mutation not re-run** |
-| 5 | `server/app.py` embedder-mismatch guard → `if False:` SURVIVED | **OPEN.** No test in `test_mcp.py` names the embedder/vector mismatch. The agent surface can still silently serve vectors from a different model while the human surface cannot |
+| 5 | `server/app.py` embedder-mismatch guard → `if False:` SURVIVED | **CLOSED, now pinned** (`0587762`). `test_mcp.py` names the embedder/vector mismatch and asserts dense retrieval is disabled and search falls back to lexical; the guard predates the test |
 | 6 | `pipeline.py` subject-drop accounting | **OPEN.** No counter or test found by name |
 | 7 | `store.record_verdict` unguarded status UPDATE | `_TOUCH_STATUS` now carries `WHERE id = ? AND status = ?` and is called with `STATUS_ACTIVE` — **mutation not re-run** |
 | 8 | `rerank.py` `[:k]` cap asserted against the fake | **done.** `test_rerank.py` now checks against what the reranker was handed; the docstring records the old `A ⊆ B ∪ A` tautology |
@@ -921,7 +928,7 @@ something; ~15 are vacuous.
 
 ## WP17 — Architecture: one rule, one place
 
-**Severity: MEDIUM. NOT STARTED — all seven items re-verified open at `3212972` `[V]`.**
+**Severity: MEDIUM. State at `3212972` (below): NOT STARTED — all seven items open `[V]`.**
 
 | # | Item | Check run at `3212972` | State |
 |---|---|---|---|
@@ -938,6 +945,22 @@ WP18 closed the *disagreement* by making the documentation match the code; it di
 the items, and the difference is worth keeping visible. **A defect that is accurately
 documented is still a defect** — the reason to write it down is that an undocumented one is
 two defects.
+
+**Update at `8305005`.** Re-checked against the current tree. Four of the seven items closed
+between `3212972` and this commit, three of them by intervening work this table never
+recorded and one by this branch:
+
+| # | Item | Now |
+|---|---|---|
+| 1 | `generate` imports `eval` | **closed.** `codelearner/sourceview.py` exists; `generate/purpose.py` imports `SourceView` et al. from `..sourceview`, not `..eval`. `tests/test_generate_purpose.py::test_generate_imports_nothing_from_eval`, `::test_sourceview_is_a_leaf`, `::test_the_package_import_graph_is_a_dag` and `::test_the_module_import_graph_is_a_dag` pin the import direction and that the graph is acyclic (`sourceview.py`'s own docstring cites a `TestImportDirection` that does not exist as such — a stale reference in a code comment, out of this document's scope) |
+| 2 | `tier_of` in `cli/render.py`; `server` imports upward | **partial.** `codelearner/tier.py` now exists (`tier_of`, `facts_only`, `hit_json`, `MODALITY_TIER` all live there) and `codelearner/adjudicate.py` joins it as a second extracted leaf. `codelearner/indexinfo.py` does **not** exist: `server/app.py:1376` still does `from ..cli.commands import _classify_unresolved, _embedding_info, _scalar`. Do not read this as fully closed — the upward import from `server` into `cli` is still there, just narrower than it was |
+| 3 | `facts_only` is a provable no-op | **closed**, by intervening work (Phase 2 semantic retrieval, landed before this branch), not by this branch. `search_code` now retrieves real tier-2 candidates and `facts_only` filters them before the page is cut via `ServingPolicy.max_tier`, independent of the `tier.py` modality path the original finding was about. `get_symbol` also filters. Pinned by `tests/test_mcp.py::test_facts_only_excludes_tier_2` and the `get_symbol` tests beside it. (`tier.py`'s own docstring for its `facts_only()` helper still says retrieval "removes nothing, and cannot" — that sentence is now stale too, describing only the narrower Hit-based path this function covers, not the assertion-candidate path that actually closed the item; left alone here as a code-comment fix outside this document's scope) |
+| 4 | Adjudication unreachable from any shipped surface | **closed, this branch.** `codelearner judge` (WP17.4) drives `adjudicate_assertion` and records verdicts through `store.record_verdict`; `require_verdict=True` is `PRODUCTION_POLICY`'s default. See WP17.4 below |
+| 5 | Two-stage staleness engine has zero production callers | **still open.** `span_verifications` is written and read only by `refresh_staleness` and tests; no shipped surface takes a `--verifier` flag or surfaces `method`/`verified_at` |
+| 6 | `store._load_assertions` builds an unbatched `IN` clause | **closed**, by intervening work, not by this branch. `_load_assertions` now chunks the id lookup through `_chunks`/`_BATCH = 500`, and `store.assertions_with_status`/`servable_assertions`/`serve_assertions`/`refresh_staleness` all route through it. `tests/test_assertions.py` pins the exact failure size, 33,000 active claims, past `SQLITE_MAX_VARIABLE_NUMBER` (32,766) |
+| 7 | `_atomic`'s transaction sniff is connection-global | **closed, and pinned this branch (`8305005`).** Not fixed the way originally proposed (`threading.local` + explicit join/savepoint) — instead `IndexSource.run_sync` serializes every index operation onto a single-worker `ThreadPoolExecutor(max_workers=1)`, which removes the concurrent-access precondition the race needed. `tests/test_mcp.py` pins both the pool width and that two overlapping `run_sync` calls never interleave. The fix predates this test (**GREEN on arrival**) |
+
+Net: 1, 3, 4, 6, 7 closed; 2 partial (`indexinfo.py` still owed); 5 open.
 
 Original detail retained below.
 
@@ -1070,6 +1093,13 @@ Everything not marked done above, in the order a next wave should take it. This 
 answer to "what does this project still owe", and it is deliberately at the end of the
 document rather than folded into the status table, because a status table with 25 rows hides
 a short list of real debts.
+
+**Closed since this list was written, at `8305005`.** Items 1, 2, 3 and 6 below are done.
+1 (WP17.6) and 2 (WP16.5) closed by work between `3212972` and this branch and are now
+pinned by regression tests; 3 (WP17.7) closed the same way and was pinned by this branch;
+6 (WP17.4) is this branch's own work. Left in place below rather than deleted, so the list
+still shows what a next wave inherited rather than only what remains — see WP16 and WP17
+above for the current state of each.
 
 **Correctness and behaviour, ranked.**
 

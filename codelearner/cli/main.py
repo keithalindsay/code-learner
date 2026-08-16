@@ -246,12 +246,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--allow-same-family",
         action="store_true",
         help="judge a claim even when the judge and its generator share a model "
-        "family (independence checking; not yet enforced)",
+        "family (by default such claims are skipped, not judged, and counted as "
+        "skipped_same_family)",
     )
     p_judge.add_argument(
         "--dry-run",
         action="store_true",
-        help="judge without recording verdicts (not yet implemented)",
+        help="call the judge and report verdicts without writing them to the store",
     )
     p_judge.add_argument("--json", action="store_true", dest="json", help="emit JSON instead of a table")
     p_judge.set_defaults(func=cmd_judge)

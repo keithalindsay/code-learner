@@ -998,11 +998,14 @@ exact string as a regression.
 - **Anything about coverage.** A store with three easy claims in it can score 1.000.
   Faithfulness is a property of the claims that exist, not evidence that the
   interesting ones were made.
-- **Anything about what is served.** `record_verdict` has exactly one caller, in
-  `eval/`. There is no `codelearner judge`, no MCP tool, and no
-  `servable_assertions(require_verdict=True)` — so adjudication is an offline
-  measurement and **not admission control**, and 0.54 describes claims that are served
-  regardless of their verdict. That is WP17.4 and it is open.
+- **Anything about what is served.** `record_verdict` is called here, from
+  `eval/faithfulness.py`, *and* from `codelearner judge` (WP17.4, done) — but this run
+  did not go through the CLI, so it recorded no verdicts and changed nothing servable.
+  0.54 describes claims scored by this offline pass; whether a given claim is actually
+  serving is a separate question, answered by `require_verdict=True` (the production
+  default) and whatever verdicts `codelearner judge` has recorded for it. There is
+  still no MCP judge tool, by design — judge independence means an agent must not
+  judge its own claims, so judging stays a CLI-only, out-of-band step.
 
 ```python
 from codelearner import db
@@ -2125,16 +2128,18 @@ get_symbol(qualname)                     -> the claim, re-verified against disk
 | 7 | MCP server + CLI | done |
 | 8 | Eval: per-modality ablation, faithfulness with a same-weights-different-model judge, git-history purpose gold, gate negative controls | done; see [Measured](#measured) |
 | 9 | Claim generation: cited drafts, `codelearner learn`, a measured generator | done |
-| 10 | Adjudication as admission control — a `judge` command and `require_verdict` | **not started** (WP17.4). Note: search already REFUSES to serve an unjudged claim; what is missing is the pipeline that gets claims judged in the first place |
+| 10 | Adjudication as admission control — a `judge` command and `require_verdict` | **done** (WP17.4). `codelearner judge` drives the independent-judge machinery and records verdicts through `store.record_verdict`; serving already refused an unjudged claim (`require_verdict=True`), so this closes the `search → submit → judge → serve` loop. Judging is CLI-only and out-of-band by design — an agent must not judge its own claims, so there is no MCP judge tool |
 | 11 | Semantic retrieval: claims as first-class search results | done — lexical assertion retrieval, mixed fusion, all-or-nothing evidence, one candidate shape across CLI and MCP. `facts_only` and `--no-assertions` are real controls now |
 | 11b | Semantic retrieval **lift** — assertion embeddings and a five-repository semantic gold set | **not started**. Nothing yet measures whether serving claims helps; the ablation's tier-2 row is a count, not a result |
 | 12 | Second language | deferred; the type seam is clean, the dispatch is not built |
 
 Deliberately not on this list, because a roadmap is not the place to hide a defect: the
 open items are in [docs/REMEDIATION.md](docs/REMEDIATION.md), which names WP16 (surviving
-mutations), WP17 (one rule in one place; `facts_only`; adjudication; the unbatched `IN`
-clause; the connection-global transaction sniff) and WP18 (this document, packaging, and
-the Python-only guard) as outstanding.
+mutations — partial; the embedder-mismatch guard is now closed and pinned) and WP17 (one
+rule in one place — `indexinfo.py` still unextracted; the rest of the list has moved,
+see REMEDIATION.md for the current item-by-item state) and WP18 (this document,
+packaging, and the Python-only guard) as outstanding. WP17.4 (adjudication) is now
+done — see Phase 10 above.
 
 ## Verification
 
