@@ -1,0 +1,6 @@
+judged 62 claim(s) with ollama/qwen3.5:9b
+  supported           35
+  refuted             27
+  uncertain            0
+  no_evidence          0
+  skipped_same_family         0
