@@ -918,6 +918,66 @@ def test_index_source_serializes_work_off_the_event_loop(tmp_path):
     source.close()
 
 
+def test_index_source_executor_stays_single_threaded(tmp_path):
+    """WP17.7 pin, part 1: the pool width itself.
+
+    The shared-connection concurrency bug that motivated `run_sync`'s single
+    owning worker (see its docstring) is closed by `ThreadPoolExecutor(max_workers=1)`
+    in `IndexSource.run_sync`. A future change back to a pool of more than one
+    worker would reopen it silently unless something asserts the width directly.
+    """
+    source = server_app.IndexSource(path=tmp_path / "unused.db")
+
+    asyncio.run(source.run_sync(lambda: None))
+
+    assert source._executor is not None
+    assert source._executor._max_workers == 1
+    source.close()
+
+
+def test_index_source_run_sync_calls_never_overlap(tmp_path):
+    """WP17.7 pin, part 2: the behavioral guarantee, not just the pool width.
+
+    Extends `test_index_source_serializes_work_off_the_event_loop` with explicit
+    entry/exit recording so a regression that widened the pool -- or any other
+    change that let two `run_sync` bodies run at once -- shows up as an observed
+    overlap, not just a wider `_max_workers`.
+    """
+    source = server_app.IndexSource(path=tmp_path / "unused.db")
+    events: list[tuple[str, int]] = []
+    lock = threading.Lock()
+
+    def work(value):
+        with lock:
+            events.append(("enter", value))
+        time.sleep(0.05)
+        with lock:
+            events.append(("exit", value))
+        return value
+
+    async def exercise():
+        first = asyncio.create_task(source.run_sync(work, 1))
+        second = asyncio.create_task(source.run_sync(work, 2))
+        return await asyncio.gather(first, second)
+
+    assert asyncio.run(exercise()) == [1, 2]
+    source.close()
+
+    # No overlap means every "enter" is immediately followed by that same value's
+    # "exit" before the other task's "enter" appears -- i.e. the events interleave
+    # as two complete (enter, exit) pairs, never as enter/enter before either exit.
+    open_value: int | None = None
+    for kind, value in events:
+        if kind == "enter":
+            assert open_value is None, "a second run_sync body entered before the first exited"
+            open_value = value
+        else:
+            assert open_value == value
+            open_value = None
+    assert open_value is None
+    assert len(events) == 4
+
+
 def test_search_with_source_returns_the_complete_top_symbol_as_evidence(served):
     """Requested source is whole-symbol, line-numbered, and identifies a returned hit."""
     _, _, server = served
