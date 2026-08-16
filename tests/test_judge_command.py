@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import types
 from pathlib import Path
@@ -81,7 +82,7 @@ class _FakeJudge:
         return Judgement(label=self._label, reasoning="fake", judge=self.name, cause=CAUSE_JUDGED)
 
 
-def _judge_args(root: Path, index_path: Path, **overrides):
+def _judge_args(root: Path, index_path: Path, *, dry_run=False, as_json=False, **overrides):
     fields = {
         "repo": root,
         "index_path": index_path,
@@ -89,8 +90,8 @@ def _judge_args(root: Path, index_path: Path, **overrides):
         "model": None,
         "subject": None,
         "allow_same_family": False,
-        "dry_run": False,
-        "json": False,
+        "dry_run": dry_run,
+        "json": as_json,
     }
     fields.update(overrides)
     return types.SimpleNamespace(**fields)
@@ -152,3 +153,31 @@ def test_allow_same_family_records_the_verdict(indexed, monkeypatch, tmp_path):
     args = _judge_args(root, tmp_path / "i.db", allow_same_family=True)
     commands.cmd_judge(args, factory=None)
     assert conn.execute("SELECT count(*) c FROM verdicts").fetchone()["c"] == 1
+
+
+def test_dry_run_records_nothing(indexed, monkeypatch, tmp_path):
+    from codelearner.adjudicate import LABEL_SUPPORTED
+    from codelearner.cli import commands
+
+    root, conn = indexed
+    _submit(root, conn)
+    monkeypatch.setattr(commands, "_build_judge", lambda args: _FakeJudge(LABEL_SUPPORTED))
+
+    args = _judge_args(root, tmp_path / "i.db", dry_run=True)
+    commands.cmd_judge(args, factory=None)
+    assert conn.execute("SELECT count(*) c FROM verdicts").fetchone()["c"] == 0
+
+
+def test_json_emits_per_claim_verdicts(indexed, monkeypatch, tmp_path, capsys):
+    from codelearner.adjudicate import LABEL_SUPPORTED
+    from codelearner.cli import commands
+
+    root, conn = indexed
+    _submit(root, conn)
+    monkeypatch.setattr(commands, "_build_judge", lambda args: _FakeJudge(LABEL_SUPPORTED))
+
+    args = _judge_args(root, tmp_path / "i.db", as_json=True)
+    commands.cmd_judge(args, factory=None)
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["summary"]["supported"] == 1
+    assert payload["results"][0]["verdict"] == "supported"

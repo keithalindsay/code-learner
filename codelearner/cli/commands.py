@@ -1690,8 +1690,14 @@ def cmd_judge(args: Any, factory: EmbedderFactory) -> int:
     the caller who has decided, for this run, that the risk is acceptable (a
     same-family judge is the only one available, say).
 
-    `--dry-run`/`--json` output are later work; this is the core loop they will sit
-    on top of.
+    **`--dry-run`** threads `record=not args.dry_run` into `adjudicate_assertion`,
+    so a dry run calls the judge and tallies exactly what a real run would, and
+    writes nothing -- the store comes out byte-identical, verdict rows included.
+
+    **`--json`** replaces the text summary with one parseable document on stdout:
+    the same summary counts, plus a `results` list of `{assertion_id, subject,
+    verdict}` for every claim actually adjudicated (a same-family skip has no
+    verdict to report and is not in the list; it is still counted in `summary`).
     """
     repo = args.repo.expanduser().resolve()
     index_path = resolve_index_path(repo, args.index_path)
@@ -1706,6 +1712,11 @@ def cmd_judge(args: Any, factory: EmbedderFactory) -> int:
     # even though both land on the same store verdict. See `adjudicate.CAUSE_*`.
     tally = {"supported": 0, "refuted": 0, "uncertain": 0, "no_evidence": 0}
     skipped_same_family = 0
+    # `--dry-run`'s only effect is the `record=` flag below: the judge is still
+    # called and the tally is still built exactly as a real run would build it, so
+    # a dry run reports the same summary a recorded run would -- it just leaves no
+    # trace in `verdicts`.
+    results: list[dict[str, Any]] = []
     for assertion in candidates:
         if (
             not args.allow_same_family
@@ -1714,21 +1725,39 @@ def cmd_judge(args: Any, factory: EmbedderFactory) -> int:
         ):
             skipped_same_family += 1
             continue
-        adjudication = adjudicate_assertion(conn, judge, assertion, repo, record=True)
+        adjudication = adjudicate_assertion(
+            conn, judge, assertion, repo, record=not args.dry_run
+        )
         judgement = adjudication.judgement
         if judgement.cause == CAUSE_NO_EVIDENCE:
-            tally["no_evidence"] += 1
+            verdict = "no_evidence"
         elif judgement.label == LABEL_SUPPORTED:
-            tally["supported"] += 1
+            verdict = "supported"
         elif judgement.label == LABEL_NOT_SUPPORTED:
-            tally["refuted"] += 1
+            verdict = "refuted"
         else:
-            tally["uncertain"] += 1
+            verdict = "uncertain"
+        tally[verdict] += 1
+        results.append(
+            {
+                "assertion_id": adjudication.assertion_id,
+                "subject": adjudication.subject_qualname,
+                "verdict": verdict,
+            }
+        )
 
-    print(f"judged {len(candidates)} claim(s) with {judge.name}")
-    for label in ("supported", "refuted", "uncertain", "no_evidence"):
-        print(count_line(label, tally[label], width=12))
-    print(count_line("skipped_same_family", skipped_same_family, width=12))
+    if args.json:
+        # A same-family skip is counted in `summary` (it is part of why the judged
+        # total came in under the candidate count) but has no verdict to report, so
+        # it is not in `results` -- the same asymmetry the text branch below prints
+        # as a separate line rather than a fifth tally bucket.
+        counts = {**tally, "skipped_same_family": skipped_same_family}
+        print(json.dumps({"summary": counts, "results": results}, indent=2))
+    else:
+        print(f"judged {len(candidates)} claim(s) with {judge.name}")
+        for label in ("supported", "refuted", "uncertain", "no_evidence"):
+            print(count_line(label, tally[label], width=12))
+        print(count_line("skipped_same_family", skipped_same_family, width=12))
 
     # Closed, not left to the collector -- and for the exact reason `cmd_index`
     # closes explicitly (see its comment above `return 0`): the writes above must be
