@@ -10,6 +10,7 @@ import pytest
 from codelearner import db
 from codelearner.adjudicate import Judgement
 from codelearner.assertions import store
+from codelearner.cli import main
 from codelearner.ingest import index_repo
 from codelearner.retrieve.mixed import search_candidates
 from codelearner.retrieve.types import AssertionCandidate
@@ -181,3 +182,40 @@ def test_json_emits_per_claim_verdicts(indexed, monkeypatch, tmp_path, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert payload["summary"]["supported"] == 1
     assert payload["results"][0]["verdict"] == "supported"
+
+
+class _UnavailableJudge:
+    """A judge that behaves exactly like `OllamaJudge` when ollama is unreachable --
+    the real, most-likely failure `cmd_judge` hits in practice."""
+
+    name = "ollama/unreachable"
+
+    def judge(self, *, claim, evidence, subject):
+        from codelearner.adjudicate import JudgeUnavailable
+
+        raise JudgeUnavailable(
+            "could not reach the judge at http://localhost:11434 (connection "
+            "refused). Start it (`ollama serve`), pull the model, and re-run."
+        )
+
+
+def test_judge_unavailable_is_a_clean_error_not_a_traceback(indexed, monkeypatch, tmp_path, capsys):
+    """`OllamaJudge` raises `JudgeUnavailable` -- a bare `RuntimeError` -- the moment
+    ollama is unreachable. Left uncaught that would print as a stack trace instead
+    of the repo's `codelearner: <message>` line, breaking `main`'s own promise to
+    never raise for a predictable failure. Invoked through `main`, the same path a
+    real invocation takes, so the assertion covers the translation all the way to
+    the process exit code and stderr -- not just that `cmd_judge` raises something."""
+    from codelearner.cli import commands
+
+    root, conn = indexed
+    _submit(root, conn)
+    monkeypatch.setattr(commands, "_build_judge", lambda args: _UnavailableJudge())
+
+    exit_code = main(["judge", str(root), "--index", str(tmp_path / "i.db")])
+
+    captured = capsys.readouterr()
+    assert exit_code != 0
+    assert "Traceback" not in captured.err
+    assert captured.err.startswith("codelearner: ")
+    assert "could not reach the judge" in captured.err

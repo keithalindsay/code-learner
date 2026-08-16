@@ -36,6 +36,7 @@ from ..adjudicate import (
     LABEL_NOT_SUPPORTED,
     LABEL_SUPPORTED,
     Judge,
+    JudgeUnavailable,
     OllamaJudge,
     adjudicate_assertion,
 )
@@ -1704,70 +1705,86 @@ def cmd_judge(args: Any, factory: EmbedderFactory) -> int:
     index_path = resolve_index_path(repo, args.index_path)
     conn, drift = open_index(index_path)
 
-    candidates = store.unjudged_assertions(conn, limit=args.limit, subject=args.subject)
-    judge = _build_judge(args)
+    try:
+        candidates = store.unjudged_assertions(conn, limit=args.limit, subject=args.subject)
+        judge = _build_judge(args)
 
-    # Four buckets, not three, because "refuted for lack of evidence" and "refuted
-    # by a judge that read the evidence and was not convinced" are different facts
-    # about a run -- the first is a generator problem, the second is a judge call --
-    # even though both land on the same store verdict. See `adjudicate.CAUSE_*`.
-    tally = {"supported": 0, "refuted": 0, "uncertain": 0, "no_evidence": 0}
-    skipped_same_family = 0
-    # `--dry-run`'s only effect is the `record=` flag below: the judge is still
-    # called and the tally is still built exactly as a real run would build it, so
-    # a dry run reports the same summary a recorded run would -- it just leaves no
-    # trace in `verdicts`.
-    results: list[dict[str, Any]] = []
-    for assertion in candidates:
-        if (
-            not args.allow_same_family
-            and assertion.generator is not None
-            and model_family(judge.name) == model_family(assertion.generator)
-        ):
-            skipped_same_family += 1
-            continue
-        adjudication = adjudicate_assertion(
-            conn, judge, assertion, repo, record=not args.dry_run
-        )
-        judgement = adjudication.judgement
-        if judgement.cause == CAUSE_NO_EVIDENCE:
-            verdict = "no_evidence"
-        elif judgement.label == LABEL_SUPPORTED:
-            verdict = "supported"
-        elif judgement.label == LABEL_NOT_SUPPORTED:
-            verdict = "refuted"
+        # Four buckets, not three, because "refuted for lack of evidence" and
+        # "refuted by a judge that read the evidence and was not convinced" are
+        # different facts about a run -- the first is a generator problem, the
+        # second is a judge call -- even though both land on the same store
+        # verdict. See `adjudicate.CAUSE_*`.
+        tally = {"supported": 0, "refuted": 0, "uncertain": 0, "no_evidence": 0}
+        skipped_same_family = 0
+        # `--dry-run`'s only effect is the `record=` flag below: the judge is still
+        # called and the tally is still built exactly as a real run would build it, so
+        # a dry run reports the same summary a recorded run would -- it just leaves no
+        # trace in `verdicts`.
+        results: list[dict[str, Any]] = []
+        try:
+            for assertion in candidates:
+                if (
+                    not args.allow_same_family
+                    and assertion.generator is not None
+                    and model_family(judge.name) == model_family(assertion.generator)
+                ):
+                    skipped_same_family += 1
+                    continue
+                adjudication = adjudicate_assertion(
+                    conn, judge, assertion, repo, record=not args.dry_run
+                )
+                judgement = adjudication.judgement
+                if judgement.cause == CAUSE_NO_EVIDENCE:
+                    verdict = "no_evidence"
+                elif judgement.label == LABEL_SUPPORTED:
+                    verdict = "supported"
+                elif judgement.label == LABEL_NOT_SUPPORTED:
+                    verdict = "refuted"
+                else:
+                    verdict = "uncertain"
+                tally[verdict] += 1
+                results.append(
+                    {
+                        "assertion_id": adjudication.assertion_id,
+                        "subject": adjudication.subject_qualname,
+                        "verdict": verdict,
+                    }
+                )
+        except JudgeUnavailable as exc:
+            # `OllamaJudge` raises this the moment a call to the backend fails --
+            # ollama not running, or the model not pulled -- which is this
+            # command's single most likely real-world failure. It is a
+            # `RuntimeError`, not one of `main`'s existing predictable-failure
+            # types, so left uncaught it would print as a traceback instead of
+            # the one-line remedy the exception already carries. Re-raised as a
+            # `CliError` here, at the seam that knows a judge is involved, so
+            # `main` prints it exactly like every other predictable failure.
+            raise CliError(str(exc)) from exc
+
+        judged = len(candidates) - skipped_same_family
+        if args.json:
+            # A same-family skip is counted in `summary` (it is part of why the judged
+            # total came in under the candidate count) but has no verdict to report, so
+            # it is not in `results` -- the same asymmetry the text branch below prints
+            # as a separate line rather than a fifth tally bucket.
+            counts = {**tally, "skipped_same_family": skipped_same_family}
+            print(json.dumps({"summary": counts, "results": results}, indent=2))
         else:
-            verdict = "uncertain"
-        tally[verdict] += 1
-        results.append(
-            {
-                "assertion_id": adjudication.assertion_id,
-                "subject": adjudication.subject_qualname,
-                "verdict": verdict,
-            }
-        )
-
-    if args.json:
-        # A same-family skip is counted in `summary` (it is part of why the judged
-        # total came in under the candidate count) but has no verdict to report, so
-        # it is not in `results` -- the same asymmetry the text branch below prints
-        # as a separate line rather than a fifth tally bucket.
-        counts = {**tally, "skipped_same_family": skipped_same_family}
-        print(json.dumps({"summary": counts, "results": results}, indent=2))
-    else:
-        print(f"judged {len(candidates)} claim(s) with {judge.name}")
-        for label in ("supported", "refuted", "uncertain", "no_evidence"):
-            print(count_line(label, tally[label], width=12))
-        print(count_line("skipped_same_family", skipped_same_family, width=12))
-
-    # Closed, not left to the collector -- and for the exact reason `cmd_index`
-    # closes explicitly (see its comment above `return 0`): the writes above must be
-    # durable and visible to the NEXT connection opened on this path, whether that
-    # is another `codelearner` invocation or `search` reading straight after. Each
-    # `record_verdict` call already commits its own transaction (`store._atomic`
-    # wraps it), so this is belt-and-suspenders against WAL checkpoint timing, not
-    # what makes the writes durable in the first place.
-    conn.close()
+            print(f"judged {judged} claim(s) with {judge.name}")
+            for label in ("supported", "refuted", "uncertain", "no_evidence"):
+                print(count_line(label, tally[label], width=12))
+            print(count_line("skipped_same_family", skipped_same_family, width=12))
+    finally:
+        # Closed, not left to the collector -- and for the exact reason `cmd_index`
+        # closes explicitly (see its comment above `return 0`): the writes above must
+        # be durable and visible to the NEXT connection opened on this path, whether
+        # that is another `codelearner` invocation or `search` reading straight
+        # after. Each `record_verdict` call already commits its own transaction
+        # (`store._atomic` wraps it), so this is belt-and-suspenders against WAL
+        # checkpoint timing, not what makes the writes durable in the first place.
+        # In `finally` so a `CliError` raised above (including the translated
+        # `JudgeUnavailable`) still closes the connection on its way out.
+        conn.close()
     return 0
 
 
