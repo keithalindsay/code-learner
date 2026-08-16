@@ -1654,6 +1654,16 @@ def cmd_judge(args: Any, factory: EmbedderFactory) -> int:
     conn, drift = open_index(index_path)
 
     try:
+        # Evidence is read against the tree the index is BOUND to, not `args.repo`
+        # (which defaults to the cwd). `learn` wrote and verified every citation
+        # against the bound root; judging them against a different tree makes every
+        # span unreadable and refutes every claim on "could not read this span" -- the
+        # same root serving re-verifies against. `_repo_root` raises if the index has
+        # no binding; surfaced as a clean CliError rather than a traceback.
+        try:
+            eval_root = store._repo_root(conn, None)
+        except ValueError as exc:
+            raise CliError(str(exc)) from exc
         candidates = store.unjudged_assertions(conn, limit=args.limit, subject=args.subject)
         judge = _build_judge(args)
 
@@ -1679,7 +1689,7 @@ def cmd_judge(args: Any, factory: EmbedderFactory) -> int:
                     skipped_same_family += 1
                     continue
                 adjudication = adjudicate_assertion(
-                    conn, judge, assertion, repo, record=not args.dry_run
+                    conn, judge, assertion, eval_root, record=not args.dry_run
                 )
                 judgement = adjudication.judgement
                 if judgement.cause == CAUSE_NO_EVIDENCE:

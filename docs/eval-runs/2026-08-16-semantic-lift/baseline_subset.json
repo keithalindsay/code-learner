@@ -1,0 +1,690 @@
+{
+  "miss": [
+    {
+      "query": "waiting progressively longer before trying again when the exchange tells us to slow down",
+      "relevant_present": [
+        "src.client.KalshiClient._request",
+        "src.client.KalshiClient._parse_rate_limit_headers"
+      ],
+      "coverage": [
+        "error_path",
+        "private"
+      ],
+      "first_relevant_rank": null,
+      "top5": [
+        "src.weather.ensemble",
+        "src.price_action.alerts.AlertManager",
+        "src.strategies.weather_strategy.WeatherStrategy.calculate_time_decay",
+        "src.trading.trade_alerts.alert_api_down",
+        "src.trading.edge_attribution.EdgeAttributor._check_bias_correction"
+      ]
+    },
+    {
+      "query": "we never guess what a contract means from its symbol, we read the exchange's own wording",
+      "relevant_present": [
+        "src.market_direction.parse_market_direction",
+        "src.market_direction.should_buy_yes"
+      ],
+      "coverage": [
+        "cross_module"
+      ],
+      "first_relevant_rank": null,
+      "top5": [
+        "src.market_direction",
+        "src.utils.retry",
+        "src.weather.strike",
+        "src.data.market_data.OptionData",
+        "src.watcher.example_detectors.VixSpikeReversal"
+      ]
+    },
+    {
+      "query": "cutting stake sizes in half after a bad session and stopping altogether after a worse one",
+      "relevant_present": [
+        "src.risk.circuit_breaker.CircuitBreaker._evaluate",
+        "src.risk.circuit_breaker.CircuitBreaker.position_size_multiplier",
+        "src.risk.circuit_breaker.CircuitBreaker.allow_trade"
+      ],
+      "coverage": [
+        "cross_module",
+        "error_path",
+        "private"
+      ],
+      "first_relevant_rank": null,
+      "top5": [
+        "src.risk.trade_scoring",
+        "src.trading.orchestrator.Orchestrator._handle_shutdown",
+        "src.latency_probe.probe.LatencyProbe.obs_cycle",
+        "src.risk.circuit_breaker",
+        "src.strategies.wavetech_suite.PatternFinder"
+      ]
+    },
+    {
+      "query": "judging how well we traded rather than merely whether we came out ahead",
+      "relevant_present": [
+        "src.risk.trade_scoring.TradeScore",
+        "src.risk.trade_scoring.TradeScore.composite_score"
+      ],
+      "coverage": [],
+      "first_relevant_rank": null,
+      "top5": [
+        "src.risk.trade_scoring",
+        "src.paper_trading.calibration",
+        "src.strategies.weather_strategy.WeatherStrategy.should_trade_by_regime",
+        "src.strategies.weather_strategy.WeatherStrategy.get_model_agreement_score",
+        "src.trading.market_evaluator.MarketEvaluation.is_tradeable"
+      ]
+    },
+    {
+      "query": "measuring how close our advantage estimate turned out to be against what actually happened",
+      "relevant_present": [
+        "src.risk.trade_scoring.compute_edge_quality"
+      ],
+      "coverage": [],
+      "first_relevant_rank": null,
+      "top5": [
+        "src.trading.edge_attribution.EdgeAttributor._check_bias_correction",
+        "src.strategies.market_grid.MarketGrid._estimate_outer_spacing",
+        "src.strategies.wavetech_analysis.quick_diagnostic",
+        "src.paper_trading.calibration",
+        "src._archive.basketball_strategy.BasketballStrategy.estimate_adjem_from_ranks.rank_to_efficiency"
+      ]
+    },
+    {
+      "query": "when we are out of allowance we skip the call entirely instead of sleeping until we can make it",
+      "relevant_present": [
+        "src.price_action.collector.TokenBucket.consume",
+        "src.price_action.collector.OrderbookCollector.run_collection_cycle",
+        "src.realtime.adaptive_poller.AdaptivePoller._run_tick"
+      ],
+      "coverage": [
+        "cross_module",
+        "private"
+      ],
+      "first_relevant_rank": null,
+      "top5": [
+        "src.weather.sentiment",
+        "src.trading.auto_trader.AutoTrader",
+        "src.paper_trading.benchmark",
+        "src.paper_trading.ledger.PaperLedger._count_skipped",
+        "src.risk.circuit_breaker.CircuitBreaker._maybe_reset_day"
+      ]
+    },
+    {
+      "query": "combining several separate measurements into one label for how agitated a market is",
+      "relevant_present": [
+        "src.realtime.volatility_detector.VolatilityDetector._classify_state",
+        "src.realtime.volatility_detector.VolatilityDetector.analyze"
+      ],
+      "coverage": [
+        "private"
+      ],
+      "first_relevant_rank": null,
+      "top5": [
+        "src.trading.auto_trader.classify_market_type",
+        "src.strategies.wavetech_signals.WaveTechSignalEngine",
+        "src.trading.market_evaluator",
+        "src.weather.service.WeatherService",
+        "src.weather.sentiment.MarketSentiment._build_interpretation"
+      ]
+    },
+    {
+      "query": "the offer side has to be worked out backwards because the venue only publishes bids for both outcomes",
+      "relevant_present": [
+        "src.price_action.collector.parse_orderbook_response",
+        "src.realtime.ws_client._ws_orderbook_to_snapshot"
+      ],
+      "coverage": [
+        "cross_module",
+        "hard_negative",
+        "private"
+      ],
+      "first_relevant_rank": null,
+      "top5": [
+        "src.sports.win_prob.WinProbEngine.edge",
+        "src.trading.intraday_scanner._signal_to_opportunity",
+        "src.paper_trading.benchmark",
+        "src.latency_probe.probe",
+        "tests.test_price_action_collector.TestParseOrderbookResponse.test_single_sided_orderbook"
+      ]
+    },
+    {
+      "query": "a live stream takes over from repeated fetching, and fetching resumes if the stream drops",
+      "relevant_present": [
+        "src.realtime.ws_client.WSPollerClient.start",
+        "src.realtime.ws_client.WSPollerClient._connect_and_listen"
+      ],
+      "coverage": [
+        "error_path",
+        "private"
+      ],
+      "first_relevant_rank": null,
+      "top5": [
+        "src.sports.cli.cmd_live_scores",
+        "src.sports.cli.cmd_ncaa_scores",
+        "src.march_madness.efficiency_data.get_all_team_data",
+        "src.sports.live_scores.ESPNLiveScores",
+        "src.sports.live_scores.ESPNLiveScores._fetch_json"
+      ]
+    },
+    {
+      "query": "each failed reconnection waits twice as long as the last, up to a ceiling",
+      "relevant_present": [
+        "src.realtime.ws_client.WSPollerClient.start"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "first_relevant_rank": null,
+      "top5": [
+        "src.trading.orchestrator.Orchestrator",
+        "src.price_action.engine.PriceActionEngine.run_cycle",
+        "src.watcher.example_detectors.SpxVixDivergence",
+        "src.trading.orchestrator.Orchestrator._run_scan",
+        "src.realtime.adaptive_poller.AdaptivePoller._run_tick"
+      ]
+    },
+    {
+      "query": "we try again when the network hiccups but not when the far side says our input was wrong",
+      "relevant_present": [
+        "src.utils.retry._is_retryable",
+        "src.utils.retry.retry_request"
+      ],
+      "coverage": [
+        "error_path",
+        "private"
+      ],
+      "first_relevant_rank": null,
+      "top5": [
+        "src.market_direction.validate_trade",
+        "src.paper_trading.benchmark.normalize_record",
+        "src.backtest.engine.BacktestEngine._legacy_probability",
+        "src.paper_trading.benchmark",
+        "src.trading.intraday_scanner._log_signal"
+      ]
+    },
+    {
+      "query": "wrapping a fetcher so transient failures are handled without editing its body",
+      "relevant_present": [
+        "src.utils.retry.with_retry",
+        "src.utils.retry.with_retry.deco.wrapper"
+      ],
+      "coverage": [
+        "private",
+        "undocumented"
+      ],
+      "first_relevant_rank": null,
+      "top5": [
+        "src.utils.retry",
+        "src.weather.forecast_history._http_get_json",
+        "src.price_action.detectors.base.SignalDetector",
+        "src.optimization.weekly_retrain.WeeklyRetrainer._send_retrain_notification",
+        "tests.test_forecast_history.TestCache.test_transient_api_error_not_cached"
+      ]
+    },
+    {
+      "query": "the venue moved from whole pennies to dollar strings and everything downstream still expects pennies",
+      "relevant_present": [
+        "src.utils.market_compat.normalise_market",
+        "src.utils.market_compat.normalise_markets",
+        "src.client.KalshiClient._request"
+      ],
+      "coverage": [
+        "cross_module",
+        "private"
+      ],
+      "first_relevant_rank": null,
+      "top5": [
+        "scripts.paper-trading-dashboard._format_pnl",
+        "src.paper_trading.intraday_settlement.upgrade_row_to_v2",
+        "src.latency_probe.probe.evaluate_triggers.is_affected",
+        "src.utils.market_compat",
+        "src.trading.position_tracker"
+      ]
+    },
+    {
+      "query": "one table saying which family of strategies owns each symbol prefix",
+      "relevant_present": [
+        "src.utils.market_type.classify_market_type",
+        "src.trading.auto_trader.classify_market_type"
+      ],
+      "coverage": [
+        "cross_module",
+        "hard_negative"
+      ],
+      "first_relevant_rank": null,
+      "top5": [
+        "src.paper_trading.calibration.market_type_of",
+        "src.strategies.technical_analysis.TechnicalAnalyzer.__init__",
+        "src.strategies.kalshi_ta_aggregator.KalshiTAggregator._get_category",
+        "src.strategies.wavetech_suite.WaveTechSuite.compute_from_symbol",
+        "src.strategies.technical_analysis.TechnicalSignal"
+      ]
+    },
+    {
+      "query": "picking up an edited configuration file while running, without a restart",
+      "relevant_present": [
+        "src.trading.rules_engine.TradingRulesEngine._maybe_reload",
+        "src.trading.rules_engine.TradingRulesEngine.reload_rules"
+      ],
+      "coverage": [
+        "private"
+      ],
+      "first_relevant_rank": null,
+      "top5": [
+        "src.weather.exceedance._clear_config_cache",
+        "tests.test_circuit_breaker.TestPersistence.test_state_survives_restart",
+        "src.trading.rules_engine.TradingRulesEngine.log_evolution",
+        "src.watcher.example_detectors.SpxVixDivergence",
+        "src.price_action.collector.OrderbookCollector.discover_markets"
+      ]
+    },
+    {
+      "query": "once the strongest recommendation has been reached a milder one must not walk it back",
+      "relevant_present": [
+        "src.trading.rules_engine.TradingRulesEngine._escalate_action"
+      ],
+      "coverage": [
+        "private"
+      ],
+      "first_relevant_rank": null,
+      "top5": [
+        "src.strategies.wavetech_signals.KalshiSignalAdapter._recommendation",
+        "src.trading.position_monitor.DecisionMatrix.evaluate",
+        "src.backtest.engine.BacktestEngine._confidence_to_consensus",
+        "src.trading.edge_attribution.EdgeReport",
+        "src.watcher.scanner.scan_once"
+      ]
+    },
+    {
+      "query": "how much money is already committed across everything that has not yet resolved",
+      "relevant_present": [
+        "src.trading.auto_trader.AutoTrader._get_open_exposure",
+        "src.trading.auto_trader.DailyBudget.spent_today",
+        "src.trading.auto_trader.DailyBudget.can_trade"
+      ],
+      "coverage": [
+        "cross_module",
+        "private"
+      ],
+      "first_relevant_rank": null,
+      "top5": [
+        "src.risk.tca.TCALogger.pending_settlements",
+        "src.paper_trading.benchmark.settle_tickers",
+        "src.paper_trading.benchmark.is_resolved",
+        "src.weather.metar_signals._calculate_breach_probability",
+        "src.paper_trading.intraday_settlement.settle_trades"
+      ]
+    },
+    {
+      "query": "giving each forecast source a share proportional to how accurate it has recently been",
+      "relevant_present": [
+        "src.weather.bias_tracker.BiasTracker.get_model_weights"
+      ],
+      "coverage": [],
+      "first_relevant_rank": null,
+      "top5": [
+        "src.trading.edge_attribution",
+        "src.weather.ensemble.EnsembleForecaster.agreement_level",
+        "src.paper_trading.bias_tracker.BiasTracker.record_error",
+        "src.trading.position_monitor.PositionMonitor._fetch_ensemble",
+        "src.backtest.engine.BacktestEngine._strategy_probability"
+      ]
+    },
+    {
+      "query": "learning how far off in one direction each forecast source tends to run",
+      "relevant_present": [
+        "src.weather.bias_tracker.BiasTracker.get_bias_correction",
+        "src.paper_trading.bias_tracker.BiasTracker.get_correction"
+      ],
+      "coverage": [
+        "cross_module",
+        "hard_negative"
+      ],
+      "first_relevant_rank": null,
+      "top5": [
+        "src.weather.forecast_history",
+        "src.paper_trading.bias_tracker.BiasTracker.record_error",
+        "src.weather.bias_tracker.BiasTracker",
+        "src.weather.forecast_history.fetch_runs_batch",
+        "src.weather.forecast_history.ForecastSnapshot"
+      ]
+    },
+    {
+      "query": "scaling a risk adjusted return up to a yearly figure, done differently in two places",
+      "relevant_present": [
+        "src.backtest.metrics.MetricsEngine._sharpe",
+        "src.paper_trading.ledger.PaperLedger._compute_sharpe"
+      ],
+      "coverage": [
+        "cross_module",
+        "hard_negative",
+        "private"
+      ],
+      "first_relevant_rank": null,
+      "top5": [
+        "src.risk.trade_scoring.compute_risk_adjusted_return",
+        "src.backtest.engine.BacktestEngine._classify_overfit_risk",
+        "src.risk.trade_scoring.TradeScore",
+        "src.risk.kelly.KellyResult",
+        "src.risk.tca.TCALogger.compute_trade_score"
+      ]
+    },
+    {
+      "query": "only the losing observations count towards the spread when measuring how bumpy results were",
+      "relevant_present": [
+        "src.backtest.metrics.MetricsEngine._sortino"
+      ],
+      "coverage": [
+        "private"
+      ],
+      "first_relevant_rank": null,
+      "top5": [
+        "src.weather.service.WeatherService",
+        "src.weather.sentiment.MarketSentiment._analyze_spread_trend",
+        "src.weather.bias_tracker.BiasTracker.get_days_of_data",
+        "src.weather.sentiment.MarketSentiment.analyze_sentiment",
+        "src.realtime.volatility_detector.VolatilityDetector._compute_spread_ratio"
+      ]
+    },
+    {
+      "query": "walking the running balance to find the deepest fall from a high point",
+      "relevant_present": [
+        "src.backtest.metrics.MetricsEngine.compute"
+      ],
+      "coverage": [
+        "generic_name",
+        "undocumented"
+      ],
+      "first_relevant_rank": null,
+      "top5": [
+        "research.exceedance_fit.fit_final.stage_a_brier",
+        "src.weather.forecast_history.implied_final_extremum",
+        "research.exceedance_fit.fit2.stage_a_brier",
+        "src.weather.metar_signals._estimate_high_exceedance",
+        "src.weather.exceedance.p_high_exceeds_v2"
+      ]
+    },
+    {
+      "query": "declining a new position because we already hold this one, or hold too many, or cannot afford it",
+      "relevant_present": [
+        "src.backtest.portfolio.PortfolioSimulator.can_open"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "first_relevant_rank": null,
+      "top5": [
+        "src.trading.rules_engine.TradingRulesEngine.should_exit",
+        "src.trading.position_monitor.DecisionMatrix.evaluate",
+        "src.weather.sentiment.MarketSentiment.recommend_exit_strategy",
+        "src.trading.exit_engine.ExitEngine.evaluate_position",
+        "src.trading.exit_engine.ExitEngine._hold_signal"
+      ]
+    },
+    {
+      "query": "the charge applies going in and again coming out, so both have to be subtracted",
+      "relevant_present": [
+        "src.backtest.portfolio.PortfolioSimulator.execute_sell",
+        "src.backtest.portfolio.Position.unrealized_pnl"
+      ],
+      "coverage": [
+        "cross_module"
+      ],
+      "first_relevant_rank": null,
+      "top5": [
+        "tests.test_cross_market_integration.TestArbitrageFeeCalculation.test_fee_on_both_legs",
+        "src.realtime.ws_client",
+        "src.price_action.alerts.AlertManager",
+        "src.trading.exit_engine",
+        "src.strategies.kalshi_ta.KalshiTAResult.neutral_count"
+      ]
+    },
+    {
+      "query": "when nobody is buying we book the exit at nothing rather than pretend it did not happen",
+      "relevant_present": [
+        "src.backtest.portfolio.PortfolioSimulator.execute_sell"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "first_relevant_rank": null,
+      "top5": [
+        "src.backtest.exit_simulator",
+        "src.weather.sentiment",
+        "src.trading.exit_engine",
+        "src.watcher.scanner.run_daemon",
+        "src.price_action.collector"
+      ]
+    },
+    {
+      "query": "keeping a note of the ones we looked at and passed on, and why",
+      "relevant_present": [
+        "src.paper_trading.ledger.PaperLedger.record_skip",
+        "src.paper_trading.ledger.PaperLedger._skip_reasons"
+      ],
+      "coverage": [
+        "private",
+        "undocumented"
+      ],
+      "first_relevant_rank": null,
+      "top5": [
+        "research.exceedance_fit.fit",
+        "src.utils.retry",
+        "src.optimization.weekly_retrain.WeeklyRetrainer._add_evolution_note",
+        "src.paper_trading.benchmark",
+        "research.exceedance_fit.fit2"
+      ]
+    },
+    {
+      "query": "working out the result differently depending on which side of the contract we took",
+      "relevant_present": [
+        "src.paper_trading.ledger.PaperLedger.settle_trade"
+      ],
+      "coverage": [],
+      "first_relevant_rank": null,
+      "top5": [
+        "research.exceedance_fit.fit",
+        "src.paper_trading.calibration",
+        "src.strategies.kalshi_ta_backtest.TradeRecord",
+        "src.latency_probe.analyze.score_fill",
+        "src.risk.kelly.size_position"
+      ]
+    },
+    {
+      "query": "asking the venue which of the things we are still waiting on have finished",
+      "relevant_present": [
+        "src.paper_trading.ledger.PaperLedger.settle_from_api"
+      ],
+      "coverage": [],
+      "first_relevant_rank": null,
+      "top5": [
+        "src.paper_trading.benchmark",
+        "src.paper_trading.benchmark.is_resolved",
+        "src.trading.edge_attribution.EdgeAttributor._check_bias_correction",
+        "src.trading.market_evaluator",
+        "src.trading.edge_attribution.EdgeAttributor._check_ensemble_disagreement"
+      ]
+    },
+    {
+      "query": "the lopsidedness has to hold across most of the recent window before we believe it",
+      "relevant_present": [
+        "src.price_action.detectors.smart_money.SmartMoneyDetector.detect"
+      ],
+      "coverage": [
+        "generic_name"
+      ],
+      "first_relevant_rank": null,
+      "top5": [
+        "src.price_action.detectors.momentum.MomentumDetector",
+        "src.paper_trading.calibration.rolling_stats",
+        "src.weather.metar_history.trend_from_tracker",
+        "src.price_action.detectors.spread_compression.SpreadCompressionDetector.detect",
+        "src.weather.forecast_watcher.ForecastWatcher.poll_all_cities"
+      ]
+    },
+    {
+      "query": "the quote has barely moved even though we have newer information than it does",
+      "relevant_present": [
+        "src.price_action.detectors.stale_pricing.StalePricingDetector.detect"
+      ],
+      "coverage": [
+        "generic_name"
+      ],
+      "first_relevant_rank": null,
+      "top5": [
+        "src.weather.forecast_watcher.ForecastShift",
+        "src.latency_probe.analyze.reprice_lag",
+        "src.latency_probe.probe.evaluate_triggers",
+        "src.trading.edge_attribution",
+        "src.weather.forecast_watcher.ForecastWatcher._detect_shift"
+      ]
+    },
+    {
+      "query": "the price ladder is stored as one text column and has to be rebuilt on the way back out",
+      "relevant_present": [
+        "src.price_action.store._row_to_snapshot",
+        "src.price_action.store._row_to_snapshot._parse_levels",
+        "src.price_action.store.PriceActionStore.save_snapshot"
+      ],
+      "coverage": [
+        "private",
+        "undocumented"
+      ],
+      "first_relevant_rank": null,
+      "top5": [
+        "src.price_action.detectors.smart_money",
+        "src.paper_trading.intraday_settlement.upgrade_row_to_v2",
+        "src.trading.auto_trader",
+        "src.paper_trading.intraday_settlement.migrate_ledger",
+        "src.risk.tca.TCALogger._ensure_schema"
+      ]
+    },
+    {
+      "query": "the safety switch starts in the harmless position and has to be turned off on purpose",
+      "relevant_present": [
+        "src.config.Settings.is_dry_run",
+        "src.config.Settings"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "first_relevant_rank": null,
+      "top5": [
+        "src.trading.rules_engine.TradingRulesEngine.get_safety_limits",
+        "src.risk.circuit_breaker",
+        "src.risk.circuit_breaker.CircuitBreaker._set_state",
+        "research.exceedance_fit.fit_final",
+        "src.trading.auto_trader.AutoTrader.get_safety_limits"
+      ]
+    },
+    {
+      "query": "translating an older result object into the shared shape everything now speaks",
+      "relevant_present": [
+        "src.signals.from_trade_signal",
+        "src.signals.from_financial_opportunity"
+      ],
+      "coverage": [
+        "cross_module"
+      ],
+      "first_relevant_rank": null,
+      "top5": [
+        "src.trading.edge_attribution.EdgeAttributor",
+        "src.research.types.ResearchResult",
+        "src.trading.auto_trader.classify_market_type",
+        "src.paper_trading.kelly._LegacyKellyResult",
+        "src.realtime.ws_archiver"
+      ]
+    }
+  ],
+  "buried": [
+    {
+      "query": "a saved file we cannot make sense of should start over rather than take the program down",
+      "relevant_present": [
+        "src.risk.circuit_breaker.CircuitBreaker._load"
+      ],
+      "coverage": [
+        "error_path",
+        "private"
+      ],
+      "first_relevant_rank": 7,
+      "top5": [
+        "src.trading.exit_engine",
+        "src.price_action.collector",
+        "src.sports.whale_tracker",
+        "src.sports.march_madness_tracker",
+        "src.backtest.wavetech_backtest.WaveTechBacktestEngine.download_data"
+      ]
+    },
+    {
+      "query": "holding only the last hundred observations per market in memory and dropping the oldest",
+      "relevant_present": [
+        "src.realtime.adaptive_poller.SnapshotRingBuffer",
+        "src.realtime.adaptive_poller.SnapshotRingBuffer.add"
+      ],
+      "coverage": [],
+      "first_relevant_rank": 6,
+      "top5": [
+        "src.latency_probe.probe",
+        "src.strategies.event_monitor.EventMonitor.scan_once",
+        "src.price_action.store.PriceActionStore.get_recent_signals",
+        "src.backtest.strategy.TickerHistory",
+        "src.weather.metar_history.trend_from_tracker"
+      ]
+    },
+    {
+      "query": "a readable complaint when someone hands us the name of an HTTP verb instead of the callable itself",
+      "relevant_present": [
+        "src.utils.retry.retry_request"
+      ],
+      "coverage": [
+        "error_path"
+      ],
+      "first_relevant_rank": 6,
+      "top5": [
+        "src.trading.edge_attribution.EdgeAttributor._check_bias_correction",
+        "tests.test_retry.test_string_instead_of_callable_raises_clear_typeerror",
+        "src.trading.edge_attribution.EdgeAttribution",
+        "src.strategies.base.TradingStrategy.get_strategy_name",
+        "src.utils.retry.with_retry"
+      ]
+    },
+    {
+      "query": "refusing to run at all when the settings document is missing a whole section",
+      "relevant_present": [
+        "src.trading.rules_engine.TradingRulesEngine._validate",
+        "src.trading.rules_engine.RulesValidationError"
+      ],
+      "coverage": [
+        "error_path",
+        "private"
+      ],
+      "first_relevant_rank": 6,
+      "top5": [
+        "src.config.Settings.is_dry_run",
+        "src.trading.rules_engine.TradingRulesEngine.get_safety_limits",
+        "src.trading.rules_engine.TradingRulesEngine.get_intraday_params",
+        "src.risk.circuit_breaker._empty_state",
+        "src.trading.auto_trader.AutoTrader"
+      ]
+    },
+    {
+      "query": "the reading would have to climb faster than is physically plausible for this bet to come good",
+      "relevant_present": [
+        "src.trading.exit_engine.ExitEngine._check_metar_impossible_pace"
+      ],
+      "coverage": [
+        "private"
+      ],
+      "first_relevant_rank": 8,
+      "top5": [
+        "src.trading.edge_attribution.EdgeAttributor._check_metar_pace",
+        "src.backtest.engine.BacktestEngine._confidence_to_model_count",
+        "src.trading.edge_attribution.EdgeAttribution",
+        "src.trading.exit_engine",
+        "src.realtime.ws_archiver"
+      ]
+    }
+  ],
+  "n_scored": 62,
+  "stale": 0
+}

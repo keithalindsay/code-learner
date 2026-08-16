@@ -399,6 +399,17 @@ def search_candidates(
     per_modality["assertion_subject"] = assertion_subject
     per_modality["source_assertions"] = source_assertions
 
+    if not (assertion_lexical or assertion_subject or source_assertions):
+        # No assertion is eligible to contribute a ranking vote to this query. Re-fusing
+        # the source modalities through `mixed_rank_fusion` would reorder them away from
+        # the tuned, reranked ordering `search` already produced -- displacing results
+        # for a query the semantic layer has nothing to say about (measured: source
+        # results that were top-5 dropping out when assertions were enabled but none
+        # served). Return that ordering unchanged, so enabling assertions is a genuine
+        # no-op exactly when there are no assertions to enable. `source_pool[:k]` is the
+        # same top-k the source-only path returns -- a prefix of the same ranking.
+        return CandidateSearchResult(candidates=source_pool[:k], per_modality=per_modality)
+
     candidates = mixed_rank_fusion(
         per_modality,
         k=k,
