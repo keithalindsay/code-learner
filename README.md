@@ -93,3 +93,7 @@ Full setup, the CLI, and the MCP server config are in [Interfaces](docs/INTERFAC
 ## A note on the numbers
 
 This began as one long document, deliberately — so no headline could be quoted without the caveat that bounds it, a failure an audit of it caught twice. Splitting it into sections keeps that rule rather than breaking it: every number lives in the section that measures it, beside its interval and its limits, and the few results quoted on this page carry their caveat with them. The conventions they obey — `repo@sha` stamping, paired intervals, the calibration floor below which there is no 95% interval here — are in [Methodology](docs/METHODOLOGY.md#how-to-read-the-numbers-in-this-document).
+
+## License
+
+[MIT](LICENSE).
